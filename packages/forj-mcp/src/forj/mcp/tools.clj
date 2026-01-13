@@ -71,7 +71,18 @@
                                            :description "Specific namespace to test (optional)"}
                                :runner {:type "string"
                                         :enum ["bb" "clj" "lein" "auto"]
-                                        :description "Test runner to use (auto-detected by default)"}}}}])
+                                        :description "Test runner to use (auto-detected by default)"}}}}
+
+   {:name "eval_comment_block"
+    :description "Evaluate all forms inside a (comment ...) block. Finds comment block at or near the given line and evaluates each form inside it sequentially."
+    :inputSchema {:type "object"
+                  :properties {:file {:type "string"
+                                      :description "File path containing the comment block"}
+                               :line {:type "integer"
+                                      :description "Line number at or near the comment block (1-based)"}
+                               :port {:type "integer"
+                                      :description "nREPL port (auto-discovered if not provided)"}}
+                  :required ["file" "line"]}}])
 
 ;; =============================================================================
 ;; REPL Type Detection (Path-based routing)
@@ -492,6 +503,99 @@
       {:success false
        :error (str "Failed to run tests: " (.getMessage e))})))
 
+(defn- find-comment-blocks
+  "Find all (comment ...) blocks in file content with their line ranges."
+  [content]
+  (try
+    (let [forms (edamame/parse-string-all content
+                                          {:all true
+                                           :row-key :line
+                                           :col-key :col
+                                           :end-row-key :end-line
+                                           :end-col-key :end-col})
+          content-lines (vec (str/split-lines content))]
+      (->> forms
+           (filter #(and (list? %)
+                         (= 'comment (first %))
+                         (meta %)))
+           (map (fn [form]
+                  (let [m (meta form)]
+                    {:start-line (:line m)
+                     :end-line (:end-line m)
+                     :forms (rest form)  ; Skip the 'comment symbol
+                     :raw (str/join "\n" (subvec content-lines
+                                                 (dec (:line m))
+                                                 (:end-line m)))})))))
+    (catch Exception _ [])))
+
+(defn- extract-comment-forms
+  "Extract individual forms from inside a comment block with their text."
+  [comment-block content]
+  (let [forms (:forms comment-block)
+        content-lines (vec (str/split-lines content))]
+    (->> forms
+         (filter #(meta %))
+         (map (fn [form]
+                (let [m (meta form)]
+                  {:start-line (:line m)
+                   :end-line (:end-line m)
+                   :form (str/join "\n" (subvec content-lines
+                                                (dec (:line m))
+                                                (:end-line m)))}))))))
+
+(defn eval-comment-block
+  "Evaluate all forms inside a (comment ...) block."
+  [{:keys [file line port]}]
+  (try
+    (let [;; Detect file type and find appropriate REPL
+          detected-type (detect-repl-type file)
+          effective-port (or port
+                             (let [{:keys [success ports]} (discover-repls)]
+                               (when success
+                                 (select-repl-for-file ports file))))
+          content (slurp file)
+          ns-name (extract-ns-from-content content)
+          comment-blocks (find-comment-blocks content)
+          ;; Find comment block containing or nearest to the given line
+          target-block (or (first (filter #(and (<= (:start-line %) line)
+                                                (>= (:end-line %) line))
+                                          comment-blocks))
+                           ;; Find nearest block if not inside one
+                           (first (sort-by #(Math/abs (- line (:start-line %)))
+                                           comment-blocks)))]
+      (if target-block
+        (if effective-port
+          (let [forms (extract-comment-forms target-block content)
+                ;; Switch to namespace first
+                _ (when ns-name
+                    (eval-code {:code (str "(ns " ns-name ")") :port effective-port}))
+                ;; Evaluate each form
+                results (mapv (fn [form-info]
+                                (let [result (eval-code {:code (:form form-info)
+                                                         :port effective-port})]
+                                  {:lines [(:start-line form-info) (:end-line form-info)]
+                                   :form (:form form-info)
+                                   :success (:success result)
+                                   :value (:value result)
+                                   :error (:error result)}))
+                              forms)]
+            {:success true
+             :file file
+             :block-lines [(:start-line target-block) (:end-line target-block)]
+             :namespace ns-name
+             :repl-type (name detected-type)
+             :port effective-port
+             :forms-evaluated (count results)
+             :results results})
+          {:success false
+           :error (str "No suitable REPL found for " (name detected-type)
+                       " file. Start one with `bb nrepl` or `clj -M:dev`")})
+        {:success false
+         :error (str "No comment block found at or near line " line)}))
+    (catch Exception e
+      {:success false
+       :error (str "Failed to eval comment block: " (.getMessage e))})))
+
 (defn call-tool
   "Dispatch tool call to appropriate handler."
   [{:keys [name arguments]}]
@@ -503,4 +607,5 @@
     "doc_symbol" (doc-symbol arguments)
     "eval_at" (eval-at arguments)
     "run_tests" (run-tests arguments)
+    "eval_comment_block" (eval-comment-block arguments)
     {:success false :error (str "Unknown tool: " name)}))
