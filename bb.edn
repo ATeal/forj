@@ -135,21 +135,36 @@
            (println "✓ Hooks config installed to" settings-file))}
 
   install:skill
-  {:doc "Install /clj-repl skill to ~/.claude/skills/"
+  {:doc "Install forj skills (/clj-repl, /clj-init) to ~/.claude/skills/"
    :task (let [forj-path (System/getProperty "user.dir")
-               skill-dir (str (fs/path (System/getProperty "user.home") ".claude" "skills" "clj-repl"))
-               source-file (str (fs/path forj-path "packages" "forj-skill" "SKILL.md"))
-               target-file (str (fs/path skill-dir "SKILL.md"))]
-           (fs/create-dirs skill-dir)
-           (fs/copy source-file target-file {:replace-existing true})
-           (println "✓ Skill installed to" skill-dir))}
+               skills-base (str (fs/path (System/getProperty "user.home") ".claude" "skills"))
+               ;; Install clj-repl skill
+               clj-repl-dir (str (fs/path skills-base "clj-repl"))
+               clj-repl-source (str (fs/path forj-path "packages" "forj-skill" "SKILL.md"))
+               _ (fs/create-dirs clj-repl-dir)
+               _ (fs/copy clj-repl-source (str (fs/path clj-repl-dir "SKILL.md")) {:replace-existing true})
+               _ (println "✓ /clj-repl skill installed to" clj-repl-dir)
+               ;; Install clj-init skill (SKILL.md + templates)
+               clj-init-dir (str (fs/path skills-base "clj-init"))
+               clj-init-source (str (fs/path forj-path "packages" "forj-skill" "clj-init"))
+               _ (fs/create-dirs clj-init-dir)
+               _ (fs/copy (str (fs/path clj-init-source "SKILL.md"))
+                          (str (fs/path clj-init-dir "SKILL.md")) {:replace-existing true})
+               ;; Copy templates directory
+               templates-source (str (fs/path clj-init-source "templates"))
+               templates-dest (str (fs/path clj-init-dir "templates"))]
+           (when (fs/exists? templates-dest)
+             (fs/delete-tree templates-dest))
+           (fs/copy-tree templates-source templates-dest)
+           (println "✓ /clj-init skill installed to" clj-init-dir))}
 
   uninstall
   {:doc "Remove forj from Claude Code config"
    :task (let [claude-dir (str (fs/path (System/getProperty "user.home") ".claude"))
                mcp-file (str (fs/path claude-dir "mcp.json"))
                settings-file (str (fs/path claude-dir "settings.json"))
-               skill-dir (str (fs/path claude-dir "skills" "clj-repl"))]
+               clj-repl-dir (str (fs/path claude-dir "skills" "clj-repl"))
+               clj-init-dir (str (fs/path claude-dir "skills" "clj-init"))]
            ;; Remove from MCP config
            (when (fs/exists? mcp-file)
              (let [config (json/parse-string (slurp mcp-file) true)
@@ -162,8 +177,11 @@
                    new-config (update config :hooks dissoc :SessionStart :UserPromptSubmit)]
                (spit settings-file (json/generate-string new-config {:pretty true}))
                (println "✓ Removed hooks from" settings-file)))
-           ;; Remove skill
-           (when (fs/exists? skill-dir)
-             (fs/delete-tree skill-dir)
-             (println "✓ Removed skill from" skill-dir))
+           ;; Remove skills
+           (when (fs/exists? clj-repl-dir)
+             (fs/delete-tree clj-repl-dir)
+             (println "✓ Removed /clj-repl skill"))
+           (when (fs/exists? clj-init-dir)
+             (fs/delete-tree clj-init-dir)
+             (println "✓ Removed /clj-init skill"))
            (println "\n✓ forj uninstalled. Restart Claude Code to complete."))}}}

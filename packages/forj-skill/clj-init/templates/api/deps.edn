@@ -1,0 +1,17 @@
+{:paths ["src" "resources"]
+ :deps {org.clojure/clojure {:mvn/version "1.11.1"}
+        ring/ring-core {:mvn/version "1.10.0"}
+        ring/ring-jetty-adapter {:mvn/version "1.10.0"}
+        metosin/reitit {:mvn/version "0.7.0"}
+        metosin/muuntaja {:mvn/version "0.6.8"}}
+ :aliases
+ {:dev {:extra-paths ["test"]
+        :extra-deps {nrepl/nrepl {:mvn/version "1.1.0"}
+                     cider/cider-nrepl {:mvn/version "0.45.0"}
+                     ring/ring-mock {:mvn/version "0.4.0"}}
+        :main-opts ["-m" "nrepl.cmdline" "--interactive"]}
+  :test {:extra-paths ["test"]
+         :extra-deps {io.github.cognitect-labs/test-runner
+                      {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
+         :main-opts ["-m" "cognitect.test-runner"]}
+  :run {:main-opts ["-m" "{{namespace}}.core"]}}}
