@@ -45,7 +45,21 @@
                                                 :description "Include full source code (default: false)"}
                                :port {:type "integer"
                                       :description "nREPL port (auto-discovered if not provided)"}}
-                  :required ["symbol"]}}])
+                  :required ["symbol"]}}
+
+   {:name "eval_at"
+    :description "Evaluate a form at a specific line in a file. Like ,er (root) or ,ee (inner) in Conjure."
+    :inputSchema {:type "object"
+                  :properties {:file {:type "string"
+                                      :description "File path to evaluate from"}
+                               :line {:type "integer"
+                                      :description "Line number (1-based)"}
+                               :scope {:type "string"
+                                       :enum ["root" "inner"]
+                                       :description "root = top-level form like ,er (default), inner = innermost form like ,ee"}
+                               :port {:type "integer"
+                                      :description "nREPL port (auto-discovered if not provided)"}}
+                  :required ["file" "line"]}}])
 
 (defn discover-repls
   "Find running nREPL servers using clj-nrepl-eval --discover-ports."
@@ -146,6 +160,111 @@
        :message (str "Reloaded " ns-name)}
       result)))
 
+(defn- find-top-level-forms
+  "Parse file and return vector of {:start-line :end-line :form} for each top-level form."
+  [content]
+  (let [lines (str/split-lines content)
+        indexed-lines (map-indexed #(vector (inc %1) %2) lines)]
+    (loop [remaining indexed-lines
+           depth 0
+           current-start nil
+           current-lines []
+           forms []]
+      (if (empty? remaining)
+        ;; Return accumulated forms
+        (if (seq current-lines)
+          (conj forms {:start-line current-start
+                       :end-line (first (last current-lines))
+                       :form (str/join "\n" (map second current-lines))})
+          forms)
+        (let [[line-num line-text] (first remaining)
+              ;; Count parens (simplified - doesn't handle strings/comments perfectly)
+              opens (count (re-seq #"\(|\[|\{" line-text))
+              closes (count (re-seq #"\)|\]|\}" line-text))
+              new-depth (+ depth opens (- closes))
+              trimmed (str/trim line-text)]
+          (cond
+            ;; Skip empty lines and comments at top level
+            (and (zero? depth) (or (str/blank? trimmed) (str/starts-with? trimmed ";")))
+            (recur (rest remaining) 0 nil [] forms)
+
+            ;; Starting a new form
+            (and (zero? depth) (pos? opens))
+            (recur (rest remaining)
+                   new-depth
+                   line-num
+                   [[line-num line-text]]
+                   forms)
+
+            ;; Continuing a form
+            (pos? depth)
+            (let [updated-lines (conj current-lines [line-num line-text])]
+              (if (zero? new-depth)
+                ;; Form complete
+                (recur (rest remaining)
+                       0
+                       nil
+                       []
+                       (conj forms {:start-line current-start
+                                    :end-line line-num
+                                    :form (str/join "\n" (map second updated-lines))}))
+                ;; Form continues
+                (recur (rest remaining)
+                       new-depth
+                       current-start
+                       updated-lines
+                       forms)))
+
+            :else
+            (recur (rest remaining) depth current-start current-lines forms)))))))
+
+(defn- extract-ns-from-content
+  "Extract namespace name from file content."
+  [content]
+  (when-let [match (re-find #"\(ns\s+([^\s\)\(]+)" content)]
+    (second match)))
+
+(defn- find-form-at-line
+  "Find the form containing the given line number."
+  [forms line scope]
+  (if (= scope "inner")
+    ;; For inner, we'd need more sophisticated parsing - for now, fall back to root
+    ;; TODO: Implement proper inner form detection
+    (first (filter #(and (<= (:start-line %) line)
+                         (>= (:end-line %) line))
+                   forms))
+    ;; Root scope - find top-level form containing line
+    (first (filter #(and (<= (:start-line %) line)
+                         (>= (:end-line %) line))
+                   forms))))
+
+(defn eval-at
+  "Evaluate a form at a specific line in a file."
+  [{:keys [file line scope port] :or {scope "root"}}]
+  (try
+    (let [content (slurp file)
+          ns-name (extract-ns-from-content content)
+          forms (find-top-level-forms content)
+          target-form (find-form-at-line forms line scope)]
+      (if target-form
+        (let [;; Prepend ns switch if we found a namespace
+              code (if ns-name
+                     (str "(ns " ns-name ") " (:form target-form))
+                     (:form target-form))
+              result (eval-code {:code code :port port})]
+          (if (:success result)
+            {:success true
+             :file file
+             :lines [(:start-line target-form) (:end-line target-form)]
+             :namespace ns-name
+             :value (:value result)}
+            result))
+        {:success false
+         :error (str "No form found at line " line)}))
+    (catch Exception e
+      {:success false
+       :error (str "Failed to eval at line: " (.getMessage e))})))
+
 (defn doc-symbol
   "Look up documentation for a symbol."
   [{:keys [symbol include-source port]}]
@@ -214,4 +333,5 @@
     "analyze_project" (analyze-project arguments)
     "reload_namespace" (reload-namespace arguments)
     "doc_symbol" (doc-symbol arguments)
+    "eval_at" (eval-at arguments)
     {:success false :error (str "Unknown tool: " name)}))
