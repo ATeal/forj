@@ -128,7 +128,11 @@
                hooks-config {:SessionStart [{:hooks [{:type "command"
                                                       :command (str "bb -cp " cp " -m forj.hooks.session-start")}]}]
                              :UserPromptSubmit [{:hooks [{:type "command"
-                                                          :command (str "bb -cp " cp " -m forj.hooks.user-prompt")}]}]}
+                                                          :command (str "bb -cp " cp " -m forj.hooks.user-prompt")}]}]
+                             ;; Auto-fix Clojure delimiter errors on file write (from clojure-mcp-light)
+                             :PreToolUse [{:matcher "Edit|Write|NotebookEdit"
+                                           :hooks [{:type "command"
+                                                    :command "clj-paren-repair-claude-hook"}]}]}
                new-config (update existing :hooks merge hooks-config)]
            (fs/create-dirs claude-dir)
            (spit settings-file (json/generate-string new-config {:pretty true}))
