@@ -25,7 +25,16 @@
     :description "Analyze a Clojure project. Returns available bb tasks, deps.edn aliases, and shadow-cljs builds."
     :inputSchema {:type "object"
                   :properties {:path {:type "string"
-                                      :description "Project path (defaults to current directory)"}}}}])
+                                      :description "Project path (defaults to current directory)"}}}}
+
+   {:name "reload_namespace"
+    :description "Reload a Clojure namespace in the REPL. Like ,ef in Neovim - reloads the file to pick up changes."
+    :inputSchema {:type "object"
+                  :properties {:ns {:type "string"
+                                    :description "Namespace to reload (e.g., 'forj.mcp.tools') or file path (e.g., 'src/forj/mcp/tools.clj')"}
+                               :port {:type "integer"
+                                      :description "nREPL port (auto-discovered if not provided)"}}
+                  :required ["ns"]}}])
 
 (defn discover-repls
   "Find running nREPL servers using clj-nrepl-eval --discover-ports."
@@ -95,6 +104,37 @@
         {:success false
          :error (str "Evaluation failed: " (.getMessage e))}))))
 
+(defn- file-path->namespace
+  "Convert a file path to a namespace name.
+   e.g., 'src/forj/mcp/tools.clj' -> 'forj.mcp.tools'
+         'packages/forj-mcp/src/forj/mcp/tools.clj' -> 'forj.mcp.tools'"
+  [path]
+  (-> path
+      ;; Strip common source prefixes
+      (str/replace #"^.*/src/" "")
+      (str/replace #"^.*/test/" "")
+      (str/replace #"^src/" "")
+      (str/replace #"^test/" "")
+      ;; Remove file extension
+      (str/replace #"\.(clj[cs]?)$" "")
+      ;; Convert path separators to dots, underscores to hyphens
+      (str/replace "/" ".")
+      (str/replace "_" "-")))
+
+(defn reload-namespace
+  "Reload a namespace in the REPL."
+  [{:keys [ns port]}]
+  (let [ns-name (if (str/includes? ns "/")
+                  (file-path->namespace ns)
+                  ns)
+        code (str "(require '" ns-name " :reload)")
+        result (eval-code {:code code :port port})]
+    (if (:success result)
+      {:success true
+       :namespace ns-name
+       :message (str "Reloaded " ns-name)}
+      result)))
+
 (defn analyze-project
   "Analyze a Clojure project for bb tasks, deps aliases, and shadow builds."
   [{:keys [path] :or {path "."}}]
@@ -127,4 +167,5 @@
     "repl_eval" (eval-code arguments)
     "discover_repls" (discover-repls)
     "analyze_project" (analyze-project arguments)
+    "reload_namespace" (reload-namespace arguments)
     {:success false :error (str "Unknown tool: " name)}))
