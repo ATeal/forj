@@ -38,13 +38,6 @@
    :error (cond-> {:code code :message message}
             data (assoc :data data))})
 
-(defn notification
-  "Create a notification (no response expected)."
-  [method params]
-  {:jsonrpc jsonrpc-version
-   :method method
-   :params params})
-
 ;; Standard JSON-RPC error codes
 (def error-codes
   {:parse-error      -32700

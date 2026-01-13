@@ -112,6 +112,9 @@ forj/
 
 ```bash
 bb tasks              # List available tasks
+bb nrepl              # Start nREPL server on port 1669
+bb eval '(+ 1 2)'     # Evaluate code (auto-discovers port)
+bb eval -p 1669 'code' # Evaluate on specific port
 bb mcp:dev            # Run MCP server (for testing)
 bb test               # Run all tests
 ```

@@ -34,4 +34,22 @@
 
   mcp:install
   {:doc "Install forj-mcp as bbin script"
-   :task (shell "bbin" "install" "." "--as" "forj-mcp" "--main-opts" "['-m' 'forj.mcp.server']")}}}
+   :task (shell "bbin" "install" "." "--as" "forj-mcp" "--main-opts" "['-m' 'forj.mcp.server']")}
+
+  eval
+  {:doc "Evaluate Clojure code via forj (usage: bb eval '(+ 1 2)' or bb eval -p 1669 '(+ 1 2)')"
+   :requires ([forj.mcp.tools :as tools]
+              [cheshire.core :as json])
+   :task (let [args *command-line-args*
+               [port code] (if (= "-p" (first args))
+                             [(parse-long (second args)) (nth args 2)]
+                             [nil (first args)])
+               result (tools/eval-code {:code code :port port})]
+           (if (:success result)
+             (println (:value result))
+             (do (println "Error:" (:error result))
+                 (System/exit 1))))}
+
+  nrepl
+  {:doc "Start nREPL server for forj development"
+   :task (shell "bb" "--nrepl-server" "1669")}}}

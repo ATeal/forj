@@ -2,8 +2,8 @@
   "mcpServers": {
     "forj": {
       "command": "bb",
-      "args": ["-cp", "packages/forj-mcp/src", "-m", "forj.mcp.server"],
-      "env": {}
+      "args": ["-cp", "/home/user/Projects/github/forj/packages/forj-mcp/src", "-m", "forj.mcp.server"],
+      "cwd": "/home/user/Projects/github/forj"
     }
   }
 }

@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bb -cp packages/forj-hooks/src -m forj.hooks.session-start"
+            "command": "cd /home/user/Projects/github/forj && bb -cp packages/forj-hooks/src -m forj.hooks.session-start"
           }
         ]
       }
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bb -cp packages/forj-hooks/src -m forj.hooks.user-prompt"
+            "command": "cd /home/user/Projects/github/forj && bb -cp packages/forj-hooks/src -m forj.hooks.user-prompt"
           }
         ]
       }
