@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "{{project-name}}",
+    "slug": "{{project-name}}",
+    "version": "0.0.1",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "bundleIdentifier": "com.example.{{project-name}}",
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.example.{{project-name}}",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      }
+    }
+  }
+}

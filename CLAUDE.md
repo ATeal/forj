@@ -59,6 +59,7 @@ Path-based REPL routing auto-selects clj/cljs/bb REPLs.
 - **Library** (clj) - deps.edn library with tests
 - **Web API** (api) - Ring/Reitit backend
 - **Full-stack** (fullstack) - Clojure + ClojureScript + shadow-cljs
+- **Mobile** (mobile) - Expo + ClojureScript (Reagent/Re-frame)
 
 ## Files
 
