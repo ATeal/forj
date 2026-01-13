@@ -62,6 +62,82 @@
                                       :description "nREPL port (auto-discovered if not provided)"}}
                   :required ["file" "line"]}}])
 
+;; =============================================================================
+;; REPL Type Detection (Path-based routing)
+;; =============================================================================
+
+(defn detect-repl-type
+  "Detect the appropriate REPL type for a given file path.
+   Returns :clojure, :clojurescript, :babashka, or :unknown.
+
+   Rules:
+   1. File extension: .cljs → clojurescript, .bb → babashka
+   2. Path patterns: /cljs/, /clojurescript/ → clojurescript
+   3. Project context: bb.edn only → babashka, shadow-cljs.edn → has cljs
+   4. .cljc files: check context or default to :clojure"
+  [file-path]
+  (let [ext (re-find #"\.[^.]+$" file-path)
+        path-lower (str/lower-case file-path)]
+    (cond
+      ;; Explicit extensions
+      (= ext ".cljs") :clojurescript
+      (= ext ".bb") :babashka
+
+      ;; Path patterns suggesting ClojureScript
+      (or (str/includes? path-lower "/cljs/")
+          (str/includes? path-lower "/clojurescript/")
+          (str/includes? path-lower "src-cljs/")) :clojurescript
+
+      ;; Path patterns suggesting Babashka
+      (or (str/includes? path-lower "/bb/")
+          (str/includes? path-lower "/scripts/")
+          (str/includes? path-lower "/tasks/")) :babashka
+
+      ;; .clj or .cljc - check project context
+      (#{".clj" ".cljc"} ext)
+      (let [;; Check for project markers
+            has-bb? (or (.exists (java.io.File. "bb.edn"))
+                        (.exists (java.io.File. "../bb.edn")))
+            has-deps? (or (.exists (java.io.File. "deps.edn"))
+                          (.exists (java.io.File. "../deps.edn")))
+            has-shadow? (or (.exists (java.io.File. "shadow-cljs.edn"))
+                            (.exists (java.io.File. "../shadow-cljs.edn")))]
+        (cond
+          ;; Pure babashka project
+          (and has-bb? (not has-deps?) (not has-shadow?)) :babashka
+          ;; Has shadow-cljs and path suggests frontend
+          (and has-shadow?
+               (or (str/includes? path-lower "frontend")
+                   (str/includes? path-lower "client"))) :clojurescript
+          ;; Default to clojure for .clj/.cljc
+          :else :clojure))
+
+      :else :unknown)))
+
+(defn select-repl-for-file
+  "Given discovered REPLs and a file path, select the best matching REPL.
+   Returns the port number or nil if no suitable REPL found."
+  [repls-output file-path]
+  (let [repl-type (detect-repl-type file-path)
+        lines (str/split-lines repls-output)
+        ;; Parse REPL entries: "localhost:PORT (type)"
+        parse-repl (fn [line]
+                     (when-let [[_ port type] (re-find #"localhost:(\d+)\s+\((\w+)\)" line)]
+                       {:port (parse-long port)
+                        :type (keyword type)}))
+        repls (->> lines
+                   (map parse-repl)
+                   (remove nil?))]
+    ;; Match REPL type
+    (or
+     ;; Exact match
+     (:port (first (filter #(= (:type %) repl-type) repls)))
+     ;; Fallback: bb can often run clj code
+     (when (= repl-type :clojure)
+       (:port (first (filter #(= (:type %) :bb) repls))))
+     ;; Last resort: first available
+     (:port (first repls)))))
+
 (defn discover-repls
   "Find running nREPL servers using clj-nrepl-eval --discover-ports."
   []
