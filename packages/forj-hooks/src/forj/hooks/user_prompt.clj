@@ -26,7 +26,8 @@
       (log/info "user-prompt" "Injecting REPL reminder")
       (println (json/generate-string
                 {:hookSpecificOutput
-                 {:additionalContext
+                 {:hookEventName "UserPromptSubmit"
+                  :additionalContext
                   (str "Reminder: This is a Clojure project. "
                        "Prefer REPL evaluation for rapid feedback. "
                        "Use forj MCP tools: repl_eval, discover_repls.")}})))))
