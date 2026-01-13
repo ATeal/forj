@@ -52,4 +52,34 @@
 
   nrepl
   {:doc "Start nREPL server for forj development"
-   :task (shell "bb" "--nrepl-server" "1669")}}}
+   :task (shell "bb" "--nrepl-server" "1669")}
+
+  logs
+  {:doc "View forj logs (tail -f)"
+   :task (let [log-dir (str (fs/path (System/getProperty "user.home") ".forj" "logs"))]
+           (if (fs/exists? log-dir)
+             (shell "tail" "-f" (str (fs/path log-dir "mcp-server.log"))
+                    (str (fs/path log-dir "session-start.log")))
+             (println "No logs yet. Logs will be written to:" log-dir)))}
+
+  logs:list
+  {:doc "List all log files"
+   :task (let [log-dir (str (fs/path (System/getProperty "user.home") ".forj" "logs"))]
+           (if (fs/exists? log-dir)
+             (shell "ls" "-lh" log-dir)
+             (println "No logs yet. Logs will be written to:" log-dir)))}
+
+  logs:errors
+  {:doc "View error log"
+   :task (let [error-log (str (fs/path (System/getProperty "user.home") ".forj" "logs" "errors.log"))]
+           (if (fs/exists? error-log)
+             (shell "cat" error-log)
+             (println "No errors logged yet.")))}
+
+  logs:clear
+  {:doc "Clear all logs"
+   :task (let [log-dir (str (fs/path (System/getProperty "user.home") ".forj" "logs"))]
+           (when (fs/exists? log-dir)
+             (doseq [f (fs/glob log-dir "*.log")]
+               (fs/delete f))
+             (println "Logs cleared.")))}}}
