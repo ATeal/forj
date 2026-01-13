@@ -73,6 +73,7 @@ Automatically routes code to the right REPL based on file type:
 - **Library** - deps.edn with tests
 - **Web API** - Ring/Reitit backend
 - **Full-stack** - Clojure + ClojureScript + shadow-cljs
+- **Mobile** - Expo + ClojureScript (Reagent/Re-frame)
 
 ## Project Structure
 

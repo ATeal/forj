@@ -32,6 +32,7 @@ Use AskUserQuestion to ask:
 2. **Library** - deps.edn, portable Clojure library
 3. **Web API** - Backend with Ring/Reitit, ready for deployment
 4. **Full-stack** - Backend + ClojureScript frontend (Reagent/Re-frame)
+5. **Mobile** - Expo + ClojureScript (Reagent/Re-frame) for iOS/Android
 
 ### Step 3: Ask About Features
 
@@ -175,6 +176,54 @@ my-app/
 └── ...
 ```
 
+#### Mobile (Expo + ClojureScript)
+
+```
+my-app/
+├── shadow-cljs.edn
+├── package.json
+├── app.json              # Expo config
+├── index.js              # JS entry (disables Metro HMR)
+├── babel.config.js
+├── src/
+│   ├── my_app/
+│   │   ├── core.cljs     # App entry, init/start
+│   │   ├── views.cljs    # React Native components
+│   │   ├── events.cljs   # Re-frame events
+│   │   └── subs.cljs     # Re-frame subscriptions
+│   └── expo/
+│       └── root.cljs     # Expo root component helper
+├── assets/               # Icons, splash screens
+├── app/                  # shadow-cljs output (gitignored)
+├── .gitignore
+└── README.md
+```
+
+**shadow-cljs.edn:**
+```clojure
+{:source-paths ["src"]
+ :dependencies [[reagent "1.2.0"]
+                [re-frame "1.4.3"]]
+ :builds {:app {:target :react-native
+                :init-fn my-app.core/init
+                :output-dir "app"
+                :devtools {:autoload true}}}}
+```
+
+**Development:**
+```bash
+npm install
+npm run dev              # Starts shadow-cljs watch + Expo
+```
+
+**Building:**
+```bash
+npm run shadow:release   # Production ClojureScript build
+npx expo prebuild        # Generate native projects
+npx expo run:ios         # Run on iOS
+npx expo run:android     # Run on Android
+```
+
 ### Step 5: Optional Additions
 
 **If PostgreSQL selected:**
@@ -214,6 +263,7 @@ The skill uses templates from `packages/forj-skill/clj-init/templates/`:
 - `lib/` - Library project files
 - `api/` - Web API project files
 - `fullstack/` - Full-stack project files
+- `mobile/` - Expo + ClojureScript project files
 - `common/` - Shared files (.gitignore, etc.)
 
 ## Notes
