@@ -25,6 +25,15 @@
         (str/trim (:out result))))
     (catch Exception _ nil)))
 
+(defn clojure-lsp-installed?
+  "Check if clojure-lsp is available on PATH."
+  []
+  (try
+    (let [result (p/shell {:out :string :err :string :continue true}
+                          "which" "clojure-lsp")]
+      (zero? (:exit result)))
+    (catch Exception _ false)))
+
 (defn analyze-project
   "Analyze project configuration files."
   [dir]
@@ -41,7 +50,7 @@
 
 (defn format-context
   "Format project analysis as context string."
-  [{:keys [project-types bb-tasks deps-aliases shadow-builds]} repls]
+  [{:keys [project-types bb-tasks deps-aliases shadow-builds]} repls has-lsp?]
   (str "CLOJURE PROJECT DETECTED\n"
        "Project types: " (str/join ", " (map name project-types)) "\n"
        (when (seq bb-tasks)
@@ -52,12 +61,22 @@
          (str "Shadow builds: " (str/join ", " (map name shadow-builds)) "\n"))
        "\n"
        "Running REPLs:\n"
-       (or repls "  None detected - start one with `bb dev` or `bb repl`")
+       (or repls "  None detected - start one with `bb nrepl` or `clj -M:dev`")
        "\n\n"
-       "Use the forj MCP server tools for REPL evaluation:\n"
-       "- repl_eval: Evaluate Clojure code\n"
+       "REPL Tools (forj MCP):\n"
+       "- repl_eval: Evaluate Clojure code in the REPL\n"
+       "- reload_namespace: Reload a namespace (like ,ef in Conjure)\n"
+       "- doc_symbol: Look up documentation for a symbol (like K in Conjure)\n"
        "- discover_repls: Find running nREPL servers\n"
-       "- analyze_project: Get project information"))
+       "- analyze_project: Get project configuration info\n"
+       "\n"
+       "Code Navigation (LSP):\n"
+       (if has-lsp?
+         (str "- LSP tools available: goToDefinition, findReferences, hover, documentSymbol\n"
+              "- Use LSP for navigating code, finding usages, and type info")
+         (str "- WARNING: clojure-lsp not found on PATH\n"
+              "- Install it for go-to-definition, find-references, and more\n"
+              "- See: https://clojure-lsp.io/installation/"))))
 
 (defn is-clojure-project?
   "Check if the current directory is a Clojure project."
@@ -76,10 +95,12 @@
       (try
         (let [analysis (analyze-project project-dir)
               repls (discover-repls)
-              context (format-context analysis repls)]
+              has-lsp? (clojure-lsp-installed?)
+              context (format-context analysis repls has-lsp?)]
           (log/info "session-start" "Clojure project detected"
                     {:types (:project-types analysis)
-                     :has-repls (some? repls)})
+                     :has-repls (some? repls)
+                     :has-lsp has-lsp?})
           (println (json/generate-string
                     {:hookSpecificOutput
                      {:hookEventName "SessionStart"
