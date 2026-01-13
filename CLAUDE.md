@@ -8,7 +8,7 @@ forj provides seamless Claude Code integration for Clojure projects:
 - **forj-mcp**: MCP server for REPL connectivity ✅
 - **forj-hooks**: Claude Code hooks for context injection ✅
 - **forj-skill**: `/clj-repl` skill for REPL management ✅
-- **clj-init**: Project scaffolding tool (pending)
+- **clj-init**: `/clj-init` skill for project scaffolding ✅
 
 ## Quick Start
 
@@ -46,11 +46,25 @@ Babashka-based, shells to `clj-nrepl-eval` for REPL operations.
 Uses edamame for Clojure parsing with location metadata.
 Path-based REPL routing auto-selects clj/cljs/bb REPLs.
 
+## Skills
+
+| Skill | Description |
+|-------|-------------|
+| `/clj-repl` | Start or connect to Clojure/ClojureScript/Babashka nREPL |
+| `/clj-init` | Create a new Clojure project with interactive configuration |
+
+### /clj-init Project Types
+
+- **Script/CLI** (bb) - Babashka script with tasks
+- **Library** (clj) - deps.edn library with tests
+- **Web API** (api) - Ring/Reitit backend
+- **Full-stack** (fullstack) - Clojure + ClojureScript + shadow-cljs
+
 ## Files
 
 - `packages/forj-mcp/` - MCP server implementation
 - `packages/forj-hooks/` - Claude Code hooks
-- `packages/forj-skill/` - `/clj-repl` skill definition
+- `packages/forj-skill/` - Skill definitions (`/clj-repl`, `/clj-init`)
 - `examples/` - Example configs for installation
 - `.claude/settings.json` - Hook configuration
 - `.mcp.json` - MCP server configuration
@@ -77,5 +91,6 @@ All tools tested and working:
 - Installation tasks (`bb install`)
 - Full test suite (21 tests, 105 assertions)
 
-### Pending
-- `clj-init` scaffolding tool
+### Completed Recently
+- `/clj-init` skill with interactive project scaffolding
+- Project templates: bb, lib, api, fullstack

@@ -1,0 +1,16 @@
+{:paths ["src" "test"]
+ :deps {}
+ :tasks
+ {:requires ([babashka.fs :as fs])
+
+  dev
+  {:doc "Start development REPL"
+   :task (shell "bb" "--nrepl-server" "1667")}
+
+  test
+  {:doc "Run tests"
+   :task (shell "bb" "-cp" "src:test" "-m" "{{namespace}}.core-test")}
+
+  run
+  {:doc "Run the application"
+   :task (exec '{{namespace}} .core/-main)}}}

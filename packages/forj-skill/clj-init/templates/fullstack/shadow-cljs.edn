@@ -1,0 +1,8 @@
+{:deps true
+ :nrepl {:port 9000}
+ :builds
+ {:app {:target :browser
+        :output-dir "resources/public/js"
+        :asset-path "/js"
+        :modules {:main {:init-fn {{namespace}} .app/init}}
+        :devtools {:after-load {{namespace}} .app/reload}}}}
