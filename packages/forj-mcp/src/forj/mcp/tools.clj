@@ -1,7 +1,8 @@
 (ns forj.mcp.tools
   "MCP tool implementations for REPL connectivity."
   (:require [babashka.process :as p]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [edamame.core :as edamame]))
 
 (def tools
   "Tool definitions for MCP tools/list response."
@@ -161,62 +162,31 @@
       result)))
 
 (defn- find-top-level-forms
-  "Parse file and return vector of {:start-line :end-line :form} for each top-level form."
+  "Parse file and return vector of {:start-line :end-line :form} for each top-level form.
+   Uses edamame for proper Clojure parsing with location metadata."
   [content]
-  (let [lines (str/split-lines content)
-        indexed-lines (map-indexed #(vector (inc %1) %2) lines)]
-    (loop [remaining indexed-lines
-           depth 0
-           current-start nil
-           current-lines []
-           forms []]
-      (if (empty? remaining)
-        ;; Return accumulated forms
-        (if (seq current-lines)
-          (conj forms {:start-line current-start
-                       :end-line (first (last current-lines))
-                       :form (str/join "\n" (map second current-lines))})
-          forms)
-        (let [[line-num line-text] (first remaining)
-              ;; Count parens (simplified - doesn't handle strings/comments perfectly)
-              opens (count (re-seq #"\(|\[|\{" line-text))
-              closes (count (re-seq #"\)|\]|\}" line-text))
-              new-depth (+ depth opens (- closes))
-              trimmed (str/trim line-text)]
-          (cond
-            ;; Skip empty lines and comments at top level
-            (and (zero? depth) (or (str/blank? trimmed) (str/starts-with? trimmed ";")))
-            (recur (rest remaining) 0 nil [] forms)
-
-            ;; Starting a new form
-            (and (zero? depth) (pos? opens))
-            (recur (rest remaining)
-                   new-depth
-                   line-num
-                   [[line-num line-text]]
-                   forms)
-
-            ;; Continuing a form
-            (pos? depth)
-            (let [updated-lines (conj current-lines [line-num line-text])]
-              (if (zero? new-depth)
-                ;; Form complete
-                (recur (rest remaining)
-                       0
-                       nil
-                       []
-                       (conj forms {:start-line current-start
-                                    :end-line line-num
-                                    :form (str/join "\n" (map second updated-lines))}))
-                ;; Form continues
-                (recur (rest remaining)
-                       new-depth
-                       current-start
-                       updated-lines
-                       forms)))
-
-            :else
-            (recur (rest remaining) depth current-start current-lines forms)))))))
+  (try
+    (let [forms (edamame/parse-string-all content
+                                          {:all true
+                                           :row-key :line
+                                           :col-key :col
+                                           :end-row-key :end-line
+                                           :end-col-key :end-col})]
+      (->> forms
+           (filter #(and (meta %) (:line (meta %))))
+           (map (fn [form]
+                  (let [m (meta form)
+                        start-line (:line m)
+                        end-line (:end-line m)
+                        ;; Extract the form text from content
+                        lines (str/split-lines content)
+                        form-lines (subvec (vec lines) (dec start-line) end-line)]
+                    {:start-line start-line
+                     :end-line end-line
+                     :form (str/join "\n" form-lines)})))))
+    (catch Exception _
+      ;; Fallback: return empty if parsing fails
+      [])))
 
 (defn- extract-ns-from-content
   "Extract namespace name from file content."
