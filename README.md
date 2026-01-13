@@ -15,14 +15,16 @@ REPL-driven LLM development for Clojure. Provides seamless Claude Code integrati
 ## Prerequisites
 
 - [Babashka](https://babashka.org/) (bb)
-- `clj-nrepl-eval` on PATH (from [clojure-mcp-light](https://github.com/bhauman/clojure-mcp-light))
+- [clojure-mcp-light](https://github.com/bhauman/clojure-mcp-light) tools on PATH:
+  - `clj-nrepl-eval` - nREPL client for REPL evaluation
+  - `clj-paren-repair-claude-hook` - Auto-fix delimiter errors on file write
 
 ```bash
 # Install Babashka
 curl -sLO https://raw.githubusercontent.com/babashka/babashka/master/install
 chmod +x install && ./install
 
-# Install clj-nrepl-eval
+# Install clojure-mcp-light (provides clj-nrepl-eval and clj-paren-repair-claude-hook)
 bbin install io.github.bhauman/clojure-mcp-light
 ```
 
@@ -60,6 +62,7 @@ Automatically routes code to the right REPL based on file type:
 ### Hooks
 - **SessionStart**: Detects Clojure projects, injects context about tasks/aliases/REPLs
 - **UserPromptSubmit**: Reminds Claude to use REPL-first workflow
+- **PreToolUse**: Auto-fixes Clojure delimiter errors before file writes (via `clj-paren-repair-claude-hook`)
 
 ### Skills
 
