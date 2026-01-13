@@ -19,9 +19,11 @@
    Clojure projects. This helps ensure Claude uses REPL evaluation
    rather than writing code blindly."
   [& _args]
-  (let [project-dir (or (System/getenv "CLAUDE_PROJECT_DIR") ".")]
+  (let [project-dir (or (System/getenv "CLAUDE_PROJECT_DIR") ".")
+        cwd (System/getProperty "user.dir")]
+    (log/info "user-prompt" "Hook invoked" {:project-dir project-dir :cwd cwd})
     (when (is-clojure-project? project-dir)
-      (log/debug "user-prompt" "Injecting REPL reminder")
+      (log/info "user-prompt" "Injecting REPL reminder")
       (println (json/generate-string
                 {:hookSpecificOutput
                  {:additionalContext
