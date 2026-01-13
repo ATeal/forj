@@ -57,16 +57,9 @@ Path-based REPL routing auto-selects clj/cljs/bb REPLs.
 
 ## Testing After Session Restart
 
-These tools were added/modified and need MCP testing:
-- [ ] `run_tests` - Run via MCP, verify output
-- [ ] `eval_comment_block` - Test on a file with rich comments
-
-To test:
-```
-# In Claude Code after restart:
-1. Use run_tests tool on forj project
-2. Use eval_comment_block on a file with (comment ...) blocks
-```
+All tools tested and working:
+- [x] `run_tests` - Runs bb test, returns structured output ✅
+- [x] `eval_comment_block` - Evaluates all forms in comment block ✅
 
 ## Current Status
 
