@@ -50,6 +50,7 @@ Then restart Claude Code. The tools will be available automatically in any Cloju
 | `discover_repls` | Find running nREPL servers | - |
 | `analyze_project` | Get project configuration info | - |
 | `run_tests` | Run project tests (auto-detects runner) | - |
+| `validate_changed_files` | Reload + eval comment blocks in changed files | Lisa Loop |
 
 ## Features
 
@@ -70,6 +71,7 @@ Automatically routes code to the right REPL based on file type:
 |-------|-------------|
 | `/clj-repl` | Start or connect to nREPL servers with auto-detection |
 | `/clj-init` | Create new Clojure projects with interactive wizard |
+| `/lisa-loop` | REPL-driven autonomous loops (enhances Ralph Wiggum) |
 
 #### /clj-init Project Types
 - **Script/CLI** - Babashka with tasks
@@ -77,6 +79,12 @@ Automatically routes code to the right REPL based on file type:
 - **Web API** - Ring/Reitit backend
 - **Full-stack** - Clojure + ClojureScript + shadow-cljs
 - **Mobile** - Expo + ClojureScript (Reagent/Re-frame)
+
+#### /lisa-loop - REPL-Driven Autonomous Loops
+Enhances [Ralph Wiggum](https://ghuntley.com/ralph/) autonomous loops with REPL-first validation:
+- Validates with REPL evaluation (~10ms) instead of tests (~seconds)
+- See actual data, not just pass/fail
+- Use with: `/ralph-loop "<task with Lisa methodology>" --max-iterations 30`
 
 ## Project Structure
 

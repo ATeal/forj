@@ -39,6 +39,7 @@ bb logs                   # View forj logs
 | `discover_repls` | Find running nREPL servers | - |
 | `analyze_project` | Get project configuration info | - |
 | `run_tests` | Run project tests (auto-detects runner) | - |
+| `validate_changed_files` | Reload + eval comment blocks in changed files | Lisa Loop |
 
 ## Architecture
 
@@ -52,6 +53,7 @@ Path-based REPL routing auto-selects clj/cljs/bb REPLs.
 |-------|-------------|
 | `/clj-repl` | Start or connect to Clojure/ClojureScript/Babashka nREPL |
 | `/clj-init` | Create a new Clojure project with interactive configuration |
+| `/lisa-loop` | REPL-driven autonomous loops (enhances Ralph Wiggum) |
 
 ### /clj-init Project Types
 
