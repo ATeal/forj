@@ -43,6 +43,30 @@
       {:success false
        :error (str "Failed to discover ports: " (.getMessage e))})))
 
+(defn- extract-ports
+  "Extract port numbers from discover-repls output, prioritizing current directory."
+  [output]
+  (let [lines (str/split-lines output)
+        ;; Find ports in "localhost:PORT" format
+        port-pattern #"localhost:(\d+)"
+        ;; Split into current dir and other sections
+        current-dir-idx (some #(when (str/includes? (second %) "current directory")
+                                 (first %))
+                              (map-indexed vector lines))
+        other-dir-idx (some #(when (str/includes? (second %) "other directories")
+                               (first %))
+                            (map-indexed vector lines))]
+    (->> lines
+         ;; Take lines between "current directory" and "other directories" first
+         (drop (or current-dir-idx 0))
+         (take (if (and current-dir-idx other-dir-idx)
+                 (- other-dir-idx current-dir-idx)
+                 100))
+         (mapcat #(re-seq port-pattern %))
+         (map second)
+         (map parse-long)
+         (remove nil?))))
+
 (defn eval-code
   "Evaluate Clojure code via clj-nrepl-eval."
   [{:keys [code port timeout]}]
@@ -50,7 +74,7 @@
     ;; Auto-discover port if not provided
     (let [{:keys [success ports error]} (discover-repls)]
       (if success
-        (if-let [first-port (some-> ports str/split-lines first str/trim parse-long)]
+        (if-let [first-port (first (extract-ports ports))]
           (eval-code {:code code :port first-port :timeout timeout})
           {:success false :error "No nREPL ports found"})
         {:success false :error error}))
