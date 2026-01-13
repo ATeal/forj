@@ -195,27 +195,61 @@
     (second match)))
 
 (defn- find-form-at-line
-  "Find the form containing the given line number."
-  [forms line scope]
-  (if (= scope "inner")
-    ;; For inner, we'd need more sophisticated parsing - for now, fall back to root
-    ;; TODO: Implement proper inner form detection
-    (first (filter #(and (<= (:start-line %) line)
-                         (>= (:end-line %) line))
-                   forms))
-    ;; Root scope - find top-level form containing line
-    (first (filter #(and (<= (:start-line %) line)
-                         (>= (:end-line %) line))
-                   forms))))
+  "Find the top-level form containing the given line number."
+  [forms line]
+  (first (filter #(and (<= (:start-line %) line)
+                       (>= (:end-line %) line))
+                 forms)))
+
+(defn- find-innermost-form
+  "Recursively find the innermost form containing the given line."
+  [form line content-lines]
+  (let [m (meta form)]
+    (when (and m (:line m) (:end-line m)
+               (<= (:line m) line)
+               (>= (:end-line m) line))
+      ;; This form contains the line - check children for a more specific match
+      (let [children (cond
+                       (list? form) (seq form)
+                       (vector? form) (seq form)
+                       (map? form) (concat (keys form) (vals form))
+                       (set? form) (seq form)
+                       :else nil)
+            inner-match (some #(find-innermost-form % line content-lines) children)]
+        (or inner-match
+            ;; No child contains it, this is the innermost
+            {:start-line (:line m)
+             :end-line (:end-line m)
+             :form (str/join "\n" (subvec content-lines
+                                          (dec (:line m))
+                                          (:end-line m)))})))))
+
+(defn- find-inner-form-at-line
+  "Parse file and find the innermost form at the given line."
+  [content line]
+  (try
+    (let [forms (edamame/parse-string-all content
+                                          {:all true
+                                           :row-key :line
+                                           :col-key :col
+                                           :end-row-key :end-line
+                                           :end-col-key :end-col})
+          content-lines (vec (str/split-lines content))]
+      ;; Find first top-level form containing line, then drill down
+      (some #(find-innermost-form % line content-lines) forms))
+    (catch Exception _
+      nil)))
 
 (defn eval-at
-  "Evaluate a form at a specific line in a file."
+  "Evaluate a form at a specific line in a file. Like ,er (root) or ,ee (inner) in Conjure."
   [{:keys [file line scope port] :or {scope "root"}}]
   (try
     (let [content (slurp file)
           ns-name (extract-ns-from-content content)
-          forms (find-top-level-forms content)
-          target-form (find-form-at-line forms line scope)]
+          target-form (if (= scope "inner")
+                        (find-inner-form-at-line content line)
+                        (let [forms (find-top-level-forms content)]
+                          (find-form-at-line forms line)))]
       (if target-form
         (let [;; Prepend ns switch if we found a namespace
               code (if ns-name
