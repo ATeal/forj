@@ -4,10 +4,12 @@
          "packages/forj-hooks/src"
          "packages/clj-init/src"]
 
- :deps {}
+ :deps {cheshire/cheshire {:mvn/version "5.13.0"}}
 
  :tasks
- {:requires ([babashka.fs :as fs])
+ {:requires ([babashka.fs :as fs]
+             [cheshire.core :as json]
+             [clojure.string :as str])
 
   dev
   {:doc "Start development environment"
@@ -82,4 +84,79 @@
            (when (fs/exists? log-dir)
              (doseq [f (fs/glob log-dir "*.log")]
                (fs/delete f))
-             (println "Logs cleared.")))}}}
+             (println "Logs cleared.")))}
+
+  ;; Installation tasks
+  install
+  {:doc "Install forj (MCP server, hooks, and skill)"
+   :task (do
+           (run 'install:mcp)
+           (run 'install:hooks)
+           (run 'install:skill)
+           (println "\n✓ forj installed! Restart Claude Code to activate."))}
+
+  install:mcp
+  {:doc "Install MCP server config to ~/.claude/mcp.json"
+   :task (let [forj-path (System/getProperty "user.dir")
+               claude-dir (str (fs/path (System/getProperty "user.home") ".claude"))
+               mcp-file (str (fs/path claude-dir "mcp.json"))
+               existing (when (fs/exists? mcp-file)
+                          (json/parse-string (slurp mcp-file) true))
+               forj-config {:command "bb"
+                            :args ["-cp" (str forj-path "/packages/forj-mcp/src")
+                                   "-m" "forj.mcp.server"]}
+               new-config (update existing :mcpServers assoc :forj forj-config)]
+           (fs/create-dirs claude-dir)
+           (spit mcp-file (json/generate-string new-config {:pretty true}))
+           (println "✓ MCP config installed to" mcp-file))}
+
+  install:hooks
+  {:doc "Install hooks config to ~/.claude/settings.json"
+   :task (let [forj-path (System/getProperty "user.dir")
+               claude-dir (str (fs/path (System/getProperty "user.home") ".claude"))
+               settings-file (str (fs/path claude-dir "settings.json"))
+               existing (when (fs/exists? settings-file)
+                          (json/parse-string (slurp settings-file) true))
+               cp (str forj-path "/packages/forj-mcp/src:" forj-path "/packages/forj-hooks/src")
+               hooks-config {:SessionStart [{:hooks [{:type "command"
+                                                      :command (str "bb -cp " cp " -m forj.hooks.session-start")}]}]
+                             :UserPromptSubmit [{:hooks [{:type "command"
+                                                          :command (str "bb -cp " cp " -m forj.hooks.user-prompt")}]}]}
+               new-config (update existing :hooks merge hooks-config)]
+           (fs/create-dirs claude-dir)
+           (spit settings-file (json/generate-string new-config {:pretty true}))
+           (println "✓ Hooks config installed to" settings-file))}
+
+  install:skill
+  {:doc "Install /clj-repl skill to ~/.claude/skills/"
+   :task (let [forj-path (System/getProperty "user.dir")
+               skill-dir (str (fs/path (System/getProperty "user.home") ".claude" "skills" "clj-repl"))
+               source-file (str (fs/path forj-path "packages" "forj-skill" "SKILL.md"))
+               target-file (str (fs/path skill-dir "SKILL.md"))]
+           (fs/create-dirs skill-dir)
+           (fs/copy source-file target-file {:replace-existing true})
+           (println "✓ Skill installed to" skill-dir))}
+
+  uninstall
+  {:doc "Remove forj from Claude Code config"
+   :task (let [claude-dir (str (fs/path (System/getProperty "user.home") ".claude"))
+               mcp-file (str (fs/path claude-dir "mcp.json"))
+               settings-file (str (fs/path claude-dir "settings.json"))
+               skill-dir (str (fs/path claude-dir "skills" "clj-repl"))]
+           ;; Remove from MCP config
+           (when (fs/exists? mcp-file)
+             (let [config (json/parse-string (slurp mcp-file) true)
+                   new-config (update config :mcpServers dissoc :forj)]
+               (spit mcp-file (json/generate-string new-config {:pretty true}))
+               (println "✓ Removed forj from" mcp-file)))
+           ;; Remove hooks
+           (when (fs/exists? settings-file)
+             (let [config (json/parse-string (slurp settings-file) true)
+                   new-config (update config :hooks dissoc :SessionStart :UserPromptSubmit)]
+               (spit settings-file (json/generate-string new-config {:pretty true}))
+               (println "✓ Removed hooks from" settings-file)))
+           ;; Remove skill
+           (when (fs/exists? skill-dir)
+             (fs/delete-tree skill-dir)
+             (println "✓ Removed skill from" skill-dir))
+           (println "\n✓ forj uninstalled. Restart Claude Code to complete."))}}}

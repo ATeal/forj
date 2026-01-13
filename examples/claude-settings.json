@@ -1,0 +1,24 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bb -cp FORJ_PATH/packages/forj-mcp/src:FORJ_PATH/packages/forj-hooks/src -m forj.hooks.session-start"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bb -cp FORJ_PATH/packages/forj-mcp/src:FORJ_PATH/packages/forj-hooks/src -m forj.hooks.user-prompt"
+          }
+        ]
+      }
+    ]
+  }
+}
