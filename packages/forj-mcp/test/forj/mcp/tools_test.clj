@@ -126,7 +126,25 @@
       (is (contains? tool-names "run_tests"))
       (is (contains? tool-names "doc_symbol"))
       (is (contains? tool-names "reload_namespace"))
-      (is (contains? tool-names "analyze_project")))))
+      (is (contains? tool-names "analyze_project"))
+      (is (contains? tool-names "eval_comment_block")))))
+
+;; =============================================================================
+;; find-comment-blocks tests
+;; =============================================================================
+
+(deftest find-comment-blocks-test
+  (testing "Finds comment blocks in content"
+    (let [content "(ns test)\n\n(comment\n  (+ 1 2)\n  (* 3 4))\n\n(defn foo [] 1)"
+          blocks (#'tools/find-comment-blocks content)]
+      (is (= 1 (count blocks)))
+      (is (= 3 (:start-line (first blocks))))
+      (is (= 5 (:end-line (first blocks))))))
+
+  (testing "Returns empty for no comment blocks"
+    (let [content "(ns test)\n(defn foo [] 1)"
+          blocks (#'tools/find-comment-blocks content)]
+      (is (empty? blocks)))))
 
 ;; =============================================================================
 ;; call-tool dispatch tests
