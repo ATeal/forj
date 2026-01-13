@@ -19,7 +19,8 @@
   {:doc "Run all tests"
    :task (do
            (run 'test:mcp)
-           (run 'test:hooks))}
+           (run 'test:hooks)
+           (run 'test:skill))}
 
   test:mcp
   {:doc "Test MCP server"
@@ -30,6 +31,11 @@
   {:doc "Test hooks"
    :task (shell "bb" "-cp" "packages/forj-mcp/src:packages/forj-hooks/src:packages/forj-hooks/test"
                 "-m" "forj.hooks.test-runner")}
+
+  test:skill
+  {:doc "Test skill definition"
+   :task (shell "bb" "-cp" "packages/forj-skill/test"
+                "-m" "forj.skill-test-runner")}
 
   mcp:dev
   {:doc "Run MCP server in dev mode (for testing)"
