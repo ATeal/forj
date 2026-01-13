@@ -114,11 +114,23 @@
 
       :else :unknown)))
 
+(defn- normalize-repl-type
+  "Normalize REPL type keywords between detection and discovery.
+   detect-repl-type returns :clojure/:clojurescript/:babashka
+   discover_repls returns :clj/:cljs/:bb"
+  [detected-type]
+  (case detected-type
+    :clojure :clj
+    :clojurescript :cljs
+    :babashka :bb
+    detected-type))
+
 (defn select-repl-for-file
   "Given discovered REPLs and a file path, select the best matching REPL.
    Returns the port number or nil if no suitable REPL found."
   [repls-output file-path]
-  (let [repl-type (detect-repl-type file-path)
+  (let [detected-type (detect-repl-type file-path)
+        normalized-type (normalize-repl-type detected-type)
         lines (str/split-lines repls-output)
         ;; Parse REPL entries: "localhost:PORT (type)"
         parse-repl (fn [line]
@@ -131,9 +143,9 @@
     ;; Match REPL type
     (or
      ;; Exact match
-     (:port (first (filter #(= (:type %) repl-type) repls)))
+     (:port (first (filter #(= (:type %) normalized-type) repls)))
      ;; Fallback: bb can often run clj code
-     (when (= repl-type :clojure)
+     (when (= normalized-type :clj)
        (:port (first (filter #(= (:type %) :bb) repls))))
      ;; Last resort: first available
      (:port (first repls)))))
@@ -317,28 +329,41 @@
       nil)))
 
 (defn eval-at
-  "Evaluate a form at a specific line in a file. Like ,er (root) or ,ee (inner) in Conjure."
+  "Evaluate a form at a specific line in a file. Like ,er (root) or ,ee (inner) in Conjure.
+   Uses path-based REPL routing when port is not explicitly provided."
   [{:keys [file line scope port] :or {scope "root"}}]
   (try
-    (let [content (slurp file)
+    (let [;; Detect file type and find appropriate REPL
+          detected-type (detect-repl-type file)
+          effective-port (or port
+                             (let [{:keys [success ports]} (discover-repls)]
+                               (when success
+                                 (select-repl-for-file ports file))))
+          content (slurp file)
           ns-name (extract-ns-from-content content)
           target-form (if (= scope "inner")
                         (find-inner-form-at-line content line)
                         (let [forms (find-top-level-forms content)]
                           (find-form-at-line forms line)))]
       (if target-form
-        (let [;; Prepend ns switch if we found a namespace
-              code (if ns-name
-                     (str "(ns " ns-name ") " (:form target-form))
-                     (:form target-form))
-              result (eval-code {:code code :port port})]
-          (if (:success result)
-            {:success true
-             :file file
-             :lines [(:start-line target-form) (:end-line target-form)]
-             :namespace ns-name
-             :value (:value result)}
-            result))
+        (if effective-port
+          (let [;; Prepend ns switch if we found a namespace
+                code (if ns-name
+                       (str "(ns " ns-name ") " (:form target-form))
+                       (:form target-form))
+                result (eval-code {:code code :port effective-port})]
+            (if (:success result)
+              {:success true
+               :file file
+               :lines [(:start-line target-form) (:end-line target-form)]
+               :namespace ns-name
+               :repl-type (name detected-type)
+               :port effective-port
+               :value (:value result)}
+              result))
+          {:success false
+           :error (str "No suitable REPL found for " (name detected-type)
+                       " file. Start one with `bb nrepl` or `clj -M:dev`")})
         {:success false
          :error (str "No form found at line " line)}))
     (catch Exception e
