@@ -139,7 +139,7 @@
            (println "✓ Hooks config installed to" settings-file))}
 
   install:skill
-  {:doc "Install forj skills (/clj-repl, /clj-init) to ~/.claude/skills/"
+  {:doc "Install forj skills (/clj-repl, /clj-init, /lisa-loop) to ~/.claude/skills/"
    :task (let [forj-path (System/getProperty "user.dir")
                skills-base (str (fs/path (System/getProperty "user.home") ".claude" "skills"))
                ;; Install clj-repl skill
@@ -156,11 +156,18 @@
                           (str (fs/path clj-init-dir "SKILL.md")) {:replace-existing true})
                ;; Copy templates directory
                templates-source (str (fs/path clj-init-source "templates"))
-               templates-dest (str (fs/path clj-init-dir "templates"))]
-           (when (fs/exists? templates-dest)
-             (fs/delete-tree templates-dest))
-           (fs/copy-tree templates-source templates-dest)
-           (println "✓ /clj-init skill installed to" clj-init-dir))}
+               templates-dest (str (fs/path clj-init-dir "templates"))
+               _ (when (fs/exists? templates-dest)
+                   (fs/delete-tree templates-dest))
+               _ (fs/copy-tree templates-source templates-dest)
+               _ (println "✓ /clj-init skill installed to" clj-init-dir)
+               ;; Install lisa-loop skill
+               lisa-loop-dir (str (fs/path skills-base "lisa-loop"))
+               lisa-loop-source (str (fs/path forj-path "packages" "forj-skill" "lisa-loop"))]
+           (fs/create-dirs lisa-loop-dir)
+           (fs/copy (str (fs/path lisa-loop-source "SKILL.md"))
+                    (str (fs/path lisa-loop-dir "SKILL.md")) {:replace-existing true})
+           (println "✓ /lisa-loop skill installed to" lisa-loop-dir))}
 
   uninstall
   {:doc "Remove forj from Claude Code config"
@@ -168,7 +175,8 @@
                mcp-file (str (fs/path claude-dir "mcp.json"))
                settings-file (str (fs/path claude-dir "settings.json"))
                clj-repl-dir (str (fs/path claude-dir "skills" "clj-repl"))
-               clj-init-dir (str (fs/path claude-dir "skills" "clj-init"))]
+               clj-init-dir (str (fs/path claude-dir "skills" "clj-init"))
+               lisa-loop-dir (str (fs/path claude-dir "skills" "lisa-loop"))]
            ;; Remove from MCP config
            (when (fs/exists? mcp-file)
              (let [config (json/parse-string (slurp mcp-file) true)
@@ -178,7 +186,7 @@
            ;; Remove hooks
            (when (fs/exists? settings-file)
              (let [config (json/parse-string (slurp settings-file) true)
-                   new-config (update config :hooks dissoc :SessionStart :UserPromptSubmit)]
+                   new-config (update config :hooks dissoc :SessionStart :UserPromptSubmit :PreToolUse)]
                (spit settings-file (json/generate-string new-config {:pretty true}))
                (println "✓ Removed hooks from" settings-file)))
            ;; Remove skills
@@ -188,4 +196,7 @@
            (when (fs/exists? clj-init-dir)
              (fs/delete-tree clj-init-dir)
              (println "✓ Removed /clj-init skill"))
+           (when (fs/exists? lisa-loop-dir)
+             (fs/delete-tree lisa-loop-dir)
+             (println "✓ Removed /lisa-loop skill"))
            (println "\n✓ forj uninstalled. Restart Claude Code to complete."))}}}

@@ -82,7 +82,16 @@
                                       :description "Line number at or near the comment block (1-based)"}
                                :port {:type "integer"
                                       :description "nREPL port (auto-discovered if not provided)"}}
-                  :required ["file" "line"]}}])
+                  :required ["file" "line"]}}
+
+   {:name "validate_changed_files"
+    :description "Validate changed Clojure files by reloading namespaces and evaluating comment blocks. Ideal for Lisa Loop validation before running tests. Uses git to detect changed files if no files specified."
+    :inputSchema {:type "object"
+                  :properties {:files {:type "array"
+                                       :items {:type "string"}
+                                       :description "List of file paths to validate (optional - uses git diff if not provided)"}
+                               :port {:type "integer"
+                                      :description "nREPL port (auto-discovered if not provided)"}}}}])
 
 ;; =============================================================================
 ;; REPL Type Detection (Path-based routing)
@@ -596,6 +605,105 @@
       {:success false
        :error (str "Failed to eval comment block: " (.getMessage e))})))
 
+(defn- get-changed-clojure-files
+  "Get list of changed Clojure files from git."
+  []
+  (try
+    (let [;; Get staged and unstaged changes
+          staged (p/shell {:out :string :continue true}
+                          "git" "diff" "--cached" "--name-only")
+          unstaged (p/shell {:out :string :continue true}
+                            "git" "diff" "--name-only")
+          all-files (str (:out staged) "\n" (:out unstaged))
+          clj-pattern #"\.clj[csx]?$"]
+      (->> (str/split-lines all-files)
+           (filter #(re-find clj-pattern %))
+           (filter #(not (str/blank? %)))
+           (distinct)
+           vec))
+    (catch Exception _
+      [])))
+
+(defn validate-changed-files
+  "Validate changed Clojure files by reloading namespaces and evaluating comment blocks.
+   Returns a validation report with results for each file."
+  [{:keys [files port]}]
+  (try
+    (let [;; Get files to validate
+          target-files (if (seq files)
+                         files
+                         (get-changed-clojure-files))
+          ;; Auto-discover port if needed
+          effective-port (or port
+                             (let [{:keys [success ports]} (discover-repls)]
+                               (when success
+                                 (first (extract-ports ports)))))]
+      (if (empty? target-files)
+        {:success true
+         :files-validated 0
+         :message "No changed Clojure files to validate"}
+        (if effective-port
+          (let [results
+                (mapv
+                 (fn [file]
+                   (try
+                     (let [content (slurp file)
+                           ns-name (extract-ns-from-content content)
+                           ;; Step 1: Reload namespace
+                           reload-result (when ns-name
+                                           (reload-namespace {:ns ns-name :port effective-port}))
+                           ;; Step 2: Find and eval comment blocks
+                           comment-blocks (find-comment-blocks content)
+                           comment-results
+                           (when (seq comment-blocks)
+                             ;; Switch to namespace
+                             (when ns-name
+                               (eval-code {:code (str "(ns " ns-name ")") :port effective-port}))
+                             ;; Eval each comment block
+                             (mapv
+                              (fn [block]
+                                (let [forms (extract-comment-forms block content)
+                                      form-results
+                                      (mapv (fn [form-info]
+                                              (let [result (eval-code {:code (:form form-info)
+                                                                       :port effective-port})]
+                                                {:lines [(:start-line form-info) (:end-line form-info)]
+                                                 :success (:success result)
+                                                 :value (:value result)
+                                                 :error (:error result)}))
+                                            forms)]
+                                  {:block-lines [(:start-line block) (:end-line block)]
+                                   :forms-evaluated (count form-results)
+                                   :all-passed (every? :success form-results)
+                                   :results form-results}))
+                              comment-blocks))]
+                       {:file file
+                        :namespace ns-name
+                        :reload-success (or (nil? reload-result) (:success reload-result))
+                        :reload-error (:error reload-result)
+                        :comment-blocks-count (count comment-blocks)
+                        :comment-blocks comment-results
+                        :all-passed (and (or (nil? reload-result) (:success reload-result))
+                                         (every? :all-passed comment-results))})
+                     (catch Exception e
+                       {:file file
+                        :error (str "Failed to validate: " (.getMessage e))
+                        :all-passed false})))
+                 target-files)]
+            {:success true
+             :port effective-port
+             :files-validated (count results)
+             :all-passed (every? :all-passed results)
+             :summary {:total (count results)
+                       :passed (count (filter :all-passed results))
+                       :failed (count (filter #(not (:all-passed %)) results))}
+             :results results})
+          {:success false
+           :error "No nREPL server found. Start one with `bb nrepl` or `clj -M:dev`"})))
+    (catch Exception e
+      {:success false
+       :error (str "Failed to validate files: " (.getMessage e))})))
+
 (defn call-tool
   "Dispatch tool call to appropriate handler."
   [{:keys [name arguments]}]
@@ -608,4 +716,5 @@
     "eval_at" (eval-at arguments)
     "run_tests" (run-tests arguments)
     "eval_comment_block" (eval-comment-block arguments)
+    "validate_changed_files" (validate-changed-files arguments)
     {:success false :error (str "Unknown tool: " name)}))
