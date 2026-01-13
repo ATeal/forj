@@ -60,7 +60,18 @@
                                        :description "root = top-level form like ,er (default), inner = innermost form like ,ee"}
                                :port {:type "integer"
                                       :description "nREPL port (auto-discovered if not provided)"}}
-                  :required ["file" "line"]}}])
+                  :required ["file" "line"]}}
+
+   {:name "run_tests"
+    :description "Run tests for a Clojure project. Auto-detects test runner (bb test, clj -M:test, lein test)."
+    :inputSchema {:type "object"
+                  :properties {:path {:type "string"
+                                      :description "Project path (defaults to current directory)"}
+                               :namespace {:type "string"
+                                           :description "Specific namespace to test (optional)"}
+                               :runner {:type "string"
+                                        :enum ["bb" "clj" "lein" "auto"]
+                                        :description "Test runner to use (auto-detected by default)"}}}}])
 
 ;; =============================================================================
 ;; REPL Type Detection (Path-based routing)
@@ -429,6 +440,58 @@
       {:success false
        :error (str "Failed to analyze project: " (.getMessage e))})))
 
+(defn- detect-test-runner
+  "Detect the appropriate test runner for a project."
+  [path]
+  (let [file-exists? (fn [f] (.exists (java.io.File. path f)))]
+    (cond
+      (file-exists? "bb.edn") :bb
+      (file-exists? "deps.edn") :clj
+      (file-exists? "project.clj") :lein
+      :else nil)))
+
+(defn- build-test-command
+  "Build the test command based on runner and options."
+  [runner namespace]
+  (case runner
+    :bb (if namespace
+          ["bb" "test" "--namespace" namespace]
+          ["bb" "test"])
+    :clj (if namespace
+           ["clojure" "-M:test" "-n" namespace]
+           ["clojure" "-M:test"])
+    :lein (if namespace
+            ["lein" "test" namespace]
+            ["lein" "test"])
+    nil))
+
+(defn run-tests
+  "Run tests for a Clojure project."
+  [{:keys [path namespace runner] :or {path "." runner "auto"}}]
+  (try
+    (let [effective-runner (if (= runner "auto")
+                             (detect-test-runner path)
+                             (keyword runner))
+          cmd (build-test-command effective-runner namespace)]
+      (if cmd
+        (let [result (apply p/shell {:out :string :err :string :continue true :dir path} cmd)
+              output (str (:out result) (:err result))]
+          (if (zero? (:exit result))
+            {:success true
+             :runner (name effective-runner)
+             :output output
+             :passed true}
+            {:success true  ; Tool succeeded, tests failed
+             :runner (name effective-runner)
+             :output output
+             :passed false
+             :exit-code (:exit result)}))
+        {:success false
+         :error "Could not detect test runner. No bb.edn, deps.edn, or project.clj found."}))
+    (catch Exception e
+      {:success false
+       :error (str "Failed to run tests: " (.getMessage e))})))
+
 (defn call-tool
   "Dispatch tool call to appropriate handler."
   [{:keys [name arguments]}]
@@ -439,4 +502,5 @@
     "reload_namespace" (reload-namespace arguments)
     "doc_symbol" (doc-symbol arguments)
     "eval_at" (eval-at arguments)
+    "run_tests" (run-tests arguments)
     {:success false :error (str "Unknown tool: " name)}))

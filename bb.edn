@@ -28,7 +28,8 @@
 
   test:hooks
   {:doc "Test hooks"
-   :task (println "Hook tests not yet implemented")}
+   :task (shell "bb" "-cp" "packages/forj-mcp/src:packages/forj-hooks/src:packages/forj-hooks/test"
+                "-m" "forj.hooks.test-runner")}
 
   mcp:dev
   {:doc "Run MCP server in dev mode (for testing)"
