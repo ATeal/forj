@@ -10,8 +10,7 @@ REPL-driven LLM development for Clojure. Provides seamless Claude Code integrati
 |-----------|--------|-------------|
 | forj-mcp | ✅ Complete | MCP server with 8 tools |
 | forj-hooks | ✅ Complete | SessionStart + UserPromptSubmit |
-| forj-skill | ✅ Complete | `/clj-repl` skill |
-| clj-init | 🔨 Pending | Project scaffolding |
+| forj-skill | ✅ Complete | `/clj-repl` + `/clj-init` skills |
 
 ## Prerequisites
 
@@ -62,8 +61,18 @@ Automatically routes code to the right REPL based on file type:
 - **SessionStart**: Detects Clojure projects, injects context about tasks/aliases/REPLs
 - **UserPromptSubmit**: Reminds Claude to use REPL-first workflow
 
-### Skill
-`/clj-repl` - Start or connect to nREPL servers with auto-detection of project type.
+### Skills
+
+| Skill | Description |
+|-------|-------------|
+| `/clj-repl` | Start or connect to nREPL servers with auto-detection |
+| `/clj-init` | Create new Clojure projects with interactive wizard |
+
+#### /clj-init Project Types
+- **Script/CLI** - Babashka with tasks
+- **Library** - deps.edn with tests
+- **Web API** - Ring/Reitit backend
+- **Full-stack** - Clojure + ClojureScript + shadow-cljs
 
 ## Project Structure
 
@@ -77,8 +86,11 @@ forj/
 │   ├── forj-hooks/          # Claude Code hooks
 │   │   ├── src/forj/hooks/
 │   │   └── test/forj/hooks/
-│   └── forj-skill/          # /clj-repl skill
-│       ├── SKILL.md
+│   └── forj-skill/          # Skills
+│       ├── SKILL.md         # /clj-repl skill
+│       ├── clj-init/        # /clj-init skill
+│       │   ├── SKILL.md
+│       │   └── templates/   # Project templates
 │       └── test/forj/
 ├── examples/                 # Config templates
 └── .claude/
