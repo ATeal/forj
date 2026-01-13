@@ -6,62 +6,104 @@ REPL-driven LLM development for Clojure. Provides seamless Claude Code integrati
 
 ## Status
 
-**Phase 1 & 2 Complete** - MCP server and hooks working.
-
-| Component | Status |
-|-----------|--------|
-| forj-mcp | ✅ Working |
-| forj-hooks | ✅ Working |
-| forj-skill | 🔨 Pending |
-| clj-init | 🔨 Pending |
+| Component | Status | Description |
+|-----------|--------|-------------|
+| forj-mcp | ✅ Complete | MCP server with 8 tools |
+| forj-hooks | ✅ Complete | SessionStart + UserPromptSubmit |
+| forj-skill | ✅ Complete | `/clj-repl` skill |
+| clj-init | 🔨 Pending | Project scaffolding |
 
 ## Prerequisites
 
 - [Babashka](https://babashka.org/) (bb)
-- [clojure-mcp-light](https://github.com/bhauman/clojure-mcp-light) - provides `clj-nrepl-eval`
+- `clj-nrepl-eval` on PATH (from [clojure-mcp-light](https://github.com/bhauman/clojure-mcp-light))
 
-Install clojure-mcp-light:
 ```bash
+# Install Babashka
+curl -sLO https://raw.githubusercontent.com/babashka/babashka/master/install
+chmod +x install && ./install
+
+# Install clj-nrepl-eval
 bbin install io.github.bhauman/clojure-mcp-light
 ```
 
 ## Quick Start
 
-### 1. Clone and enter the repo
 ```bash
 git clone https://github.com/yourusername/forj.git
 cd forj
+bb install    # Installs MCP, hooks, and skill to ~/.claude/
 ```
 
-### 2. Start a REPL (for development)
+Then restart Claude Code. The tools will be available automatically in any Clojure project.
+
+## MCP Tools
+
+| Tool | Description | Like |
+|------|-------------|------|
+| `repl_eval` | Evaluate Clojure code in nREPL | Direct eval |
+| `reload_namespace` | Reload a namespace from file | `,ef` |
+| `eval_at` | Evaluate form at specific line (root/inner) | `,er` / `,ee` |
+| `eval_comment_block` | Evaluate all forms in a comment block | `,eb` |
+| `doc_symbol` | Look up documentation for a symbol | `K` |
+| `discover_repls` | Find running nREPL servers | - |
+| `analyze_project` | Get project configuration info | - |
+| `run_tests` | Run project tests (auto-detects runner) | - |
+
+## Features
+
+### Path-Based REPL Routing
+Automatically routes code to the right REPL based on file type:
+- `.cljs` → ClojureScript REPL
+- `.bb` → Babashka REPL
+- `.clj` → Clojure/Babashka REPL (based on project)
+
+### Hooks
+- **SessionStart**: Detects Clojure projects, injects context about tasks/aliases/REPLs
+- **UserPromptSubmit**: Reminds Claude to use REPL-first workflow
+
+### Skill
+`/clj-repl` - Start or connect to nREPL servers with auto-detection of project type.
+
+## Project Structure
+
+```
+forj/
+├── bb.edn                    # Root tasks (install, test, etc.)
+├── packages/
+│   ├── forj-mcp/            # MCP server
+│   │   ├── src/forj/mcp/
+│   │   └── test/forj/mcp/
+│   ├── forj-hooks/          # Claude Code hooks
+│   │   ├── src/forj/hooks/
+│   │   └── test/forj/hooks/
+│   └── forj-skill/          # /clj-repl skill
+│       ├── SKILL.md
+│       └── test/forj/
+├── examples/                 # Config templates
+└── .claude/
+    └── settings.json        # Hook registration
+```
+
+## Development
+
 ```bash
-bb --nrepl-server 1668
+bb tasks              # List available tasks
+bb nrepl              # Start nREPL server on port 1669
+bb test               # Run all tests (21 tests, 105 assertions)
+bb test:mcp           # Test MCP tools
+bb test:hooks         # Test hooks
+bb test:skill         # Validate skill definition
+bb mcp:dev            # Run MCP server for testing
+bb logs               # View forj logs
+bb install            # Install to ~/.claude/
+bb uninstall          # Remove from ~/.claude/
 ```
 
-### 3. Test the MCP server
-```bash
-# Initialize
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | bb mcp:dev
+## Manual Configuration
 
-# List tools
-echo '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | bb mcp:dev
-
-# Discover REPLs
-echo '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"discover_repls","arguments":{}}}' | bb mcp:dev
-
-# Evaluate code
-echo '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"repl_eval","arguments":{"code":"(+ 1 2 3)","port":1668}}}' | bb mcp:dev
-```
-
-## Using with Claude Code
-
-### Option A: Project-level config (recommended for forj development)
-
-The `.mcp.json` file is already configured. Claude Code will detect it when you open the forj directory.
-
-### Option B: Add to your Claude Code settings
-
-Add to your Claude Code MCP configuration:
+### MCP Server
+Add to `~/.claude/mcp.json`:
 ```json
 {
   "mcpServers": {
@@ -74,56 +116,26 @@ Add to your Claude Code MCP configuration:
 ```
 
 ### Hooks
-
-The hooks in `.claude/settings.json` provide:
-- **SessionStart**: Auto-detects Clojure projects, injects context about available tasks/aliases/REPLs
-- **UserPromptSubmit**: Reminds Claude to use REPL-first workflow
-
-## MCP Tools
-
-| Tool | Description |
-|------|-------------|
-| `repl_eval` | Evaluate Clojure code in an nREPL server |
-| `discover_repls` | Find running nREPL servers (checks .nrepl-port, etc.) |
-| `analyze_project` | Parse bb.edn, deps.edn, shadow-cljs.edn for tasks/aliases/builds |
-
-## Project Structure
-
-```
-forj/
-├── bb.edn                    # Root tasks
-├── .mcp.json                 # MCP server config for Claude Code
-├── packages/
-│   ├── forj-mcp/            # MCP server
-│   │   └── src/forj/mcp/
-│   │       ├── server.clj   # Main entry point
-│   │       ├── protocol.clj # JSON-RPC handling
-│   │       └── tools.clj    # Tool implementations
-│   └── forj-hooks/          # Claude Code hooks
-│       └── src/forj/hooks/
-│           ├── session_start.clj
-│           └── user_prompt.clj
-└── .claude/
-    ├── settings.json        # Hook registration
-    └── decisions.md         # Architecture decision log
-```
-
-## Development
-
-```bash
-bb tasks              # List available tasks
-bb nrepl              # Start nREPL server on port 1669
-bb eval '(+ 1 2)'     # Evaluate code (auto-discovers port)
-bb eval -p 1669 'code' # Evaluate on specific port
-bb mcp:dev            # Run MCP server (for testing)
-bb test               # Run all tests
+Add to `~/.claude/settings.json`:
+```json
+{
+  "hooks": {
+    "SessionStart": [{
+      "hooks": [{
+        "type": "command",
+        "command": "bb -cp /path/to/forj/packages/forj-mcp/src:/path/to/forj/packages/forj-hooks/src -m forj.hooks.session-start"
+      }]
+    }]
+  }
+}
 ```
 
 ## Architecture
 
-Built entirely in Babashka for fast startup (~10ms). Shells to `clj-nrepl-eval` from clojure-mcp-light for proven nREPL client functionality.
-
-See `clojure-claude-code-integration.md` for the full design spec and `.claude/decisions.md` for architecture decisions.
+Built entirely in Babashka for fast startup (~10ms). Uses:
+- `clj-nrepl-eval` for nREPL communication
+- `edamame` for Clojure parsing with location metadata
+- Path-based routing for multi-REPL projects
 
 ## License
 
