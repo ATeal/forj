@@ -34,7 +34,18 @@
                                     :description "Namespace to reload (e.g., 'forj.mcp.tools') or file path (e.g., 'src/forj/mcp/tools.clj')"}
                                :port {:type "integer"
                                       :description "nREPL port (auto-discovered if not provided)"}}
-                  :required ["ns"]}}])
+                  :required ["ns"]}}
+
+   {:name "doc_symbol"
+    :description "Look up documentation for a Clojure symbol. Like pressing K in Conjure - returns docstring, arglist, and optionally source."
+    :inputSchema {:type "object"
+                  :properties {:symbol {:type "string"
+                                        :description "Symbol to look up (e.g., 'map', 'clojure.string/split', 'forj.mcp.tools/eval-code')"}
+                               :include-source {:type "boolean"
+                                                :description "Include full source code (default: false)"}
+                               :port {:type "integer"
+                                      :description "nREPL port (auto-discovered if not provided)"}}
+                  :required ["symbol"]}}])
 
 (defn discover-repls
   "Find running nREPL servers using clj-nrepl-eval --discover-ports."
@@ -135,6 +146,40 @@
        :message (str "Reloaded " ns-name)}
       result)))
 
+(defn doc-symbol
+  "Look up documentation for a symbol."
+  [{:keys [symbol include-source port]}]
+  ;; Use with-out-str to capture doc output cleanly
+  (let [doc-code (str "(with-out-str (clojure.repl/doc " symbol "))")
+        doc-result (eval-code {:code doc-code :port port})]
+    (if (:success doc-result)
+      (let [doc-output (-> (:value doc-result)
+                           ;; Strip the => prefix and trailing decorations
+                           (str/replace #"^=> \"" "")
+                           (str/replace #"\"\n\*========.*$" "")
+                           ;; Unescape the string
+                           (str/replace "\\n" "\n")
+                           (str/replace "\\\"" "\"")
+                           str/trim)]
+        (if (or (str/blank? doc-output)
+                (str/includes? doc-output "Unable to resolve"))
+          {:success false :error (str "Symbol not found: " symbol)}
+          (merge
+           {:success true
+            :symbol symbol
+            :doc doc-output}
+           ;; Optionally get source
+           (when include-source
+             (let [src-code (str "(clojure.repl/source-fn '" symbol ")")
+                   src-result (eval-code {:code src-code :port port})]
+               (when (:success src-result)
+                 {:source (-> (:value src-result)
+                              (str/replace #"^=> \"?" "")
+                              (str/replace #"\"?\n\*========.*$" "")
+                              (str/replace "\\n" "\n")
+                              (str/replace "\\\"" "\""))}))))))
+      doc-result)))
+
 (defn analyze-project
   "Analyze a Clojure project for bb tasks, deps aliases, and shadow builds."
   [{:keys [path] :or {path "."}}]
@@ -168,4 +213,5 @@
     "discover_repls" (discover-repls)
     "analyze_project" (analyze-project arguments)
     "reload_namespace" (reload-namespace arguments)
+    "doc_symbol" (doc-symbol arguments)
     {:success false :error (str "Unknown tool: " name)}))
