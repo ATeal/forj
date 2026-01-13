@@ -1,0 +1,20 @@
+# Clojure/Babashka
+.clj-kondo/.cache/
+.lsp/.cache/
+.nrepl-port
+.cpcache/
+target/
+
+# Editor
+.idea/
+*.iml
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/settings.local.json

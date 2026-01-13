@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "forj": {
+      "command": "bb",
+      "args": ["-cp", "packages/forj-mcp/src", "-m", "forj.mcp.server"],
+      "env": {}
+    }
+  }
+}

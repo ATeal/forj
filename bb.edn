@@ -1,0 +1,37 @@
+{:min-bb-version "1.3.190"
+
+ :paths ["packages/forj-mcp/src"
+         "packages/forj-hooks/src"
+         "packages/clj-init/src"]
+
+ :deps {}
+
+ :tasks
+ {:requires ([babashka.fs :as fs])
+
+  dev
+  {:doc "Start development environment"
+   :task (println "forj dev environment - use bb mcp:dev to test MCP server")}
+
+  test
+  {:doc "Run all tests"
+   :task (do
+           (run 'test:mcp)
+           (run 'test:hooks))}
+
+  test:mcp
+  {:doc "Test MCP server"
+   :task (shell "bb" "-cp" "packages/forj-mcp/src:packages/forj-mcp/test"
+                "-m" "forj.mcp.test-runner")}
+
+  test:hooks
+  {:doc "Test hooks"
+   :task (println "Hook tests not yet implemented")}
+
+  mcp:dev
+  {:doc "Run MCP server in dev mode (for testing)"
+   :task (shell "bb" "-cp" "packages/forj-mcp/src" "-m" "forj.mcp.server")}
+
+  mcp:install
+  {:doc "Install forj-mcp as bbin script"
+   :task (shell "bbin" "install" "." "--as" "forj-mcp" "--main-opts" "['-m' 'forj.mcp.server']")}}}
