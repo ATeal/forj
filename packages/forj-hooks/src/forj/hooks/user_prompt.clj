@@ -1,7 +1,8 @@
 (ns forj.hooks.user-prompt
   "UserPromptSubmit hook to ensure REPL-first workflow is followed."
   (:require [babashka.fs :as fs]
-            [cheshire.core :as json]))
+            [cheshire.core :as json]
+            [forj.logging :as log]))
 
 (defn is-clojure-project?
   "Check if the current directory is a Clojure project."
@@ -20,6 +21,7 @@
   [& _args]
   (let [project-dir (or (System/getenv "CLAUDE_PROJECT_DIR") ".")]
     (when (is-clojure-project? project-dir)
+      (log/debug "user-prompt" "Injecting REPL reminder")
       (println (json/generate-string
                 {:hookSpecificOutput
                  {:additionalContext

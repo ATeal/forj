@@ -4,7 +4,8 @@
             [babashka.process :as p]
             [clojure.edn :as edn]
             [cheshire.core :as json]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [forj.logging :as log]))
 
 (defn safe-parse-edn
   "Safely parse an EDN file, returning nil on error."
@@ -69,14 +70,22 @@
 (defn -main
   "Entry point for SessionStart hook."
   [& _args]
+  (log/debug "session-start" "Hook triggered")
   (let [project-dir (or (System/getenv "CLAUDE_PROJECT_DIR") ".")]
-    (when (is-clojure-project? project-dir)
-      (let [analysis (analyze-project project-dir)
-            repls (discover-repls)
-            context (format-context analysis repls)]
-        (println (json/generate-string
-                  {:hookSpecificOutput
-                   {:additionalContext context}}))))))
+    (if (is-clojure-project? project-dir)
+      (try
+        (let [analysis (analyze-project project-dir)
+              repls (discover-repls)
+              context (format-context analysis repls)]
+          (log/info "session-start" "Clojure project detected"
+                    {:types (:project-types analysis)
+                     :has-repls (some? repls)})
+          (println (json/generate-string
+                    {:hookSpecificOutput
+                     {:additionalContext context}})))
+        (catch Exception e
+          (log/exception "session-start" "Hook failed" e)))
+      (log/debug "session-start" "Not a Clojure project"))))
 
 (when (= *file* (System/getProperty "babashka.file"))
   (-main))
