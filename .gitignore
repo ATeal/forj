@@ -1,5 +1,5 @@
 # Clojure/Babashka
-.clj-kondo/.cache/
+.clj-kondo/
 .lsp/.cache/
 .nrepl-port
 .cpcache/
