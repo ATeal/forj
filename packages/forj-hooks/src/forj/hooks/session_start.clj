@@ -82,7 +82,8 @@
                      :has-repls (some? repls)})
           (println (json/generate-string
                     {:hookSpecificOutput
-                     {:additionalContext context}})))
+                     {:hookEventName "SessionStart"
+                      :additionalContext context}})))
         (catch Exception e
           (log/exception "session-start" "Hook failed" e)))
       (log/debug "session-start" "Not a Clojure project"))))
