@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Launcher for forj MCP server that filters benign bb warnings from stderr
+# This prevents Claude Code from marking the server as failed
+
+FORJ_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+CP="$FORJ_DIR/packages/forj-mcp/src:$FORJ_DIR/packages/forj-hooks/src"
+
+exec bb -cp "$CP" -m forj.mcp.server 2> >(grep -v "WARNING: task(s).*override built-in" >&2)

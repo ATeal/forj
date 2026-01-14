@@ -1,32 +1,87 @@
 ---
 name: lisa-loop
-description: REPL-driven autonomous development loops for Clojure. Like Ralph Wiggum, but validates with REPL evaluation instead of tests for 10x faster feedback.
+description: REPL-driven autonomous development loops for Clojure. Validates with REPL evaluation instead of tests for 10x faster feedback.
+commands:
+  - name: lisa-loop
+    description: Start an autonomous development loop with REPL-first validation
+    args: "<prompt> [--max-iterations N] [--completion-promise TEXT]"
+  - name: cancel-lisa
+    description: Cancel the active Lisa loop
 ---
 
 # Lisa Loop - REPL-Driven Autonomous Development
 
-Lisa Loop is a Clojure-specific enhancement to the [Ralph Wiggum](https://ghuntley.com/ralph/) autonomous development pattern. Named after Lisa Simpson (methodical, analytical), it validates code through REPL evaluation rather than test runs.
+Lisa Loop is forj's native autonomous development loop. Named after Lisa Simpson (methodical, analytical), it validates code through REPL evaluation rather than test runs.
+
+## Commands
+
+### /lisa-loop
+
+Start an autonomous development loop:
+
+```
+/lisa-loop "Build a REST API for users with CRUD operations" --max-iterations 20
+```
+
+**Arguments:**
+- `<prompt>` - The task description (required)
+- `--max-iterations N` - Maximum iterations before stopping (default: 30)
+- `--completion-promise TEXT` - Completion signal (default: "COMPLETE")
+
+### /cancel-lisa
+
+Stop the active loop immediately:
+
+```
+/cancel-lisa
+```
 
 ## The Key Insight
 
 | Approach | Validation | Feedback | Speed |
 |----------|------------|----------|-------|
-| **Ralph Loop** | Run tests | "Test failed" | ~seconds |
+| **Test-based loops** | Run tests | "Test failed" | ~seconds |
 | **Lisa Loop** | REPL eval | `{:expected 1 :actual nil}` | ~10ms |
 
 Lisa sees **actual data**, not just pass/fail. This means faster iteration and fewer wasted cycles.
 
+## How It Works
+
+1. You invoke `/lisa-loop` with your task
+2. Claude works on the task using REPL-driven development
+3. When Claude tries to stop, the **Stop hook** intercepts:
+   - Runs `validate_changed_files` automatically
+   - Injects REPL feedback into context
+   - Continues the loop if not complete
+4. Loop ends when:
+   - Claude outputs `<promise>COMPLETE</promise>` (or your custom promise)
+   - Max iterations reached
+
+**Between each iteration**, you automatically get:
+- Namespace reload results
+- Comment block evaluation outputs
+- Actual return values, not just pass/fail
+
 ## Quick Start
 
-To start a Lisa Loop, use Ralph Wiggum with REPL-first methodology:
+When you (Claude) receive a `/lisa-loop` command:
 
+1. **Parse the arguments** from the user's message
+2. **Initialize the loop** using the `start_loop` MCP tool:
+   ```
+   start_loop with prompt="<the task>", max_iterations=20
+   ```
+3. **Start working** on the task using REPL-driven methodology
+4. **Output completion** when done: `<promise>COMPLETE</promise>`
+
+For `/cancel-lisa`:
 ```
-/ralph-loop "Build feature X using REPL-driven development. After writing each function, reload the namespace and eval the comment block to verify. Only run tests when REPL feedback confirms correctness. Output <promise>COMPLETE</promise> when bb test passes." --max-iterations 30
+cancel_loop (no arguments needed)
 ```
 
-## Instructions
+You can check loop status anytime with the `loop_status` tool.
 
-When you (Claude) are in an autonomous loop working on Clojure code, follow this methodology:
+## Methodology
 
 ### Step 1: Write Code with Comment Blocks
 
@@ -89,79 +144,60 @@ Each checkpoint should be verifiable via REPL evaluation.
 ### Basic Feature Development
 
 ```
-Build a password hashing module using REPL-driven development.
+/lisa-loop "Build a password hashing module.
 
 REQUIREMENTS:
 - hash-password: takes plaintext, returns bcrypt hash
 - verify-password: takes plaintext and hash, returns boolean
 - Both functions should have comment blocks with test expressions
 
-METHODOLOGY:
-1. Write function with (comment ...) block
-2. reload_namespace to pick up changes
-3. eval_comment_block to verify behavior
-4. Iterate until comment block outputs look correct
-5. Run bb test only when REPL confirms correctness
-
 CHECKPOINTS:
-- [ ] hash-password returns string starting with "$2"
+- [ ] hash-password returns string starting with '$2'
 - [ ] verify-password returns true for matching password
 - [ ] verify-password returns false for wrong password
 - [ ] All comment blocks evaluate without error
-- [ ] bb test passes
-
-Output <promise>COMPLETE</promise> when all checkpoints pass.
+- [ ] bb test passes" --max-iterations 15
 ```
 
 ### Refactoring Task
 
 ```
-Refactor the user module to use specs for validation.
+/lisa-loop "Refactor the user module to use specs for validation.
 
-METHODOLOGY - REPL-driven with validation:
+METHODOLOGY:
 1. Add spec definitions
 2. Update functions to use spec validation
-3. After each change:
-   - reload_namespace
-   - eval_comment_block to verify specs work
-   - Check that valid data passes, invalid data fails
+3. After each change, REPL validates specs work
 4. Only run full tests when REPL confirms behavior
 
 CHECKPOINTS:
-- [ ] ::user spec validates correctly (eval in REPL)
+- [ ] ::user spec validates correctly
 - [ ] create-user throws on invalid input
 - [ ] create-user succeeds on valid input
-- [ ] Existing tests still pass
-
-Output <promise>COMPLETE</promise> when done.
+- [ ] Existing tests still pass" --max-iterations 20
 ```
 
 ### Multi-File Feature
 
 ```
-Add JWT authentication to the API.
+/lisa-loop "Add JWT authentication to the API.
 
 PHASES (validate each with REPL before moving on):
 
 Phase 1 - Token generation:
-- Write create-token function
-- Comment block: (create-token {:user-id 1}) => JWT string
-- Verify with eval_comment_block
+- Write create-token function with comment block
+- Verify: (create-token {:user-id 1}) => JWT string
 
 Phase 2 - Token verification:
-- Write verify-token function
-- Comment block: (verify-token (create-token {...})) => claims map
-- Verify with eval_comment_block
+- Write verify-token function with comment block
+- Verify: (verify-token (create-token {...})) => claims map
 
 Phase 3 - Middleware:
-- Write wrap-auth middleware
-- Comment block: test with mock requests
-- Verify with eval_comment_block
+- Write wrap-auth middleware with comment block
+- Test with mock requests
 
 Phase 4 - Integration:
-- Run bb test to verify full integration
-
-Output <promise>COMPLETE</promise> when bb test passes.
+- Run bb test to verify full integration" --max-iterations 30
 ```
 
 ## Why Lisa Loop Works
@@ -180,10 +216,10 @@ Output <promise>COMPLETE</promise> when bb test passes.
 - Don't wait for entire test suite
 - Catch errors earlier in the iteration
 
-### 4. Comment Blocks as Documentation
-- Test expressions serve as usage examples
-- Future developers see expected behavior
-- REPL-friendly exploration
+### 4. Automatic Between-Iteration Validation
+- `validate_changed_files` runs automatically
+- Results injected into your context
+- You see what changed and whether it works
 
 ## Tools to Use
 
@@ -194,7 +230,7 @@ Output <promise>COMPLETE</promise> when bb test passes.
 | `eval_at` | To evaluate specific form at a line |
 | `repl_eval` | For ad-hoc expressions |
 | `run_tests` | Final validation before completing |
-| `validate_changed_files` | Validate all changes at once |
+| `validate_changed_files` | Validate all changes at once (also runs automatically) |
 
 ## Anti-Patterns
 
@@ -219,24 +255,18 @@ Output <promise>COMPLETE</promise> when bb test passes.
 6. bb test (once, at the end)
 ```
 
-## Integration with Ralph Wiggum
-
-Lisa Loop works WITH Ralph Wiggum, not instead of it. Ralph provides the autonomous loop mechanism (Stop hook), Lisa provides the validation methodology.
-
-```
-/ralph-loop "<your task with Lisa methodology>" --max-iterations 30 --completion-promise "COMPLETE"
-```
-
-The Lisa methodology makes each Ralph iteration more effective by catching errors faster.
-
 ## Completion Criteria
 
-A Lisa Loop iteration is complete when:
+A Lisa Loop is complete when:
 
 1. All functions have comment blocks with test expressions
 2. All comment blocks evaluate without error
 3. Comment block outputs match expected behavior
 4. Full test suite passes (`bb test` or `run_tests`)
-5. Code is committed
+5. Code is committed (optional)
 
-Then output your completion promise (e.g., `<promise>COMPLETE</promise>`).
+Then output your completion promise:
+
+```
+<promise>COMPLETE</promise>
+```

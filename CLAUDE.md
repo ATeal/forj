@@ -40,6 +40,9 @@ bb logs                   # View forj logs
 | `analyze_project` | Get project configuration info | - |
 | `run_tests` | Run project tests (auto-detects runner) | - |
 | `validate_changed_files` | Reload + eval comment blocks in changed files | Lisa Loop |
+| `start_loop` | Start a Lisa Loop session | - |
+| `cancel_loop` | Cancel active Lisa Loop | - |
+| `loop_status` | Check Lisa Loop status | - |
 
 ## Architecture
 
@@ -53,7 +56,7 @@ Path-based REPL routing auto-selects clj/cljs/bb REPLs.
 |-------|-------------|
 | `/clj-repl` | Start or connect to Clojure/ClojureScript/Babashka nREPL |
 | `/clj-init` | Create a new Clojure project with interactive configuration |
-| `/lisa-loop` | REPL-driven autonomous loops (enhances Ralph Wiggum) |
+| `/lisa-loop` | REPL-driven autonomous development loops |
 
 ### /clj-init Project Types
 
@@ -63,11 +66,21 @@ Path-based REPL routing auto-selects clj/cljs/bb REPLs.
 - **Full-stack** (fullstack) - Clojure + ClojureScript + shadow-cljs
 - **Mobile** (mobile) - Expo + ClojureScript (Reagent/Re-frame)
 
+### /lisa-loop - Autonomous Development
+
+Start an autonomous development loop:
+```
+/lisa-loop "Build a REST API for users" --max-iterations 20
+```
+
+The Stop hook runs `validate_changed_files` between iterations, injecting REPL feedback.
+Cancel with `/cancel-lisa`.
+
 ## Files
 
 - `packages/forj-mcp/` - MCP server implementation
 - `packages/forj-hooks/` - Claude Code hooks
-- `packages/forj-skill/` - Skill definitions (`/clj-repl`, `/clj-init`)
+- `packages/forj-skill/` - Skill definitions (`/clj-repl`, `/clj-init`, `/lisa-loop`)
 - `examples/` - Example configs for installation
 - `.claude/settings.json` - Hook configuration
 - `.mcp.json` - MCP server configuration
@@ -95,5 +108,6 @@ All tools tested and working:
 - Full test suite (21 tests, 105 assertions)
 
 ### Completed Recently
+- `/lisa-loop` native autonomous development loop with Stop hook
 - `/clj-init` skill with interactive project scaffolding
-- Project templates: bb, lib, api, fullstack
+- Project templates: bb, lib, api, fullstack, mobile
