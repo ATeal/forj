@@ -24,7 +24,7 @@
 
   test:mcp
   {:doc "Test MCP server"
-   :task (shell "bb" "-cp" "packages/forj-mcp/src:packages/forj-mcp/test"
+   :task (shell "bb" "-cp" "packages/forj-mcp/src:packages/forj-hooks/src:packages/forj-mcp/test"
                 "-m" "forj.mcp.test-runner")}
 
   test:hooks
@@ -39,7 +39,7 @@
 
   mcp:dev
   {:doc "Run MCP server in dev mode (for testing)"
-   :task (shell "bb" "-cp" "packages/forj-mcp/src" "-m" "forj.mcp.server")}
+   :task (shell "bb" "-cp" "packages/forj-mcp/src:packages/forj-hooks/src" "-m" "forj.mcp.server")}
 
   mcp:install
   {:doc "Install forj-mcp as bbin script"
@@ -109,9 +109,8 @@
                mcp-file (str (fs/path claude-dir "mcp.json"))
                existing (when (fs/exists? mcp-file)
                           (json/parse-string (slurp mcp-file) true))
-               forj-config {:command "bb"
-                            :args ["-cp" (str forj-path "/packages/forj-mcp/src")
-                                   "-m" "forj.mcp.server"]}
+               forj-config {:command (str forj-path "/bin/forj-mcp")
+                            :args []}
                new-config (update existing :mcpServers assoc :forj forj-config)]
            (fs/create-dirs claude-dir)
            (spit mcp-file (json/generate-string new-config {:pretty true}))
@@ -129,10 +128,13 @@
                                                       :command (str "bb -cp " cp " -m forj.hooks.session-start")}]}]
                              :UserPromptSubmit [{:hooks [{:type "command"
                                                           :command (str "bb -cp " cp " -m forj.hooks.user-prompt")}]}]
-                             ;; Auto-fix Clojure delimiter errors on file write (from clojure-mcp-light)
+                             ;; Paren repair with graceful error handling
                              :PreToolUse [{:matcher "Edit|Write|NotebookEdit"
                                            :hooks [{:type "command"
-                                                    :command "clj-paren-repair-claude-hook"}]}]}
+                                                    :command (str "bb -cp " cp " -m forj.hooks.paren-repair")}]}]
+                             ;; Lisa Loop: Stop hook for autonomous development loops
+                             :Stop [{:hooks [{:type "command"
+                                              :command (str "bb -cp " cp " -m forj.hooks.stop")}]}]}
                new-config (update existing :hooks merge hooks-config)]
            (fs/create-dirs claude-dir)
            (spit settings-file (json/generate-string new-config {:pretty true}))
@@ -186,7 +188,7 @@
            ;; Remove hooks
            (when (fs/exists? settings-file)
              (let [config (json/parse-string (slurp settings-file) true)
-                   new-config (update config :hooks dissoc :SessionStart :UserPromptSubmit :PreToolUse)]
+                   new-config (update config :hooks dissoc :SessionStart :UserPromptSubmit :PreToolUse :Stop)]
                (spit settings-file (json/generate-string new-config {:pretty true}))
                (println "✓ Removed hooks from" settings-file)))
            ;; Remove skills

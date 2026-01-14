@@ -1,274 +1,353 @@
 ---
 name: clj-init
-description: Create a new Clojure project with interactive configuration. Generates project structure, build config, and forj integration.
+description: Scaffold a new Clojure project with minimal structure. Creates hello-world examples only - no assumptions, no custom code.
 ---
 
-# Clojure Project Generator
+# Clojure Project Scaffolding
 
-Create new Clojure/ClojureScript/Babashka projects interactively.
+Create minimal project structure to get started. This is scaffolding, NOT code generation.
 
-## Quick Reference
+## Philosophy
+
+**CRITICAL:** This tool creates the bare minimum to start coding:
+- Directory structure
+- Build configuration (bb.edn, deps.edn, shadow-cljs.edn as needed)
+- Hello world examples with `(comment ...)` blocks
+- Basic .gitignore and README
+
+**DO NOT:**
+- Generate custom endpoints, routes, or pages
+- Make assumptions about business logic
+- Add features not explicitly requested
+- Take creative liberties with code
+
+The user will build their app with forj and REPLs after scaffolding.
+
+## Commands
 
 | Command | Action |
 |---------|--------|
 | `/clj-init` | Start interactive project creation |
 | `/clj-init my-app` | Create project with name "my-app" |
 
-## Instructions
+## Question Flow
 
-### Step 1: Get Project Name
+### Step 1: Project Name
 
-If not provided as argument, ask for project name:
-- Must be valid directory name (lowercase, hyphens ok)
-- Will be used as namespace prefix (hyphens → underscores)
+If not provided, ask for project name (lowercase, hyphens ok).
 
-### Step 2: Choose Project Type
+### Step 2: Backend
 
-Use AskUserQuestion to ask:
-
-**Question:** "What kind of project?"
+**Question:** "Do you need a backend?"
 **Options:**
-1. **Script/CLI** - Babashka only, fast startup, great for scripts and tools
-2. **Library** - deps.edn, portable Clojure library
-3. **Web API** - Backend with Ring/Reitit, ready for deployment
-4. **Full-stack** - Backend + ClojureScript frontend (Reagent/Re-frame)
-5. **Mobile** - Expo + ClojureScript (Reagent/Re-frame) for iOS/Android
+1. **Yes** - Clojure server with Ring/Reitit
+2. **No** - Frontend only or script
 
-### Step 3: Ask About Features
+**If Yes, ask:**
 
-Based on project type, ask relevant follow-up questions using AskUserQuestion:
+**Question:** "Database?"
+**Options:**
+1. **None** - No database
+2. **PostgreSQL** - With next.jdbc and HoneySQL
+3. **SQLite** - Lightweight, file-based
 
-**For Web API / Full-stack:**
-- Database? (None / PostgreSQL / SQLite)
-- Auth? (None / Basic session / JWT)
+**Question:** "API style?"
+**Options:**
+1. **REST** - Standard REST endpoints
+2. **GraphQL** - With Lacinia
+<!-- Future: gRPC -->
 
-**For all projects:**
-- Include Docker setup? (Yes / No)
-- Include CI/GitHub Actions? (Yes / No)
+### Step 3: Frontend
 
-### Step 4: Generate Project
+**Question:** "Do you need a frontend?"
+**Options:**
+1. **None** - Backend/script only
+2. **Web** - ClojureScript with Reagent/Re-frame
+3. **Mobile** - Expo + ClojureScript (React Native)
+4. **Both** - Web and Mobile sharing code
 
-Create the project directory and files based on choices.
+<!-- FUTURE: ClojureDart option for Flutter -->
 
-#### Script/CLI (Babashka)
+**If Web or Both, ask:**
+
+**Question:** "Styling framework?"
+**Options:**
+1. **None** - Plain CSS
+2. **Tailwind** - Utility-first CSS
+3. **Material UI** - React component library
+
+**If Mobile or Both:**
+Mobile uses React Native's built-in styling. No additional framework needed.
+
+### Step 4: Script-Only Option
+
+If user selected No backend AND No frontend, this is a Babashka script project:
+- Just bb.edn with tasks
+- src/ with hello world
+- No deps.edn needed
+
+## Project Structures
+
+### Backend Only (REST)
+
+```
+my-app/
+├── bb.edn                  # Tasks: dev, test, run
+├── deps.edn
+├── src/my_app/
+│   ├── core.clj            # Entry point, start server
+│   └── routes.clj          # Hello world route
+├── test/my_app/
+│   └── core_test.clj
+├── resources/
+├── .gitignore
+└── README.md
+```
+
+**routes.clj (hello world only):**
+```clojure
+(ns my-app.routes
+  (:require [reitit.ring :as ring]))
+
+(defn hello-handler [_request]
+  {:status 200
+   :body {:message "Hello, World!"}})
+
+(def routes
+  [["/hello" {:get hello-handler}]])
+
+(comment
+  ;; REPL exploration
+  (hello-handler {})
+  )
+```
+
+### Web Frontend Only
 
 ```
 my-app/
 ├── bb.edn
-├── src/
-│   └── my_app/
-│       └── core.clj
-├── test/
-│   └── my_app/
-│       └── core_test.clj
+├── shadow-cljs.edn
+├── package.json
+├── src/my_app/
+│   ├── core.cljs           # Init, mount root
+│   └── views.cljs          # Hello world component
+├── resources/public/
+│   └── index.html
 ├── .gitignore
 └── README.md
 ```
 
-**bb.edn:**
+**views.cljs (hello world only):**
 ```clojure
-{:paths ["src" "test"]
- :deps {}
- :tasks
- {dev {:doc "Start development REPL"
-       :task (shell "bb" "--nrepl-server")}
-  test {:doc "Run tests"
-        :task (shell "bb" "-cp" "src:test" "-m" "my-app.core-test")}
-  run {:doc "Run the application"
-       :task (exec 'my-app.core/-main)}}}
-```
+(ns my-app.views)
 
-**src/my_app/core.clj:**
-```clojure
-(ns my-app.core)
-
-(defn greet [name]
-  (str "Hello, " name "!"))
-
-(defn -main [& args]
-  (println (greet (or (first args) "World"))))
+(defn app []
+  [:div
+   [:h1 "Hello, World!"]
+   [:p "Edit src/my_app/views.cljs and save to reload."]])
 
 (comment
-  ;; REPL-driven development
-  (greet "Claude")
-
-  (-main)
-  (-main "Developer")
+  ;; REPL exploration
+  (app)
   )
 ```
 
-#### Library (deps.edn)
+### Mobile Only (Expo)
 
 ```
 my-app/
-├── deps.edn
-├── src/
-│   └── my_app/
-│       └── core.clj
-├── test/
-│   └── my_app/
-│       └── core_test.clj
-├── .gitignore
-└── README.md
-```
-
-**deps.edn:**
-```clojure
-{:paths ["src"]
- :deps {}
- :aliases
- {:dev {:extra-paths ["test"]
-        :extra-deps {nrepl/nrepl {:mvn/version "1.1.0"}
-                     cider/cider-nrepl {:mvn/version "0.45.0"}}
-        :main-opts ["-m" "nrepl.cmdline" "--interactive"]}
-  :test {:extra-paths ["test"]
-         :extra-deps {io.github.cognitect-labs/test-runner
-                      {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
-         :main-opts ["-m" "cognitect.test-runner"]
-         :exec-fn cognitect.test-runner.api/test}}}
-```
-
-#### Web API
-
-```
-my-app/
-├── deps.edn
-├── src/
-│   └── my_app/
-│       ├── core.clj
-│       ├── routes.clj
-│       └── handlers.clj
-├── test/
-│   └── my_app/
-│       └── routes_test.clj
-├── resources/
-├── .gitignore
-└── README.md
-```
-
-**deps.edn (add to base):**
-```clojure
-{:deps {org.clojure/clojure {:mvn/version "1.11.1"}
-        ring/ring-core {:mvn/version "1.10.0"}
-        ring/ring-jetty-adapter {:mvn/version "1.10.0"}
-        metosin/reitit {:mvn/version "0.7.0"}
-        metosin/muuntaja {:mvn/version "0.6.8"}}}
-```
-
-#### Full-stack
-
-Includes Web API structure plus:
-
-```
-my-app/
-├── deps.edn
-├── shadow-cljs.edn
-├── src/
-│   ├── clj/my_app/        # Backend
-│   │   ├── core.clj
-│   │   └── routes.clj
-│   └── cljs/my_app/       # Frontend
-│       ├── core.cljs
-│       └── views.cljs
-├── resources/
-│   └── public/
-│       └── index.html
-└── ...
-```
-
-#### Mobile (Expo + ClojureScript)
-
-```
-my-app/
+├── bb.edn
 ├── shadow-cljs.edn
 ├── package.json
-├── app.json              # Expo config
-├── index.js              # JS entry (disables Metro HMR)
+├── app.json
+├── index.js
 ├── babel.config.js
-├── src/
-│   ├── my_app/
-│   │   ├── core.cljs     # App entry, init/start
-│   │   ├── views.cljs    # React Native components
-│   │   ├── events.cljs   # Re-frame events
-│   │   └── subs.cljs     # Re-frame subscriptions
-│   └── expo/
-│       └── root.cljs     # Expo root component helper
-├── assets/               # Icons, splash screens
-├── app/                  # shadow-cljs output (gitignored)
+├── src/my_app/
+│   ├── core.cljs
+│   └── views.cljs          # Hello world screen
+├── src/expo/
+│   └── root.cljs
+├── assets/
 ├── .gitignore
 └── README.md
 ```
 
-**shadow-cljs.edn:**
+### Full-Stack (Backend + Web)
+
+```
+my-app/
+├── bb.edn
+├── deps.edn
+├── shadow-cljs.edn
+├── package.json
+├── src/
+│   ├── clj/my_app/         # Backend
+│   │   ├── core.clj
+│   │   └── routes.clj
+│   └── cljs/my_app/        # Frontend
+│       ├── core.cljs
+│       └── views.cljs
+├── resources/public/
+│   └── index.html
+├── .gitignore
+└── README.md
+```
+
+### Full-Stack (Backend + Mobile)
+
+Same as above but with Expo structure instead of web.
+
+### Full-Stack (Backend + Web + Mobile)
+
+```
+my-app/
+├── bb.edn
+├── deps.edn
+├── shadow-cljs.edn
+├── package.json
+├── app.json                 # Expo config
+├── index.js                 # Expo entry
+├── src/
+│   ├── clj/my_app/         # Backend
+│   │   ├── core.clj
+│   │   └── routes.clj
+│   ├── cljs/my_app/        # Shared ClojureScript
+│   │   ├── core.cljs
+│   │   └── views.cljs      # Can be shared between web/mobile
+│   ├── web/my_app/         # Web-specific
+│   │   └── app.cljs
+│   └── mobile/my_app/      # Mobile-specific
+│       └── app.cljs
+├── resources/public/
+├── .gitignore
+└── README.md
+```
+
+### Script (Babashka only)
+
+```
+my-app/
+├── bb.edn
+├── src/my_app/
+│   └── core.clj
+├── .gitignore
+└── README.md
+```
+
+## bb.edn Tasks
+
+All projects use Babashka for task running. Example:
+
 ```clojure
-{:source-paths ["src"]
- :dependencies [[reagent "1.2.0"]
-                [re-frame "1.4.3"]]
- :builds {:app {:target :react-native
-                :init-fn my-app.core/init
-                :output-dir "app"
-                :devtools {:autoload true}}}}
+{:paths ["src"]
+ :tasks
+ {dev {:doc "Start development"
+       :task (do
+               (when (fs/exists? "shadow-cljs.edn")
+                 (shell "npx shadow-cljs watch app"))
+               (when (fs/exists? "deps.edn")
+                 (shell "clj -M:dev")))}
+
+  test {:doc "Run tests"
+        :task (shell "clj -M:test")}
+
+  repl {:doc "Start nREPL"
+        :task (shell "clj -M:dev")}
+
+  ;; For Expo projects
+  mobile {:doc "Start Expo"
+          :task (shell "npx expo start")}
+
+  build {:doc "Production build"
+         :task (do
+                 (when (fs/exists? "shadow-cljs.edn")
+                   (shell "npx shadow-cljs release app"))
+                 (when (fs/exists? "deps.edn")
+                   (shell "clj -M:uberjar")))}}}
 ```
 
-**Development:**
+## DevOps (Minimal)
+
+Only if user asks, add basic deployment configs:
+
+- **Dockerfile** - Simple multi-stage build
+- **Procfile** - For Railway/Heroku
+- **.github/workflows/test.yml** - Basic CI
+
+Do NOT add complex infrastructure. Keep it simple.
+
+## Validation (REQUIRED)
+
+After creating files, ALWAYS verify the project works:
+
+### 1. Validate Dependencies
+
 ```bash
-npm install
-npm run dev              # Starts shadow-cljs watch + Expo
+# For deps.edn projects
+cd my-app && clj -Spath > /dev/null && echo "✓ deps resolve"
+
+# For shadow-cljs projects
+cd my-app && npm install && echo "✓ npm deps installed"
 ```
 
-**Building:**
+If deps fail, fix version numbers immediately. Use known-good versions:
+- `com.github.seancorfield/honeysql {:mvn/version "2.6.1220"}`
+- `com.github.seancorfield/next.jdbc {:mvn/version "1.3.939"}`
+- `metosin/reitit {:mvn/version "0.7.2"}`
+- `ring/ring-core {:mvn/version "1.12.2"}`
+
+### 2. Fix bb.edn Warnings
+
+Always add `:override-builtin true` to repl task:
+```clojure
+repl {:doc "Start nREPL"
+      :override-builtin true
+      :task (shell "clj -M:dev")}
+```
+
+### 3. Smoke Test
+
+Start a REPL to verify compilation:
 ```bash
-npm run shadow:release   # Production ClojureScript build
-npx expo prebuild        # Generate native projects
-npx expo run:ios         # Run on iOS
-npx expo run:android     # Run on Android
+# Babashka (fast)
+bb nrepl-server 1667 &
+sleep 1
+echo "(+ 1 2)" | clj-nrepl-eval -p 1667
+
+# Or JVM Clojure
+clj -M:dev &
 ```
 
-### Step 5: Optional Additions
+### 4. Report Issues
 
-**If PostgreSQL selected:**
-- Add next.jdbc and HoneySQL deps
-- Create src/my_app/db.clj with connection pool setup
-- Add .env.example with DATABASE_URL
+If anything fails during validation, fix it before telling the user the project is ready.
 
-**If Docker selected:**
-- Create Dockerfile (multi-stage for production)
-- Create docker-compose.yml (with db if needed)
+## After Scaffolding
 
-**If CI selected:**
-- Create .github/workflows/test.yml
+Tell the user:
+1. Project created at `./my-app`
+2. Dependencies verified ✓
+3. Start with: `cd my-app && bb dev`
+4. REPLs will auto-connect based on file type
 
-### Step 6: Initialize Git & Report
+**STOP HERE.** Do not start building or generating code. The scaffolding is complete - the user will take over from here.
 
-```bash
-cd my-app
-git init
-git add .
-git commit -m "Initial commit from clj-init"
-```
+Offer to start the REPL with `/clj-repl`.
 
-Tell user:
-- Project created at ./my-app
-- How to start: `cd my-app && bb dev` or `clj -M:dev`
-- Next steps based on project type
+## Templates
 
-### Step 7: Offer to Start REPL
+Templates are in `packages/forj-skill/clj-init/templates/`:
+- `bb/` - Babashka script
+- `lib/` - Library
+- `api/` - Backend API
+- `web/` - Web frontend
+- `mobile/` - Expo mobile
+- `fullstack/` - Combined
+- `common/` - Shared files
 
-Ask if user wants to start a REPL in the new project. If yes, use `/clj-repl` skill.
+## Future Enhancements
 
-## Templates Reference
-
-The skill uses templates from `packages/forj-skill/clj-init/templates/`:
-- `bb/` - Babashka project files
-- `lib/` - Library project files
-- `api/` - Web API project files
-- `fullstack/` - Full-stack project files
-- `mobile/` - Expo + ClojureScript project files
-- `common/` - Shared files (.gitignore, etc.)
-
-## Notes
-
-- Always include a `(comment ...)` block in main files for REPL exploration
-- Use conventional directory structure (src/clj, src/cljs for full-stack)
-- Default to latest stable dependency versions
-- Include forj-friendly setup (nREPL config, test tasks)
+- **ClojureDart** - Flutter target for cross-platform mobile
+- **HTMX** - Server-side rendering option
+- **Electric** - Full-stack reactive apps

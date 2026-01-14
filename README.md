@@ -8,23 +8,21 @@ REPL-driven LLM development for Clojure. Provides seamless Claude Code integrati
 
 | Component | Status | Description |
 |-----------|--------|-------------|
-| forj-mcp | ✅ Complete | MCP server with 8 tools |
-| forj-hooks | ✅ Complete | SessionStart + UserPromptSubmit |
-| forj-skill | ✅ Complete | `/clj-repl` + `/clj-init` skills |
+| forj-mcp | ✅ Complete | MCP server with 12 tools |
+| forj-hooks | ✅ Complete | SessionStart + UserPromptSubmit + Stop |
+| forj-skill | ✅ Complete | `/clj-repl` + `/clj-init` + `/lisa-loop` |
 
 ## Prerequisites
 
 - [Babashka](https://babashka.org/) (bb)
-- [clojure-mcp-light](https://github.com/bhauman/clojure-mcp-light) tools on PATH:
-  - `clj-nrepl-eval` - nREPL client for REPL evaluation
-  - `clj-paren-repair-claude-hook` - Auto-fix delimiter errors on file write
+- [clojure-mcp-light](https://github.com/bhauman/clojure-mcp-light) - provides `clj-nrepl-eval` for REPL communication
 
 ```bash
 # Install Babashka
 curl -sLO https://raw.githubusercontent.com/babashka/babashka/master/install
 chmod +x install && ./install
 
-# Install clojure-mcp-light (provides clj-nrepl-eval and clj-paren-repair-claude-hook)
+# Install clojure-mcp-light (provides clj-nrepl-eval)
 bbin install io.github.bhauman/clojure-mcp-light
 ```
 
@@ -51,6 +49,9 @@ Then restart Claude Code. The tools will be available automatically in any Cloju
 | `analyze_project` | Get project configuration info | - |
 | `run_tests` | Run project tests (auto-detects runner) | - |
 | `validate_changed_files` | Reload + eval comment blocks in changed files | Lisa Loop |
+| `start_loop` | Start a Lisa Loop autonomous session | - |
+| `cancel_loop` | Cancel active Lisa Loop | - |
+| `loop_status` | Check Lisa Loop status | - |
 
 ## Features
 
@@ -64,6 +65,7 @@ Automatically routes code to the right REPL based on file type:
 - **SessionStart**: Detects Clojure projects, injects context about tasks/aliases/REPLs
 - **UserPromptSubmit**: Reminds Claude to use REPL-first workflow
 - **PreToolUse**: Auto-fixes Clojure delimiter errors before file writes (via `clj-paren-repair-claude-hook`)
+- **Stop**: Powers `/lisa-loop` autonomous development loops
 
 ### Skills
 
@@ -71,7 +73,7 @@ Automatically routes code to the right REPL based on file type:
 |-------|-------------|
 | `/clj-repl` | Start or connect to nREPL servers with auto-detection |
 | `/clj-init` | Create new Clojure projects with interactive wizard |
-| `/lisa-loop` | REPL-driven autonomous loops (enhances Ralph Wiggum) |
+| `/lisa-loop` | REPL-driven autonomous development loops |
 
 #### /clj-init Project Types
 - **Script/CLI** - Babashka with tasks
@@ -81,10 +83,23 @@ Automatically routes code to the right REPL based on file type:
 - **Mobile** - Expo + ClojureScript (Reagent/Re-frame)
 
 #### /lisa-loop - REPL-Driven Autonomous Loops
-Enhances [Ralph Wiggum](https://ghuntley.com/ralph/) autonomous loops with REPL-first validation:
+forj's native autonomous development loop, inspired by [Ralph Wiggum](https://ghuntley.com/ralph/):
+
+```bash
+/lisa-loop "Build a REST API for users" --max-iterations 20
+```
+
+**How it works:**
+1. Claude works on the task using REPL-driven development
+2. When Claude tries to stop, the Stop hook intercepts
+3. Automatically runs `validate_changed_files` for REPL feedback
+4. Continues the loop with validation results injected
+5. Ends when `<promise>COMPLETE</promise>` is output or max iterations reached
+
+**Why Lisa Loop?**
 - Validates with REPL evaluation (~10ms) instead of tests (~seconds)
-- See actual data, not just pass/fail
-- Use with: `/ralph-loop "<task with Lisa methodology>" --max-iterations 30`
+- See actual data between iterations, not just pass/fail
+- 10x faster feedback = fewer wasted cycles
 
 ## Project Structure
 
@@ -103,6 +118,8 @@ forj/
 │       ├── clj-init/        # /clj-init skill
 │       │   ├── SKILL.md
 │       │   └── templates/   # Project templates
+│       ├── lisa-loop/       # /lisa-loop skill
+│       │   └── SKILL.md
 │       └── test/forj/
 ├── examples/                 # Config templates
 └── .claude/

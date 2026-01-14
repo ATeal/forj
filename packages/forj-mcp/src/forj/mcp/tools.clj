@@ -2,7 +2,8 @@
   "MCP tool implementations for REPL connectivity."
   (:require [babashka.process :as p]
             [clojure.string :as str]
-            [edamame.core :as edamame]))
+            [edamame.core :as edamame]
+            [forj.hooks.loop-state :as loop-state]))
 
 (def tools
   "Tool definitions for MCP tools/list response."
@@ -91,7 +92,29 @@
                                        :items {:type "string"}
                                        :description "List of file paths to validate (optional - uses git diff if not provided)"}
                                :port {:type "integer"
-                                      :description "nREPL port (auto-discovered if not provided)"}}}}])
+                                      :description "nREPL port (auto-discovered if not provided)"}}}}
+
+   ;; Lisa Loop management tools
+   {:name "start_loop"
+    :description "Start a Lisa Loop autonomous development session. Initializes loop state for REPL-driven iterative development."
+    :inputSchema {:type "object"
+                  :properties {:prompt {:type "string"
+                                        :description "The task/goal for this loop"}
+                               :max_iterations {:type "integer"
+                                                :description "Maximum iterations before stopping (default: 30)"}
+                               :completion_promise {:type "string"
+                                                    :description "Text to output when complete (default: 'COMPLETE')"}}
+                  :required ["prompt"]}}
+
+   {:name "cancel_loop"
+    :description "Cancel the active Lisa Loop. Clears loop state and allows normal session exit."
+    :inputSchema {:type "object"
+                  :properties {}}}
+
+   {:name "loop_status"
+    :description "Check the status of the current Lisa Loop. Returns active state, iteration count, and history."
+    :inputSchema {:type "object"
+                  :properties {}}}])
 
 ;; =============================================================================
 ;; REPL Type Detection (Path-based routing)
@@ -230,7 +253,8 @@
       (if success
         (if-let [first-port (first (extract-ports ports))]
           (eval-code {:code code :port first-port :timeout timeout})
-          {:success false :error "No nREPL ports found"})
+          {:success false
+           :error "No nREPL server running. Start one with /clj-repl or in a terminal: bb nrepl-server 1667"})
         {:success false :error error}))
     ;; Evaluate with provided port
     (try
@@ -393,8 +417,12 @@
                :value (:value result)}
               result))
           {:success false
-           :error (str "No suitable REPL found for " (name detected-type)
-                       " file. Start one with `bb nrepl` or `clj -M:dev`")})
+           :error (str "No " (name detected-type) " REPL running. Start one with /clj-repl or in a terminal: "
+                       (case detected-type
+                         :clojure "clj -M:dev"
+                         :clojurescript "npx shadow-cljs watch app"
+                         :babashka "bb nrepl-server 1667"
+                         "bb nrepl-server 1667"))})
         {:success false
          :error (str "No form found at line " line)}))
     (catch Exception e
@@ -597,8 +625,12 @@
              :forms-evaluated (count results)
              :results results})
           {:success false
-           :error (str "No suitable REPL found for " (name detected-type)
-                       " file. Start one with `bb nrepl` or `clj -M:dev`")})
+           :error (str "No " (name detected-type) " REPL running. Start one with /clj-repl or in a terminal: "
+                       (case detected-type
+                         :clojure "clj -M:dev"
+                         :clojurescript "npx shadow-cljs watch app"
+                         :babashka "bb nrepl-server 1667"
+                         "bb nrepl-server 1667"))})
         {:success false
          :error (str "No comment block found at or near line " line)}))
     (catch Exception e
@@ -699,10 +731,64 @@
                        :failed (count (filter #(not (:all-passed %)) results))}
              :results results})
           {:success false
-           :error "No nREPL server found. Start one with `bb nrepl` or `clj -M:dev`"})))
+           :error "No nREPL server running. Start one with /clj-repl or in a terminal: bb nrepl-server 1667"})))
     (catch Exception e
       {:success false
        :error (str "Failed to validate files: " (.getMessage e))})))
+
+;; =============================================================================
+;; Lisa Loop Management
+;; =============================================================================
+
+(defn start-loop
+  "Start a Lisa Loop autonomous development session."
+  [{:keys [prompt max_iterations completion_promise]}]
+  (try
+    (let [config {:prompt prompt
+                  :max-iterations (or max_iterations 30)
+                  :completion-promise (or completion_promise "COMPLETE")}
+          state (loop-state/start-loop! config)]
+      {:success true
+       :message "Lisa Loop started"
+       :state state})
+    (catch Exception e
+      {:success false
+       :error (str "Failed to start loop: " (.getMessage e))})))
+
+(defn cancel-loop
+  "Cancel the active Lisa Loop."
+  [_]
+  (try
+    (if (loop-state/active?)
+      (do
+        (loop-state/clear-state!)
+        {:success true
+         :message "Lisa Loop cancelled"})
+      {:success true
+       :message "No active loop to cancel"})
+    (catch Exception e
+      {:success false
+       :error (str "Failed to cancel loop: " (.getMessage e))})))
+
+(defn loop-status
+  "Check the status of the current Lisa Loop."
+  [_]
+  (try
+    (if-let [state (loop-state/read-state)]
+      {:success true
+       :active (:active? state)
+       :iteration (:iteration state)
+       :max-iterations (:max-iterations state)
+       :prompt (:prompt state)
+       :completion-promise (:completion-promise state)
+       :started-at (:started-at state)
+       :validation-history-count (count (:validation-history state))}
+      {:success true
+       :active false
+       :message "No active loop"})
+    (catch Exception e
+      {:success false
+       :error (str "Failed to get loop status: " (.getMessage e))})))
 
 (defn call-tool
   "Dispatch tool call to appropriate handler."
@@ -717,4 +803,7 @@
     "run_tests" (run-tests arguments)
     "eval_comment_block" (eval-comment-block arguments)
     "validate_changed_files" (validate-changed-files arguments)
+    "start_loop" (start-loop arguments)
+    "cancel_loop" (cancel-loop arguments)
+    "loop_status" (loop-status arguments)
     {:success false :error (str "Unknown tool: " name)}))
