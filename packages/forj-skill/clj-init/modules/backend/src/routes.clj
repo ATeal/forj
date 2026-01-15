@@ -1,4 +1,4 @@
-(ns {{namespace}}.routes
+(ns {{project-name}}.routes
   (:require [reitit.ring :as ring]
             [reitit.ring.middleware.parameters :as parameters]
             [jsonista.core :as json]))

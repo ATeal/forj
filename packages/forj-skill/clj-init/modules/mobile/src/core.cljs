@@ -1,7 +1,7 @@
-(ns {{namespace}}.core
+(ns {{project-name}}.core
   (:require [reagent.core :as r]
             [re-frame.core :as rf]
-            [{{namespace}}.views :as views]))
+            [{{project-name}}.views :as views]))
 
 ;; -- App initialization --
 

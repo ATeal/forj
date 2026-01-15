@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "forj": {
-      "command": "/home/user/Projects/github/forj/bin/forj-mcp",
-      "args": []
-    }
-  }
-}

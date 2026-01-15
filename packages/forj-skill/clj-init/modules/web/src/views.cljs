@@ -1,4 +1,4 @@
-(ns {{namespace}}.views
+(ns {{project-name}}.views
   (:require [re-frame.core :as rf]))
 
 (defn app []

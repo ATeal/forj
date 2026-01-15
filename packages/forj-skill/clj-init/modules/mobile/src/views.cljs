@@ -1,4 +1,4 @@
-(ns {{namespace}}.views
+(ns {{project-name}}.views
   (:require [reagent.core :as r]
             [re-frame.core :as rf]
             ["react-native" :as rn]))

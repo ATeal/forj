@@ -7,6 +7,6 @@
  :builds
  {:app
   {:target :react-native
-   :init-fn {{namespace}}.core/init
+   :init-fn expo.root/init
    :output-dir "app"
    :devtools {:autoload true}}}}
