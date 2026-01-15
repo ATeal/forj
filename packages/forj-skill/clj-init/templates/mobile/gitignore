@@ -41,3 +41,6 @@ npm-debug.*
 .idea/
 *.swp
 *~
+
+# Forj (REPL logs, temp files)
+.forj/

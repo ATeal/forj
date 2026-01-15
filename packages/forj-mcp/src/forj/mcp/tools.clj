@@ -8,12 +8,14 @@
 (def tools
   "Tool definitions for MCP tools/list response."
   [{:name "repl_eval"
-    :description "Evaluate Clojure code in an nREPL server. Returns the evaluation result or error."
+    :description "Evaluate Clojure code in an nREPL server. Returns the evaluation result or error. Provide 'file' for automatic REPL type selection (clj/cljs/bb) based on file path."
     :inputSchema {:type "object"
                   :properties {:code {:type "string"
                                       :description "Clojure code to evaluate"}
                                :port {:type "integer"
                                       :description "nREPL port (auto-discovered if not provided)"}
+                               :file {:type "string"
+                                      :description "Optional file path for REPL type auto-selection (e.g., .cljs files use shadow REPL)"}
                                :timeout {:type "integer"
                                          :description "Timeout in milliseconds (default: 120000)"}}
                   :required ["code"]}}
@@ -64,14 +66,14 @@
                   :required ["file" "line"]}}
 
    {:name "run_tests"
-    :description "Run tests for a Clojure project. Auto-detects test runner (bb test, clj -M:test, lein test)."
+    :description "Run tests for a Clojure/ClojureScript project. Auto-detects test runner (bb test, clj -M:test, shadow-cljs compile test, lein test)."
     :inputSchema {:type "object"
                   :properties {:path {:type "string"
                                       :description "Project path (defaults to current directory)"}
                                :namespace {:type "string"
                                            :description "Specific namespace to test (optional)"}
                                :runner {:type "string"
-                                        :enum ["bb" "clj" "lein" "auto"]
+                                        :enum ["bb" "clj" "shadow" "lein" "auto"]
                                         :description "Test runner to use (auto-detected by default)"}}}}
 
    {:name "eval_comment_block"
@@ -114,7 +116,26 @@
    {:name "loop_status"
     :description "Check the status of the current Lisa Loop. Returns active state, iteration count, and history."
     :inputSchema {:type "object"
-                  :properties {}}}])
+                  :properties {}}}
+
+   {:name "validate_project"
+    :description "Validate a Clojure project setup. Checks bb.edn warnings, deps resolution, npm install status, and Java version for shadow-cljs. Run after scaffolding to catch common issues."
+    :inputSchema {:type "object"
+                  :properties {:path {:type "string"
+                                      :description "Project path (defaults to current directory)"}
+                               :fix {:type "boolean"
+                                     :description "Attempt to auto-fix issues (default: false)"}}}}
+
+   {:name "view_repl_logs"
+    :description "View REPL process logs from .forj/logs/. Returns recent output from backend, shadow-cljs, and expo logs. Use this to debug issues across the full stack."
+    :inputSchema {:type "object"
+                  :properties {:path {:type "string"
+                                      :description "Project path (defaults to current directory)"}
+                               :log {:type "string"
+                                     :enum ["all" "backend" "shadow" "expo"]
+                                     :description "Which log to view: all (default), backend, shadow, or expo"}
+                               :lines {:type "integer"
+                                       :description "Number of lines to return (default: 50)"}}}}])
 
 ;; =============================================================================
 ;; REPL Type Detection (Path-based routing)
@@ -245,16 +266,23 @@
          (remove nil?))))
 
 (defn eval-code
-  "Evaluate Clojure code via clj-nrepl-eval."
-  [{:keys [code port timeout]}]
+  "Evaluate Clojure code via clj-nrepl-eval.
+   When 'file' is provided, uses path-based REPL selection (clj/cljs/bb)."
+  [{:keys [code port file timeout]}]
   (if-not port
     ;; Auto-discover port if not provided
     (let [{:keys [success ports error]} (discover-repls)]
       (if success
-        (if-let [first-port (first (extract-ports ports))]
-          (eval-code {:code code :port first-port :timeout timeout})
+        ;; Use path-based selection if file provided, otherwise first port
+        (if-let [selected-port (if file
+                                 (select-repl-for-file ports file)
+                                 (first (extract-ports ports)))]
+          (eval-code {:code code :port selected-port :timeout timeout})
           {:success false
-           :error "No nREPL server running. Start one with /clj-repl or in a terminal: bb nrepl-server 1667"})
+           :error (if file
+                    (let [detected-type (detect-repl-type file)]
+                      (str "No " (name detected-type) " REPL running. Start one with /clj-repl"))
+                    "No nREPL server running. Start one with /clj-repl or in a terminal: bb nrepl-server 1667")})
         {:success false :error error}))
     ;; Evaluate with provided port
     (try
@@ -488,12 +516,26 @@
       {:success false
        :error (str "Failed to analyze project: " (.getMessage e))})))
 
+(defn- has-shadow-test-build?
+  "Check if shadow-cljs.edn has a :test build."
+  [path]
+  (let [shadow-file (java.io.File. path "shadow-cljs.edn")]
+    (when (.exists shadow-file)
+      (try
+        (let [content (edamame/parse-string (slurp shadow-file))]
+          (contains? (:builds content) :test))
+        (catch Exception _ false)))))
+
 (defn- detect-test-runner
-  "Detect the appropriate test runner for a project."
+  "Detect the appropriate test runner for a project.
+   Returns :bb, :clj, :shadow, or :lein."
   [path]
   (let [file-exists? (fn [f] (.exists (java.io.File. path f)))]
     (cond
       (file-exists? "bb.edn") :bb
+      ;; Check for shadow-cljs with :test build
+      (and (file-exists? "shadow-cljs.edn")
+           (has-shadow-test-build? path)) :shadow
       (file-exists? "deps.edn") :clj
       (file-exists? "project.clj") :lein
       :else nil)))
@@ -508,6 +550,11 @@
     :clj (if namespace
            ["clojure" "-M:test" "-n" namespace]
            ["clojure" "-M:test"])
+    :shadow (if namespace
+              ;; For shadow-cljs, namespace filtering requires custom setup
+              ;; Just run the :test build for now
+              ["npx" "shadow-cljs" "compile" "test"]
+              ["npx" "shadow-cljs" "compile" "test"])
     :lein (if namespace
             ["lein" "test" namespace]
             ["lein" "test"])
@@ -790,6 +837,311 @@
       {:success false
        :error (str "Failed to get loop status: " (.getMessage e))})))
 
+;; =============================================================================
+;; Project Validation
+;; =============================================================================
+
+(defn- check-bb-override-builtin
+  "Check if bb.edn has repl task without :override-builtin true."
+  [path]
+  (let [bb-file (java.io.File. path "bb.edn")]
+    (when (.exists bb-file)
+      (try
+        (let [content (slurp bb-file)
+              edn (read-string content)
+              tasks (:tasks edn)]
+          (when (and (contains? tasks 'repl)
+                     (not (get-in tasks ['repl :override-builtin])))
+            {:issue :bb-repl-override
+             :message "bb.edn has 'repl' task without :override-builtin true"
+             :fix-available true}))
+        (catch Exception e
+          {:issue :bb-parse-error
+           :message (str "Failed to parse bb.edn: " (.getMessage e))})))))
+
+(defn- check-bb-tasks-use-clj
+  "Check if bb.edn tasks use 'clj' which requires rlwrap (fails headless)."
+  [path]
+  (let [bb-file (java.io.File. path "bb.edn")]
+    (when (.exists bb-file)
+      (try
+        (let [content (slurp bb-file)]
+          ;; Look for (shell "clj ...) pattern
+          (when (re-find #"\(shell\s+\"clj\s" content)
+            {:issue :bb-tasks-use-clj
+             :message "bb.edn tasks use 'clj' which requires rlwrap - use 'clojure' instead"
+             :fix-available true}))
+        (catch Exception _ nil)))))
+
+(defn- fix-bb-tasks-clj-to-clojure
+  "Replace 'clj' with 'clojure' in bb.edn shell commands."
+  [path]
+  (let [bb-file (java.io.File. path "bb.edn")]
+    (try
+      (let [content (slurp bb-file)
+            fixed (str/replace content #"\"clj " "\"clojure ")]
+        (if (= content fixed)
+          {:fix-failed :bb-tasks-use-clj
+           :message "No 'clj' commands found to replace"}
+          (do
+            (spit bb-file fixed)
+            {:fixed :bb-tasks-use-clj
+             :message "Replaced 'clj' with 'clojure' in bb.edn tasks"})))
+      (catch Exception e
+        {:fix-failed :bb-tasks-use-clj
+         :message (str "Failed to fix: " (.getMessage e))}))))
+
+(defn- check-deps-resolve
+  "Check if deps.edn dependencies resolve."
+  [path]
+  (let [deps-file (java.io.File. path "deps.edn")]
+    (when (.exists deps-file)
+      (try
+        ;; Use 'clojure' not 'clj' since clj requires rlwrap
+        (let [result (p/shell {:out :string :err :string :continue true :dir path}
+                              "clojure" "-Spath")]
+          (when-not (zero? (:exit result))
+            {:issue :deps-resolve-failed
+             :message (str "deps.edn failed to resolve: " (str/trim (:err result)))
+             :output (:err result)}))
+        (catch Exception e
+          {:issue :deps-check-error
+           :message (str "Failed to check deps: " (.getMessage e))})))))
+
+(defn- check-npm-install
+  "Check if package.json exists but node_modules doesn't."
+  [path]
+  (let [pkg-file (java.io.File. path "package.json")
+        node-modules (java.io.File. path "node_modules")]
+    (when (and (.exists pkg-file) (not (.exists node-modules)))
+      {:issue :npm-not-installed
+       :message "package.json exists but node_modules missing - run 'npm install'"
+       :fix-available true})))
+
+(defn- mise-available?
+  "Check if mise is installed."
+  []
+  (try
+    (let [result (p/shell {:out :string :err :string :continue true} "which" "mise")]
+      (zero? (:exit result)))
+    (catch Exception _ false)))
+
+(defn- get-java-version
+  "Get the current Java major version."
+  [path]
+  (try
+    (let [result (p/shell {:out :string :err :string :continue true :dir path}
+                          "java" "-version")
+          version-str (or (:err result) (:out result))
+          version-match (re-find #"version \"(\d+)" version-str)]
+      (when version-match (parse-long (second version-match))))
+    (catch Exception _ nil)))
+
+(defn- check-java-version
+  "Check Java version meets minimum for shadow-cljs."
+  [path min-version]
+  (let [shadow-file (java.io.File. path "shadow-cljs.edn")]
+    (when (.exists shadow-file)
+      (try
+        (let [major-version (get-java-version path)]
+          (when (and major-version (< major-version min-version))
+            {:issue :java-version-low
+             :message (str "Java " major-version " found, but shadow-cljs requires Java " min-version "+")
+             :current-version major-version
+             :required-version min-version
+             :fix-available (mise-available?)}))
+        (catch Exception e
+          {:issue :java-check-error
+           :message (str "Failed to check Java version: " (.getMessage e))})))))
+
+(defn- check-shadow-cljs-upgrade
+  "Suggest shadow-cljs 3.x upgrade if Java 21+ is available."
+  [path]
+  (let [package-json (java.io.File. path "package.json")]
+    (when (.exists package-json)
+      (try
+        (let [content (slurp package-json)
+              ;; Check if using shadow-cljs 2.x
+              shadow-2x? (re-find #"\"shadow-cljs\":\s*\"[\^~]?2\." content)
+              java-version (get-java-version path)]
+          (when (and shadow-2x? java-version (>= java-version 21))
+            {:issue :shadow-cljs-upgrade-available
+             :message (str "Java " java-version " detected. Consider upgrading shadow-cljs to 3.x for ESM support, smaller bundles, and better npm resolution. Update package.json: \"shadow-cljs\": \"^3.3.5\"")
+             :java-version java-version
+             :fix-available false}))
+        (catch Exception _ nil)))))
+
+(defn- fix-bb-override-builtin
+  "Add :override-builtin true to repl task in bb.edn."
+  [path]
+  (let [bb-file (java.io.File. path "bb.edn")]
+    (try
+      (let [content (slurp bb-file)
+            ;; Insert :override-builtin true after the opening brace of repl task
+            ;; Match: repl {... :task
+            ;; Replace with: repl {:override-builtin true ... :task
+            fixed (str/replace content
+                               #"(repl\s+\{)([^}]*?)(:task)"
+                               "$1:override-builtin true\n        $2$3")]
+        (if (= content fixed)
+          {:fix-failed :bb-repl-override
+           :message "Could not find repl task pattern to fix"}
+          (do
+            (spit bb-file fixed)
+            {:fixed :bb-repl-override
+             :message "Added :override-builtin true to repl task"})))
+      (catch Exception e
+        {:fix-failed :bb-repl-override
+         :message (str "Failed to fix: " (.getMessage e))}))))
+
+(defn- run-npm-install
+  "Run npm install in the project directory."
+  [path]
+  (try
+    (let [result (p/shell {:out :string :err :string :continue true :dir path}
+                          "npm" "install")]
+      (if (zero? (:exit result))
+        {:fixed :npm-install
+         :message "Ran npm install successfully"}
+        {:fix-failed :npm-install
+         :message (str "npm install failed: " (:err result))}))
+    (catch Exception e
+      {:fix-failed :npm-install
+       :message (str "Failed to run npm install: " (.getMessage e))})))
+
+(defn- fix-java-version-mise
+  "Create .mise.toml with Java 21 for shadow-cljs projects."
+  [path]
+  (let [mise-file (java.io.File. path ".mise.toml")]
+    (try
+      (if (.exists mise-file)
+        ;; Append java to existing file
+        (let [content (slurp mise-file)]
+          (if (str/includes? content "java")
+            {:fix-failed :java-version
+             :message ".mise.toml already has java configured"}
+            (do
+              (spit mise-file (str content "\n[tools]\njava = \"21\"\n"))
+              {:fixed :java-version
+               :message "Added java = \"21\" to .mise.toml - run 'mise install' to install"})))
+        ;; Create new file
+        (do
+          (spit mise-file "[tools]\njava = \"21\"\n")
+          {:fixed :java-version
+           :message "Created .mise.toml with java = \"21\" - run 'mise install' to install"}))
+      (catch Exception e
+        {:fix-failed :java-version
+         :message (str "Failed to create .mise.toml: " (.getMessage e))}))))
+
+(defn validate-project
+  "Validate a Clojure project setup. Checks common issues after scaffolding."
+  [{:keys [path fix] :or {path "." fix false}}]
+  (try
+    (let [;; Run all checks
+          checks [(check-bb-override-builtin path)
+                  (check-bb-tasks-use-clj path)
+                  (check-deps-resolve path)
+                  (check-npm-install path)
+                  (check-java-version path 21)
+                  (check-shadow-cljs-upgrade path)]
+          issues (remove nil? checks)
+
+          ;; Apply fixes if requested
+          fixes (when fix
+                  (remove nil?
+                          [(when (some #(= (:issue %) :bb-repl-override) issues)
+                             (fix-bb-override-builtin path))
+                           (when (some #(= (:issue %) :bb-tasks-use-clj) issues)
+                             (fix-bb-tasks-clj-to-clojure path))
+                           (when (some #(= (:issue %) :npm-not-installed) issues)
+                             (run-npm-install path))
+                           ;; NOTE: Java version fix via mise disabled - npm install usually
+                           ;; resolves shadow-cljs issues. Enable if mise setup is desired:
+                           #_(when (some #(and (= (:issue %) :java-version-low)
+                                               (:fix-available %)) issues)
+                               (fix-java-version-mise path))]))
+
+          ;; Re-check issues after fixes to update status
+          ;; Java version is informational only (doesn't block success)
+          remaining-issues (if fix
+                             (remove nil?
+                                     [(check-bb-override-builtin path)
+                                      (check-bb-tasks-use-clj path)
+                                      (check-deps-resolve path)
+                                      (check-npm-install path)])
+                             ;; Filter out informational issues for success check
+                             (remove #(= (:issue %) :java-version-low) issues))
+          ;; Keep java version in issues for info, but don't let it block success
+          info-issues (filter #(= (:issue %) :java-version-low) issues)
+          summary (cond
+                    (seq remaining-issues)
+                    (str (count remaining-issues) " issue(s) found"
+                         (when (seq fixes)
+                           (str ", " (count (filter :fixed fixes)) " fixed")))
+                    (seq info-issues)
+                    (str "All checks passed (info: " (str/join ", " (map :message info-issues)) ")")
+                    :else "All checks passed")]
+      {:success (empty? remaining-issues)
+       :path path
+       :issues (vec issues)
+       :fixes (vec fixes)
+       :info (vec info-issues)
+       :remaining-issues (when fix (vec remaining-issues))
+       :summary summary
+         ;; Server expects :error when :success is false
+       :error (when (seq remaining-issues)
+                (str summary ": "
+                     (str/join ", " (map :message remaining-issues))))})
+    (catch Exception e
+      {:success false
+       :error (str "Validation failed: " (.getMessage e))})))
+
+(defn- tail-log-file
+  "Read the last N lines from a log file."
+  [file lines]
+  (try
+    (when (.exists file)
+      (let [content (slurp file)
+            all-lines (str/split-lines content)
+            line-count (count all-lines)
+            start-idx (max 0 (- line-count lines))]
+        (str/join "\n" (subvec (vec all-lines) start-idx))))
+    (catch Exception _ nil)))
+
+(defn view-repl-logs
+  "View REPL process logs from .forj/logs/."
+  [{:keys [path log lines] :or {path "." log "all" lines 50}}]
+  (try
+    (let [logs-dir (java.io.File. path ".forj/logs")
+          log-files {:backend (java.io.File. logs-dir "backend.log")
+                     :shadow (java.io.File. logs-dir "shadow.log")
+                     :expo (java.io.File. logs-dir "expo.log")}
+          selected (if (= log "all")
+                     [:backend :shadow :expo]
+                     [(keyword log)])]
+      (if (.exists logs-dir)
+        (let [results (->> selected
+                           (map (fn [k]
+                                  (let [file (get log-files k)
+                                        content (tail-log-file file lines)]
+                                    (when content
+                                      {:log (name k)
+                                       :file (.getPath file)
+                                       :lines (count (str/split-lines content))
+                                       :content content}))))
+                           (remove nil?))]
+          (if (seq results)
+            {:success true
+             :logs results}
+            {:success true
+             :logs []
+             :message "No log files found. REPLs may not have been started with tee logging."}))
+        {:success false
+         :error (str "Log directory not found: " (.getPath logs-dir) ". Start REPLs with /clj-repl to enable logging.")}))
+    (catch Exception e
+      {:success false
+       :error (str "Failed to read logs: " (.getMessage e))})))
+
 (defn call-tool
   "Dispatch tool call to appropriate handler."
   [{:keys [name arguments]}]
@@ -806,4 +1158,6 @@
     "start_loop" (start-loop arguments)
     "cancel_loop" (cancel-loop arguments)
     "loop_status" (loop-status arguments)
+    "validate_project" (validate-project arguments)
+    "view_repl_logs" (view-repl-logs arguments)
     {:success false :error (str "Unknown tool: " name)}))

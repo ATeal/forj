@@ -1,0 +1,12 @@
+;; shadow-cljs configuration for {{project-name}}
+;; Fullstack mobile: backend + Expo/React Native
+{:source-paths ["src/cljs" "src"]
+
+ :dependencies [[reagent "1.2.0"]
+                [re-frame "1.4.3"]]
+
+ :builds {:app {:target :react-native
+                :init-fn {{namespace}}.core/init
+                :output-dir "app"
+                :compiler-options {:infer-externs :auto}
+                :devtools {:autoload true}}}}

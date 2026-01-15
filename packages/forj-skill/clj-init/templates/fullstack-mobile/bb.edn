@@ -1,0 +1,36 @@
+{:tasks
+ {;; Backend
+  dev {:doc "Start backend nREPL"
+       :task (shell "clojure -M:dev")}
+
+  run {:doc "Run backend server"
+       :task (shell "clojure -M:run")}
+
+  test {:doc "Run tests"
+        :task (shell "clojure -M:test")}
+
+  ;; Frontend (shadow-cljs)
+  shadow {:doc "Start shadow-cljs watch"
+          :task (shell "npx shadow-cljs watch app")}
+
+  ;; Mobile (Expo)
+  mobile {:doc "Start Expo (pass --android, --ios, or no arg for QR)"
+          :task (let [platform (first *command-line-args*)]
+                  (if platform
+                    (shell "npx expo start" platform)
+                    (shell "npx expo start")))}
+
+  android {:doc "Start Expo with Android emulator"
+           :task (shell "npx expo start --android")}
+
+  ios {:doc "Start Expo with iOS simulator"
+       :task (shell "npx expo start --ios")}
+
+  ;; Build
+  build {:doc "Production build"
+         :task (shell "npx shadow-cljs release app")}
+
+  ;; REPL (override builtin)
+  repl {:doc "Start backend nREPL"
+        :override-builtin true
+        :task (shell "clojure -M:dev")}}}

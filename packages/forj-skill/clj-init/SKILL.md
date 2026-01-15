@@ -20,6 +20,9 @@ Create minimal project structure to get started. This is scaffolding, NOT code g
 - Make assumptions about business logic
 - Add features not explicitly requested
 - Take creative liberties with code
+- **Make up dependency versions from memory**
+
+**USE TEMPLATES:** Read files from `packages/forj-skill/clj-init/templates/` and copy them with placeholder substitution. See Templates section below.
 
 The user will build their app with forj and REPLs after scaffolding.
 
@@ -34,7 +37,16 @@ The user will build their app with forj and REPLs after scaffolding.
 
 ### Step 1: Project Name
 
-If not provided, ask for project name (lowercase, hyphens ok).
+If not provided via `/clj-init <name>`, simply ask in plain text:
+
+> "What would you like to name the project?"
+
+Accept any valid name (lowercase, hyphens ok).
+
+**CRITICAL: Do NOT use AskUserQuestion tool for the project name.** Just output the question as text and wait for the user to type the name. The name is free-form text, not a multiple choice.
+
+❌ WRONG: Using AskUserQuestion with options like "my-app", "api-service"
+✅ RIGHT: Just ask "What would you like to name the project?" as plain text output
 
 ### Step 2: Backend
 
@@ -50,6 +62,14 @@ If not provided, ask for project name (lowercase, hyphens ok).
 1. **None** - No database
 2. **PostgreSQL** - With next.jdbc and HoneySQL
 3. **SQLite** - Lightweight, file-based
+
+**When adding database deps, use these exact versions:**
+```clojure
+com.github.seancorfield/next.jdbc {:mvn/version "1.3.1070"}
+com.github.seancorfield/honeysql {:mvn/version "2.7.1350"}
+org.postgresql/postgresql {:mvn/version "42.7.4"}        ; for PostgreSQL
+org.xerial/sqlite-jdbc {:mvn/version "3.47.2.0"}         ; for SQLite
+```
 
 **Question:** "API style?"
 **Options:**
@@ -77,6 +97,20 @@ If not provided, ask for project name (lowercase, hyphens ok).
 3. **Material UI** - React component library
 
 **If Mobile or Both:**
+
+**Question:** "Include React Native Web support?"
+**Options:**
+1. **Yes** - Run in browser for testing (Playwright, Chrome automation)
+2. **No** - Native only (Android/iOS)
+
+*Note: RN Web lets you run the mobile app in a browser, useful for UI testing with tools like Playwright or Claude Chrome MCP.*
+
+If yes, add to package.json dependencies:
+```json
+"react-dom": "19.2.3",
+"react-native-web": "~0.21.2"
+```
+
 Mobile uses React Native's built-in styling. No additional framework needed.
 
 ### Step 4: Script-Only Option
@@ -173,6 +207,7 @@ my-app/
 └── README.md
 ```
 
+
 ### Full-Stack (Backend + Web)
 
 ```
@@ -196,7 +231,33 @@ my-app/
 
 ### Full-Stack (Backend + Mobile)
 
-Same as above but with Expo structure instead of web.
+```
+my-app/
+├── bb.edn
+├── deps.edn                # Backend deps
+├── shadow-cljs.edn         # source-paths: ["src/cljs" "src"]
+├── package.json
+├── app.json                # Expo config
+├── index.js                # Expo entry
+├── babel.config.js
+├── src/
+│   ├── clj/my_app/         # Backend Clojure
+│   │   ├── core.clj
+│   │   ├── routes.clj
+│   │   └── handlers.clj
+│   ├── cljs/my_app/        # ClojureScript (mobile)
+│   │   ├── core.cljs
+│   │   ├── views.cljs
+│   │   ├── events.cljs
+│   │   └── subs.cljs
+│   └── expo/               # Expo root helper
+│       └── root.cljs
+├── resources/
+├── .gitignore
+└── README.md
+```
+
+**Use template:** `fullstack-mobile/`
 
 ### Full-Stack (Backend + Web + Mobile)
 
@@ -237,7 +298,11 @@ my-app/
 
 ## bb.edn Tasks
 
-All projects use Babashka for task running. Example:
+All projects use Babashka for task running.
+
+**CRITICAL:** Always use `clojure` command, NOT `clj`. The `clj` command requires `rlwrap` and fails in headless/background operation. The `clojure` command works without rlwrap.
+
+Example:
 
 ```clojure
 {:paths ["src"]
@@ -247,13 +312,14 @@ All projects use Babashka for task running. Example:
                (when (fs/exists? "shadow-cljs.edn")
                  (shell "npx shadow-cljs watch app"))
                (when (fs/exists? "deps.edn")
-                 (shell "clj -M:dev")))}
+                 (shell "clojure -M:dev")))}
 
   test {:doc "Run tests"
-        :task (shell "clj -M:test")}
+        :task (shell "clojure -M:test")}
 
   repl {:doc "Start nREPL"
-        :task (shell "clj -M:dev")}
+        :override-builtin true
+        :task (shell "clojure -M:dev")}
 
   ;; For Expo projects
   mobile {:doc "Start Expo"
@@ -264,7 +330,7 @@ All projects use Babashka for task running. Example:
                  (when (fs/exists? "shadow-cljs.edn")
                    (shell "npx shadow-cljs release app"))
                  (when (fs/exists? "deps.edn")
-                   (shell "clj -M:uberjar")))}}}
+                   (shell "clojure -M:uberjar")))}}}
 ```
 
 ## DevOps (Minimal)
@@ -279,72 +345,67 @@ Do NOT add complex infrastructure. Keep it simple.
 
 ## Validation (REQUIRED)
 
-After creating files, ALWAYS verify the project works:
+**CRITICAL: Use the `validate_project` MCP tool. Do NOT run bash commands manually for validation.**
 
-### 1. Validate Dependencies
+After creating files, call the forj MCP tool:
 
-```bash
-# For deps.edn projects
-cd my-app && clj -Spath > /dev/null && echo "✓ deps resolve"
-
-# For shadow-cljs projects
-cd my-app && npm install && echo "✓ npm deps installed"
+```
+validate_project with path="./my-app" fix=true
 ```
 
-If deps fail, fix version numbers immediately. Use known-good versions:
-- `com.github.seancorfield/honeysql {:mvn/version "2.6.1220"}`
-- `com.github.seancorfield/next.jdbc {:mvn/version "1.3.939"}`
-- `metosin/reitit {:mvn/version "0.7.2"}`
-- `ring/ring-core {:mvn/version "1.12.2"}`
+This tool handles everything:
+- **bb.edn repl task** - Adds `:override-builtin true` if missing
+- **deps.edn resolution** - Verifies dependencies resolve
+- **npm install** - Runs if package.json exists but node_modules doesn't
+- **Java version** - Reports if Java version is below 21 for shadow-cljs (informational)
 
-### 2. Fix bb.edn Warnings
+If `validate_project` reports `deps-resolve-failed`, fix deps.edn with known-good versions:
+- `com.github.seancorfield/honeysql {:mvn/version "2.7.1350"}`
+- `com.github.seancorfield/next.jdbc {:mvn/version "1.3.1070"}`
+- `metosin/reitit {:mvn/version "0.9.2"}`
+- `ring/ring-core {:mvn/version "1.15.3"}`
 
-Always add `:override-builtin true` to repl task:
-```clojure
-repl {:doc "Start nREPL"
-      :override-builtin true
-      :task (shell "clj -M:dev")}
-```
+Then run `validate_project` again to confirm the fix.
 
-### 3. Smoke Test
-
-Start a REPL to verify compilation:
-```bash
-# Babashka (fast)
-bb nrepl-server 1667 &
-sleep 1
-echo "(+ 1 2)" | clj-nrepl-eval -p 1667
-
-# Or JVM Clojure
-clj -M:dev &
-```
-
-### 4. Report Issues
-
-If anything fails during validation, fix it before telling the user the project is ready.
+**DO NOT tell the user the project is ready until `validate_project` returns `success: true`.**
 
 ## After Scaffolding
 
 Tell the user:
 1. Project created at `./my-app`
 2. Dependencies verified ✓
-3. Start with: `cd my-app && bb dev`
-4. REPLs will auto-connect based on file type
+3. **Next step: Start a new Claude Code session with REPL:**
+   ```
+   cd my-app && claude /clj-repl
+   ```
 
-**STOP HERE.** Do not start building or generating code. The scaffolding is complete - the user will take over from here.
+**IMPORTANT:** Do NOT offer to start the REPL from the current session. The user should exit and restart Claude Code in the new project directory so that:
+- Hooks detect the correct project type
+- REPL starts in the correct working directory
+- File paths are relative to the project root
 
-Offer to start the REPL with `/clj-repl`.
+**STOP HERE.** Do not start building or generating code. The scaffolding is complete.
 
 ## Templates
+
+**CRITICAL: You MUST read and use the template files. Do NOT generate files from memory.**
 
 Templates are in `packages/forj-skill/clj-init/templates/`:
 - `bb/` - Babashka script
 - `lib/` - Library
 - `api/` - Backend API
 - `web/` - Web frontend
-- `mobile/` - Expo mobile
-- `fullstack/` - Combined
+- `mobile/` - Expo mobile (no backend)
+- `fullstack/` - Backend + Web frontend
+- `fullstack-mobile/` - Backend + Expo mobile
 - `common/` - Shared files
+
+**When creating a project:**
+1. Read the relevant template files (e.g., `templates/mobile/package.json`)
+2. Copy contents, replacing `{{project-name}}` and `{{namespace}}` placeholders
+3. Do NOT make up versions or dependencies - use exactly what's in the templates
+
+The templates contain tested, compatible dependency versions. Using outdated versions from memory will cause runtime errors.
 
 ## Future Enhancements
 

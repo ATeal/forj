@@ -29,3 +29,6 @@ Thumbs.db
 dist/
 out/
 public/js/
+
+# Forj (REPL logs, temp files)
+.forj/
