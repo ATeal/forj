@@ -3,7 +3,8 @@
   (:require [babashka.process :as p]
             [clojure.string :as str]
             [edamame.core :as edamame]
-            [forj.hooks.loop-state :as loop-state]))
+            [forj.hooks.loop-state :as loop-state]
+            [forj.scaffold :as scaffold]))
 
 (def tools
   "Tool definitions for MCP tools/list response."
@@ -135,7 +136,19 @@
                                      :enum ["all" "backend" "shadow" "expo"]
                                      :description "Which log to view: all (default), backend, shadow, or expo"}
                                :lines {:type "integer"
-                                       :description "Number of lines to return (default: 50)"}}}}])
+                                       :description "Number of lines to return (default: 50)"}}}}
+
+   {:name "scaffold_project"
+    :description "Create a new Clojure project from composable modules. Merges config files, substitutes version placeholders, and writes output files."
+    :inputSchema {:type "object"
+                  :properties {:project_name {:type "string"
+                                              :description "Name of the project (e.g., 'my-app')"}
+                               :modules {:type "array"
+                                         :items {:type "string"}
+                                         :description "Module names to include: 'script', 'backend', 'web', 'mobile', 'db-postgres', 'db-sqlite'"}
+                               :output_path {:type "string"
+                                             :description "Directory to create project in (default: current directory)"}}
+                  :required ["project_name" "modules"]}}])
 
 ;; =============================================================================
 ;; REPL Type Detection (Path-based routing)
@@ -1160,4 +1173,8 @@
     "loop_status" (loop-status arguments)
     "validate_project" (validate-project arguments)
     "view_repl_logs" (view-repl-logs arguments)
+    "scaffold_project" (scaffold/scaffold-project
+                        {:project-name (:project_name arguments)
+                         :modules (:modules arguments)
+                         :output-path (or (:output_path arguments) ".")})
     {:success false :error (str "Unknown tool: " name)}))

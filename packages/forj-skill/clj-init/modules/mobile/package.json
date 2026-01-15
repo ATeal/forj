@@ -1,0 +1,30 @@
+{
+  "name": "{{project-name}}",
+  "version": "0.0.1",
+  "main": "index.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "shadow:watch": "shadow-cljs watch app",
+    "shadow:release": "shadow-cljs release app",
+    "prebuild": "expo prebuild"
+  },
+  "dependencies": {
+    "create-react-class": "{{npm:create-react-class}}",
+    "expo": "{{npm:expo}}",
+    "expo-asset": "{{npm:expo-asset}}",
+    "expo-status-bar": "{{npm:expo-status-bar}}",
+    "react": "{{npm:react}}",
+    "react-native": "{{npm:react-native}}",
+    "react-native-safe-area-context": "{{npm:react-native-safe-area-context}}",
+    "react-native-screens": "{{npm:react-native-screens}}"
+  },
+  "devDependencies": {
+    "@babel/core": "{{npm:babel-core}}",
+    "babel-preset-expo": "{{npm:babel-preset-expo}}",
+    "concurrently": "{{npm:concurrently}}",
+    "shadow-cljs": "{{npm:shadow-cljs}}"
+  },
+  "private": true
+}

@@ -1,0 +1,20 @@
+# Clojure
+target/
+classes/
+.cpcache/
+*.jar
+
+# Editor
+.idea/
+*.iml
+.vscode/
+.calva/
+.clj-kondo/.cache/
+.lsp/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# forj logs
+.forj/

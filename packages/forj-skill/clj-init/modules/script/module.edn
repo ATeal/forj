@@ -1,0 +1,13 @@
+{:name "script"
+ :description "Babashka script project"
+ :requires ["base"]
+
+ ;; Merge configs
+ :merge {:bb.edn "bb.edn"}
+
+ ;; Source files to copy
+ :sources [{:from "src/core.clj"
+            :to "src/{{namespace}}/core.clj"}]
+
+ ;; Additional gitignore entries
+ :gitignore-append [".cpcache/"]}

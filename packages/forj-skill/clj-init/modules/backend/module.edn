@@ -1,0 +1,16 @@
+{:name "backend"
+ :description "Clojure backend with Ring/Reitit"
+ :requires ["base"]
+
+ ;; Merge configs (deep merge with special handling)
+ :merge {:deps.edn "deps.edn"
+         :bb.edn "bb.edn"}
+
+ ;; Source files to copy
+ :sources [{:from "src/core.clj"
+            :to "src/{{namespace}}/core.clj"}
+           {:from "src/routes.clj"
+            :to "src/{{namespace}}/routes.clj"}]
+
+ ;; Additional gitignore entries
+ :gitignore-append [""]}

@@ -1,0 +1,8 @@
+{:name "db-sqlite"
+ :description "SQLite database support"
+ :requires ["backend"]
+
+ :merge {:deps.edn "deps.edn"}
+
+ :sources [{:from "src/db.clj"
+            :to "src/{{namespace}}/db.clj"}]}

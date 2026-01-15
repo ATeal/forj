@@ -1,0 +1,26 @@
+{:name "mobile"
+ :description "Expo + ClojureScript mobile app"
+ :requires ["base"]
+
+ ;; Merge configs
+ :merge {:shadow-cljs.edn "shadow-cljs.edn"
+         :package.json "package.json"
+         :bb.edn "bb.edn"}
+
+ ;; Copy files as-is
+ :files ["app.json" "index.js" "babel.config.js"]
+
+ ;; Source files to copy
+ :sources [{:from "src/core.cljs"
+            :to "src/{{namespace}}/core.cljs"}
+           {:from "src/views.cljs"
+            :to "src/{{namespace}}/views.cljs"}
+           {:from "src/expo/root.cljs"
+            :to "src/expo/root.cljs"}]
+
+ ;; Additional gitignore entries
+ :gitignore-append ["node_modules/"
+                    ".expo/"
+                    "dist/"
+                    "*.log"
+                    ".shadow-cljs/"]}

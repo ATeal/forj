@@ -1,0 +1,8 @@
+{:paths ["src"]
+ :tasks
+ {run {:doc "Run the script"
+       :task (shell "bb" "-m" "{{namespace}}.core")}
+
+  nrepl {:doc "Start nREPL server"
+         :override-builtin true
+         :task (shell "bb" "nrepl-server")}}}

@@ -1,0 +1,18 @@
+{:name "web"
+ :description "ClojureScript web frontend with Reagent/Re-frame"
+ :requires ["base"]
+
+ :merge {:shadow-cljs.edn "shadow-cljs.edn"
+         :package.json "package.json"
+         :bb.edn "bb.edn"}
+
+ :files ["resources/public/index.html"]
+
+ :sources [{:from "src/core.cljs"
+            :to "src/{{namespace}}/core.cljs"}
+           {:from "src/views.cljs"
+            :to "src/{{namespace}}/views.cljs"}]
+
+ :gitignore-append ["node_modules/"
+                    ".shadow-cljs/"
+                    "resources/public/js/"]}
