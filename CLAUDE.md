@@ -44,6 +44,7 @@ bb logs                   # View forj logs
 | `cancel_loop` | Cancel active Lisa Loop | - |
 | `loop_status` | Check Lisa Loop status | - |
 | `validate_project` | Validate project setup (deps, bb.edn, npm, Java) | - |
+| `scaffold_project` | Create new project from composable modules | - |
 
 ## Architecture
 
@@ -124,4 +125,6 @@ All tools tested and working:
 ### Completed Recently
 - `/lisa-loop` native autonomous development loop with Stop hook
 - `/clj-init` skill with interactive project scaffolding
-- Project templates: bb, lib, api, fullstack, mobile
+- Composable module system for scaffolding (replaces templates)
+- `scaffold_project` MCP tool with config merging
+- Version management via versions.edn (single source of truth)

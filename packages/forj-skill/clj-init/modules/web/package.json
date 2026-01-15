@@ -1,0 +1,12 @@
+{
+  "name": "{{project-name}}",
+  "version": "0.0.1",
+  "scripts": {
+    "shadow:watch": "shadow-cljs watch app",
+    "shadow:release": "shadow-cljs release app"
+  },
+  "devDependencies": {
+    "shadow-cljs": "{{npm:shadow-cljs}}"
+  },
+  "private": true
+}

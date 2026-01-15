@@ -1,0 +1,4 @@
+{:deps
+ {com.github.seancorfield/next.jdbc {:mvn/version "{{clj:com.github.seancorfield/next.jdbc}}"}
+  com.github.seancorfield/honeysql {:mvn/version "{{clj:com.github.seancorfield/honeysql}}"}
+  org.postgresql/postgresql {:mvn/version "{{clj:org.postgresql/postgresql}}"}}}

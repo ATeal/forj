@@ -1,0 +1,9 @@
+{:name "base"
+ :description "Common files for all Clojure projects"
+ :requires []  ;; No dependencies on other modules
+
+ ;; Files to copy (relative to module directory)
+ :files ["gitignore" "README.md"]
+
+ ;; File rename mapping (source -> dest)
+ :rename {"gitignore" ".gitignore"}}

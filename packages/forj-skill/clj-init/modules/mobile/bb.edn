@@ -1,0 +1,15 @@
+{:tasks
+ {shadow {:doc "Start shadow-cljs watch"
+          :task (shell "npx" "shadow-cljs" "watch" "app")}
+
+  mobile {:doc "Start Expo"
+          :task (shell "npx" "expo" "start")}
+
+  android {:doc "Start on Android"
+           :task (shell "npx" "expo" "run:android")}
+
+  ios {:doc "Start on iOS"
+       :task (shell "npx" "expo" "run:ios")}
+
+  release {:doc "Build release"
+           :task (shell "npx" "shadow-cljs" "release" "app")}}}

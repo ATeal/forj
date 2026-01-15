@@ -1,6 +1,6 @@
 ---
 name: clj-init
-description: Scaffold a new Clojure project with minimal structure. Creates hello-world examples only - no assumptions, no custom code.
+description: Scaffold a new Clojure project with composable modules. Creates hello-world examples only - no assumptions, no custom code.
 ---
 
 # Clojure Project Scaffolding
@@ -20,33 +20,55 @@ Create minimal project structure to get started. This is scaffolding, NOT code g
 - Make assumptions about business logic
 - Add features not explicitly requested
 - Take creative liberties with code
-- **Make up dependency versions from memory**
-
-**USE TEMPLATES:** Read files from `packages/forj-skill/clj-init/templates/` and copy them with placeholder substitution. See Templates section below.
 
 The user will build their app with forj and REPLs after scaffolding.
 
-## Commands
+## Usage Modes
 
-| Command | Action |
-|---------|--------|
-| `/clj-init` | Start interactive project creation |
-| `/clj-init my-app` | Create project with name "my-app" |
+### Direct Mode (Power Users)
 
-## Question Flow
+Skip questions with flags:
+
+```
+/clj-init my-app --backend --db postgres --web
+/clj-init my-app --mobile
+/clj-init my-app --backend --mobile
+/clj-init my-app --script
+```
+
+**Flags:**
+| Flag | Module | Description |
+|------|--------|-------------|
+| `--backend` | backend | Clojure server with Ring/Reitit |
+| `--db postgres` | db-postgres | PostgreSQL with next.jdbc |
+| `--db sqlite` | db-sqlite | SQLite with next.jdbc |
+| `--web` | web | ClojureScript web (Reagent/Re-frame) |
+| `--mobile` | mobile | Expo + ClojureScript |
+| `--script` | script | Babashka script only |
+
+**Examples:**
+- `/clj-init api-server --backend --db postgres` → Backend + PostgreSQL
+- `/clj-init my-site --web` → Web frontend only
+- `/clj-init my-tool --script` → Babashka script
+
+### Guided Mode (Interactive)
+
+```
+/clj-init
+/clj-init my-app
+```
+
+If no flags provided, ask questions to determine modules.
+
+## Question Flow (Guided Mode)
 
 ### Step 1: Project Name
 
-If not provided via `/clj-init <name>`, simply ask in plain text:
+If not provided, ask in plain text:
 
 > "What would you like to name the project?"
 
-Accept any valid name (lowercase, hyphens ok).
-
-**CRITICAL: Do NOT use AskUserQuestion tool for the project name.** Just output the question as text and wait for the user to type the name. The name is free-form text, not a multiple choice.
-
-❌ WRONG: Using AskUserQuestion with options like "my-app", "api-service"
-✅ RIGHT: Just ask "What would you like to name the project?" as plain text output
+**CRITICAL: Do NOT use AskUserQuestion tool for the project name.** Just output the question as text. The name is free-form text, not multiple choice.
 
 ### Step 2: Backend
 
@@ -63,20 +85,6 @@ Accept any valid name (lowercase, hyphens ok).
 2. **PostgreSQL** - With next.jdbc and HoneySQL
 3. **SQLite** - Lightweight, file-based
 
-**When adding database deps, use these exact versions:**
-```clojure
-com.github.seancorfield/next.jdbc {:mvn/version "1.3.1070"}
-com.github.seancorfield/honeysql {:mvn/version "2.7.1350"}
-org.postgresql/postgresql {:mvn/version "42.7.4"}        ; for PostgreSQL
-org.xerial/sqlite-jdbc {:mvn/version "3.47.2.0"}         ; for SQLite
-```
-
-**Question:** "API style?"
-**Options:**
-1. **REST** - Standard REST endpoints
-2. **GraphQL** - With Lacinia
-<!-- Future: gRPC -->
-
 ### Step 3: Frontend
 
 **Question:** "Do you need a frontend?"
@@ -84,288 +92,61 @@ org.xerial/sqlite-jdbc {:mvn/version "3.47.2.0"}         ; for SQLite
 1. **None** - Backend/script only
 2. **Web** - ClojureScript with Reagent/Re-frame
 3. **Mobile** - Expo + ClojureScript (React Native)
-4. **Both** - Web and Mobile sharing code
+4. **Both** - Web and Mobile
 
-<!-- FUTURE: ClojureDart option for Flutter -->
+### Step 4: Script-Only
 
-**If Web or Both, ask:**
+If user selected No backend AND No frontend → Script project (Babashka only)
 
-**Question:** "Styling framework?"
-**Options:**
-1. **None** - Plain CSS
-2. **Tailwind** - Utility-first CSS
-3. **Material UI** - React component library
+## Module Selection
 
-**If Mobile or Both:**
+Based on answers, determine modules for `scaffold_project`:
 
-**Question:** "Include React Native Web support?"
-**Options:**
-1. **Yes** - Run in browser for testing (Playwright, Chrome automation)
-2. **No** - Native only (Android/iOS)
+| Configuration | Modules |
+|---------------|---------|
+| Script only | `["script"]` |
+| Backend only | `["backend"]` |
+| Backend + PostgreSQL | `["backend", "db-postgres"]` |
+| Backend + SQLite | `["backend", "db-sqlite"]` |
+| Web only | `["web"]` |
+| Mobile only | `["mobile"]` |
+| Backend + Web | `["backend", "web"]` |
+| Backend + Mobile | `["backend", "mobile"]` |
+| Backend + Web + Mobile | `["backend", "web", "mobile"]` |
+| Backend + PostgreSQL + Web | `["backend", "db-postgres", "web"]` |
 
-*Note: RN Web lets you run the mobile app in a browser, useful for UI testing with tools like Playwright or Claude Chrome MCP.*
+## Creating the Project
 
-If yes, add to package.json dependencies:
-```json
-"react-dom": "19.2.3",
-"react-native-web": "~0.21.2"
-```
+**CRITICAL: Use the `scaffold_project` MCP tool. Do NOT manually write files.**
 
-Mobile uses React Native's built-in styling. No additional framework needed.
-
-### Step 4: Script-Only Option
-
-If user selected No backend AND No frontend, this is a Babashka script project:
-- Just bb.edn with tasks
-- src/ with hello world
-- No deps.edn needed
-
-## Project Structures
-
-### Backend Only (REST)
+Once you have the project name and modules list:
 
 ```
-my-app/
-├── bb.edn                  # Tasks: dev, test, run
-├── deps.edn
-├── src/my_app/
-│   ├── core.clj            # Entry point, start server
-│   └── routes.clj          # Hello world route
-├── test/my_app/
-│   └── core_test.clj
-├── resources/
-├── .gitignore
-└── README.md
+scaffold_project with:
+  project_name: "my-app"
+  modules: ["backend", "web"]
+  output_path: "." (optional, defaults to current directory)
 ```
 
-**routes.clj (hello world only):**
-```clojure
-(ns my-app.routes
-  (:require [reitit.ring :as ring]))
-
-(defn hello-handler [_request]
-  {:status 200
-   :body {:message "Hello, World!"}})
-
-(def routes
-  [["/hello" {:get hello-handler}]])
-
-(comment
-  ;; REPL exploration
-  (hello-handler {})
-  )
-```
-
-### Web Frontend Only
-
-```
-my-app/
-├── bb.edn
-├── shadow-cljs.edn
-├── package.json
-├── src/my_app/
-│   ├── core.cljs           # Init, mount root
-│   └── views.cljs          # Hello world component
-├── resources/public/
-│   └── index.html
-├── .gitignore
-└── README.md
-```
-
-**views.cljs (hello world only):**
-```clojure
-(ns my-app.views)
-
-(defn app []
-  [:div
-   [:h1 "Hello, World!"]
-   [:p "Edit src/my_app/views.cljs and save to reload."]])
-
-(comment
-  ;; REPL exploration
-  (app)
-  )
-```
-
-### Mobile Only (Expo)
-
-```
-my-app/
-├── bb.edn
-├── shadow-cljs.edn
-├── package.json
-├── app.json
-├── index.js
-├── babel.config.js
-├── src/my_app/
-│   ├── core.cljs
-│   └── views.cljs          # Hello world screen
-├── src/expo/
-│   └── root.cljs
-├── assets/
-├── .gitignore
-└── README.md
-```
-
-
-### Full-Stack (Backend + Web)
-
-```
-my-app/
-├── bb.edn
-├── deps.edn
-├── shadow-cljs.edn
-├── package.json
-├── src/
-│   ├── clj/my_app/         # Backend
-│   │   ├── core.clj
-│   │   └── routes.clj
-│   └── cljs/my_app/        # Frontend
-│       ├── core.cljs
-│       └── views.cljs
-├── resources/public/
-│   └── index.html
-├── .gitignore
-└── README.md
-```
-
-### Full-Stack (Backend + Mobile)
-
-```
-my-app/
-├── bb.edn
-├── deps.edn                # Backend deps
-├── shadow-cljs.edn         # source-paths: ["src/cljs" "src"]
-├── package.json
-├── app.json                # Expo config
-├── index.js                # Expo entry
-├── babel.config.js
-├── src/
-│   ├── clj/my_app/         # Backend Clojure
-│   │   ├── core.clj
-│   │   ├── routes.clj
-│   │   └── handlers.clj
-│   ├── cljs/my_app/        # ClojureScript (mobile)
-│   │   ├── core.cljs
-│   │   ├── views.cljs
-│   │   ├── events.cljs
-│   │   └── subs.cljs
-│   └── expo/               # Expo root helper
-│       └── root.cljs
-├── resources/
-├── .gitignore
-└── README.md
-```
-
-**Use template:** `fullstack-mobile/`
-
-### Full-Stack (Backend + Web + Mobile)
-
-```
-my-app/
-├── bb.edn
-├── deps.edn
-├── shadow-cljs.edn
-├── package.json
-├── app.json                 # Expo config
-├── index.js                 # Expo entry
-├── src/
-│   ├── clj/my_app/         # Backend
-│   │   ├── core.clj
-│   │   └── routes.clj
-│   ├── cljs/my_app/        # Shared ClojureScript
-│   │   ├── core.cljs
-│   │   └── views.cljs      # Can be shared between web/mobile
-│   ├── web/my_app/         # Web-specific
-│   │   └── app.cljs
-│   └── mobile/my_app/      # Mobile-specific
-│       └── app.cljs
-├── resources/public/
-├── .gitignore
-└── README.md
-```
-
-### Script (Babashka only)
-
-```
-my-app/
-├── bb.edn
-├── src/my_app/
-│   └── core.clj
-├── .gitignore
-└── README.md
-```
-
-## bb.edn Tasks
-
-All projects use Babashka for task running.
-
-**CRITICAL:** Always use `clojure` command, NOT `clj`. The `clj` command requires `rlwrap` and fails in headless/background operation. The `clojure` command works without rlwrap.
-
-Example:
-
-```clojure
-{:paths ["src"]
- :tasks
- {dev {:doc "Start development"
-       :task (do
-               (when (fs/exists? "shadow-cljs.edn")
-                 (shell "npx shadow-cljs watch app"))
-               (when (fs/exists? "deps.edn")
-                 (shell "clojure -M:dev")))}
-
-  test {:doc "Run tests"
-        :task (shell "clojure -M:test")}
-
-  repl {:doc "Start nREPL"
-        :override-builtin true
-        :task (shell "clojure -M:dev")}
-
-  ;; For Expo projects
-  mobile {:doc "Start Expo"
-          :task (shell "npx expo start")}
-
-  build {:doc "Production build"
-         :task (do
-                 (when (fs/exists? "shadow-cljs.edn")
-                   (shell "npx shadow-cljs release app"))
-                 (when (fs/exists? "deps.edn")
-                   (shell "clojure -M:uberjar")))}}}
-```
-
-## DevOps (Minimal)
-
-Only if user asks, add basic deployment configs:
-
-- **Dockerfile** - Simple multi-stage build
-- **Procfile** - For Railway/Heroku
-- **.github/workflows/test.yml** - Basic CI
-
-Do NOT add complex infrastructure. Keep it simple.
+The tool handles everything:
+- Merges configs from all modules (deps.edn, bb.edn, shadow-cljs.edn, package.json)
+- Substitutes version placeholders from versions.edn
+- Copies source files with namespace substitution
+- Handles module dependencies (e.g., db-postgres requires backend)
 
 ## Validation (REQUIRED)
 
-**CRITICAL: Use the `validate_project` MCP tool. Do NOT run bash commands manually for validation.**
-
-After creating files, call the forj MCP tool:
+After scaffold_project succeeds, run validation:
 
 ```
 validate_project with path="./my-app" fix=true
 ```
 
-This tool handles everything:
+This tool handles:
 - **bb.edn repl task** - Adds `:override-builtin true` if missing
 - **deps.edn resolution** - Verifies dependencies resolve
 - **npm install** - Runs if package.json exists but node_modules doesn't
-- **Java version** - Reports if Java version is below 21 for shadow-cljs (informational)
-
-If `validate_project` reports `deps-resolve-failed`, fix deps.edn with known-good versions:
-- `com.github.seancorfield/honeysql {:mvn/version "2.7.1350"}`
-- `com.github.seancorfield/next.jdbc {:mvn/version "1.3.1070"}`
-- `metosin/reitit {:mvn/version "0.9.2"}`
-- `ring/ring-core {:mvn/version "1.15.3"}`
-
-Then run `validate_project` again to confirm the fix.
+- **Java version** - Reports if Java version is below 21 for shadow-cljs
 
 **DO NOT tell the user the project is ready until `validate_project` returns `success: true`.**
 
@@ -386,29 +167,33 @@ Tell the user:
 
 **STOP HERE.** Do not start building or generating code. The scaffolding is complete.
 
-## Templates
+## Available Modules
 
-**CRITICAL: You MUST read and use the template files. Do NOT generate files from memory.**
+| Module | Description | Provides |
+|--------|-------------|----------|
+| base | Common files | .gitignore, README.md |
+| script | Babashka script | bb.edn, hello-world src |
+| backend | Ring/Reitit server | deps.edn, bb.edn, core.clj, routes.clj |
+| db-postgres | PostgreSQL support | next.jdbc, honeysql, pg driver |
+| db-sqlite | SQLite support | next.jdbc, honeysql, sqlite driver |
+| web | ClojureScript web | shadow-cljs.edn, package.json, reagent, re-frame |
+| mobile | Expo mobile | shadow-cljs.edn, package.json, app.json, expo config |
 
-Templates are in `packages/forj-skill/clj-init/templates/`:
-- `bb/` - Babashka script
-- `lib/` - Library
-- `api/` - Backend API
-- `web/` - Web frontend
-- `mobile/` - Expo mobile (no backend)
-- `fullstack/` - Backend + Web frontend
-- `fullstack-mobile/` - Backend + Expo mobile
-- `common/` - Shared files
+Modules automatically include their dependencies (e.g., `backend` includes `base`).
 
-**When creating a project:**
-1. Read the relevant template files (e.g., `templates/mobile/package.json`)
-2. Copy contents, replacing `{{project-name}}` and `{{namespace}}` placeholders
-3. Do NOT make up versions or dependencies - use exactly what's in the templates
+## DevOps (Optional)
 
-The templates contain tested, compatible dependency versions. Using outdated versions from memory will cause runtime errors.
+Only if user asks, add basic deployment configs:
+
+- **Dockerfile** - Simple multi-stage build
+- **Procfile** - For Railway/Heroku
+- **.github/workflows/test.yml** - Basic CI
+
+Do NOT add complex infrastructure. Keep it simple.
 
 ## Future Enhancements
 
 - **ClojureDart** - Flutter target for cross-platform mobile
 - **HTMX** - Server-side rendering option
 - **Electric** - Full-stack reactive apps
+- **GraphQL** - Lacinia integration module

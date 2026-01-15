@@ -1,0 +1,12 @@
+{:source-paths ["src"]
+
+ :dependencies
+ [[reagent/reagent "{{cljs:reagent/reagent}}"]
+  [re-frame/re-frame "{{cljs:re-frame/re-frame}}"]]
+
+ :builds
+ {:app
+  {:target :react-native
+   :init-fn {{namespace}}.core/init
+   :output-dir "app"
+   :devtools {:autoload true}}}}

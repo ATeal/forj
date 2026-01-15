@@ -1,0 +1,10 @@
+{:name "db-postgres"
+ :description "PostgreSQL database support"
+ :requires ["backend"]
+
+ ;; Merge into deps.edn
+ :merge {:deps.edn "deps.edn"}
+
+ ;; Source files
+ :sources [{:from "src/db.clj"
+            :to "src/{{namespace}}/db.clj"}]}
