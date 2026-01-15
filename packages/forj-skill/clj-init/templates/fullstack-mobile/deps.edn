@@ -1,9 +1,10 @@
-{:paths ["src" "resources"]
+{:paths ["src/clj" "resources"]
  :deps {org.clojure/clojure {:mvn/version "1.12.0"}
         ring/ring-core {:mvn/version "1.15.3"}
         ring/ring-jetty-adapter {:mvn/version "1.15.3"}
         metosin/reitit {:mvn/version "0.9.2"}
-        metosin/muuntaja {:mvn/version "0.6.10"}}
+        metosin/muuntaja {:mvn/version "0.6.10"}
+        ring-cors/ring-cors {:mvn/version "0.1.13"}}
  :aliases
  {:dev {:extra-paths ["test"]
         :extra-deps {nrepl/nrepl {:mvn/version "1.1.0"}

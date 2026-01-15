@@ -103,18 +103,18 @@
            (println "\n✓ forj installed! Restart Claude Code to activate."))}
 
   install:mcp
-  {:doc "Install MCP server config to ~/.claude/mcp.json"
+  {:doc "Install MCP server config via claude CLI (user scope)"
    :task (let [forj-path (System/getProperty "user.dir")
-               claude-dir (str (fs/path (System/getProperty "user.home") ".claude"))
-               mcp-file (str (fs/path claude-dir "mcp.json"))
-               existing (when (fs/exists? mcp-file)
-                          (json/parse-string (slurp mcp-file) true))
-               forj-config {:command (str forj-path "/bin/forj-mcp")
-                            :args []}
-               new-config (update existing :mcpServers assoc :forj forj-config)]
-           (fs/create-dirs claude-dir)
-           (spit mcp-file (json/generate-string new-config {:pretty true}))
-           (println "✓ MCP config installed to" mcp-file))}
+               launcher (str forj-path "/bin/forj-mcp")]
+           ;; Remove existing forj config if present (ignore errors)
+           (shell {:continue true} "claude" "mcp" "remove" "forj" "--scope" "user")
+           ;; Add forj with correct launcher script
+           (let [result (shell {:continue true} "claude" "mcp" "add" "forj" launcher "--scope" "user")]
+             (if (zero? (:exit result))
+               (println "✓ MCP server 'forj' installed (user scope)")
+               (do
+                 (println "⚠ Failed to install via claude CLI, check if 'claude' is in PATH")
+                 (System/exit 1)))))}
 
   install:hooks
   {:doc "Install hooks config to ~/.claude/settings.json"
@@ -171,20 +171,22 @@
                     (str (fs/path lisa-loop-dir "SKILL.md")) {:replace-existing true})
            (println "✓ /lisa-loop skill installed to" lisa-loop-dir))}
 
+  check-versions
+  {:doc "Check template dependency versions against latest available"
+   :task (shell "bb" "-f" "scripts/check_versions.clj")}
+
   uninstall
   {:doc "Remove forj from Claude Code config"
    :task (let [claude-dir (str (fs/path (System/getProperty "user.home") ".claude"))
-               mcp-file (str (fs/path claude-dir "mcp.json"))
                settings-file (str (fs/path claude-dir "settings.json"))
                clj-repl-dir (str (fs/path claude-dir "skills" "clj-repl"))
                clj-init-dir (str (fs/path claude-dir "skills" "clj-init"))
                lisa-loop-dir (str (fs/path claude-dir "skills" "lisa-loop"))]
-           ;; Remove from MCP config
-           (when (fs/exists? mcp-file)
-             (let [config (json/parse-string (slurp mcp-file) true)
-                   new-config (update config :mcpServers dissoc :forj)]
-               (spit mcp-file (json/generate-string new-config {:pretty true}))
-               (println "✓ Removed forj from" mcp-file)))
+           ;; Remove MCP server via claude CLI
+           (let [result (shell {:continue true} "claude" "mcp" "remove" "forj" "--scope" "user")]
+             (if (zero? (:exit result))
+               (println "✓ Removed forj MCP server")
+               (println "⚠ forj MCP server not found or already removed")))
            ;; Remove hooks
            (when (fs/exists? settings-file)
              (let [config (json/parse-string (slurp settings-file) true)

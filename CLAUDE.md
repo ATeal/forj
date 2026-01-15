@@ -43,6 +43,7 @@ bb logs                   # View forj logs
 | `start_loop` | Start a Lisa Loop session | - |
 | `cancel_loop` | Cancel active Lisa Loop | - |
 | `loop_status` | Check Lisa Loop status | - |
+| `validate_project` | Validate project setup (deps, bb.edn, npm, Java) | - |
 
 ## Architecture
 
@@ -81,9 +82,22 @@ Cancel with `/cancel-lisa`.
 - `packages/forj-mcp/` - MCP server implementation
 - `packages/forj-hooks/` - Claude Code hooks
 - `packages/forj-skill/` - Skill definitions (`/clj-repl`, `/clj-init`, `/lisa-loop`)
+- `bin/forj-mcp` - Launcher script for MCP server
 - `examples/` - Example configs for installation
-- `.claude/settings.json` - Hook configuration
-- `.mcp.json` - MCP server configuration
+
+## MCP Configuration
+
+**IMPORTANT**: Claude Code MCP servers must be configured in `~/.claude.json` (user scope), NOT `~/.claude/mcp.json`.
+
+The `bb install` task uses `claude mcp add --scope user` to register forj correctly.
+
+To manually add/remove:
+```bash
+claude mcp add forj /path/to/forj/bin/forj-mcp --scope user
+claude mcp remove forj --scope user
+```
+
+Debug logs: `~/.cache/claude-cli-nodejs/<project-path>/mcp-logs-forj/*.jsonl`
 
 ## Testing After Session Restart
 
