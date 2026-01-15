@@ -12,40 +12,50 @@
 ;; =============================================================================
 
 (defn- find-forj-root
-  "Find the forj installation root."
+  "Find the forj installation root.
+   Returns a map with :type (:repo or :installed) and :path."
   []
   (or
    ;; Explicit env var
-   (System/getenv "FORJ_ROOT")
+   (when-let [root (System/getenv "FORJ_ROOT")]
+     {:type :env :path root})
    ;; Check if we're in the forj repo
    (when (fs/exists? "packages/forj-skill/clj-init/modules")
-     ".")
-   ;; Check home directory installation
-   (let [home-modules (str (fs/path (System/getProperty "user.home")
-                                    ".claude" "skills" "clj-init" "modules"))]
-     (when (fs/exists? home-modules)
-       (str (fs/path (System/getProperty "user.home") ".claude" "skills" "clj-init"))))
+     {:type :repo :path "."})
+   ;; Check home directory installation (most common case when running via MCP)
+   (let [home-clj-init (str (fs/path (System/getProperty "user.home")
+                                     ".claude" "skills" "clj-init"))]
+     (when (fs/exists? (str (fs/path home-clj-init "modules")))
+       {:type :installed :path home-clj-init}))
    ;; Fall back to discovering from script path
-   (some-> (fs/which "forj-mcp")
-           fs/parent
-           fs/parent
-           str)))
+   (when-let [script-path (fs/which "forj-mcp")]
+     (let [forj-root (str (fs/parent (fs/parent script-path)))]
+       (when (fs/exists? (str (fs/path forj-root "packages" "forj-skill" "clj-init" "modules")))
+         {:type :repo :path forj-root})))))
 
 (defn modules-dir
   "Get path to modules directory."
   []
-  (let [root (find-forj-root)]
-    (when root
-      (let [path (if (= root ".")
-                   "packages/forj-skill/clj-init/modules"
-                   (str (fs/path root "modules")))]
-        (when (fs/exists? path) path)))))
+  (when-let [{:keys [type path]} (find-forj-root)]
+    (let [modules-path (case type
+                         :repo (if (= path ".")
+                                 "packages/forj-skill/clj-init/modules"
+                                 (str (fs/path path "packages" "forj-skill" "clj-init" "modules")))
+                         :installed (str (fs/path path "modules"))
+                         :env (str (fs/path path "modules")))]
+      (when (fs/exists? modules-path) modules-path))))
 
 (defn versions-file
   "Get path to versions.edn."
   []
-  (when-let [mdir (modules-dir)]
-    (str (fs/path (fs/parent mdir) "versions.edn"))))
+  (when-let [{:keys [type path]} (find-forj-root)]
+    (let [versions-path (case type
+                          :repo (if (= path ".")
+                                  "packages/forj-skill/clj-init/versions.edn"
+                                  (str (fs/path path "packages" "forj-skill" "clj-init" "versions.edn")))
+                          :installed (str (fs/path path "versions.edn"))
+                          :env (str (fs/path path "versions.edn")))]
+      (when (fs/exists? versions-path) versions-path))))
 
 ;; =============================================================================
 ;; Version Resolution
