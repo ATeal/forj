@@ -12,4 +12,5 @@
         :task (shell "clojure" "-M:test")}
 
   run {:doc "Run server"
+       :override-builtin true
        :task (shell "clojure" "-M" "-m" "{{project-name}}.core")}}}
