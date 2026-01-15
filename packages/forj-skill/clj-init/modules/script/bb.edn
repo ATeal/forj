@@ -1,7 +1,7 @@
 {:paths ["src"]
  :tasks
  {run {:doc "Run the script"
-       :task (shell "bb" "-m" "{{namespace}}.core")}
+       :task (shell "bb" "-m" "{{project-name}}.core")}
 
   nrepl {:doc "Start nREPL server"
          :override-builtin true

@@ -18,7 +18,9 @@
     "react": "{{npm:react}}",
     "react-native": "{{npm:react-native}}",
     "react-native-safe-area-context": "{{npm:react-native-safe-area-context}}",
-    "react-native-screens": "{{npm:react-native-screens}}"
+    "react-native-screens": "{{npm:react-native-screens}}",
+    "react-dom": "{{npm:react-dom}}",
+    "react-native-web": "{{npm:react-native-web}}"
   },
   "devDependencies": {
     "@babel/core": "{{npm:babel-core}}",

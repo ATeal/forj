@@ -12,4 +12,4 @@
         :task (shell "clojure" "-M:test")}
 
   run {:doc "Run server"
-       :task (shell "clojure" "-M" "-m" "{{namespace}}.core")}}}
+       :task (shell "clojure" "-M" "-m" "{{project-name}}.core")}}}

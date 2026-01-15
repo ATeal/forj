@@ -1,4 +1,4 @@
-(ns {{namespace}}.db
+(ns {{project-name}}.db
   (:require [next.jdbc :as jdbc]
             [next.jdbc.result-set :as rs]
             [honey.sql :as sql]))

@@ -1,8 +1,9 @@
 (ns expo.root
   (:require [reagent.core :as r]
             ["expo-status-bar" :refer [StatusBar]]
-            ["react-native" :as rn]
-            ["react-native-safe-area-context" :refer [SafeAreaProvider]]))
+            ["react-native-safe-area-context" :refer [SafeAreaProvider]]
+            [{{project-name}}.core :as core]
+            [{{project-name}}.views :as views]))
 
 ;; Root state holds the current app component
 (defonce root-state (r/atom nil))
@@ -10,11 +11,17 @@
 (defn reload-root [app-component]
   (reset! root-state app-component))
 
-(defn App []
+;; Main app wrapper with SafeArea and StatusBar
+(defn app-root []
   [:> SafeAreaProvider
    [:> StatusBar {:style "auto"}]
    (when-let [app @root-state]
      [app])])
 
-;; Export for index.js
-(def ^:export App (r/reactify-component App))
+;; Initialize the app
+(defn init []
+  (core/init)
+  (reload-root views/app))
+
+;; Export for index.js - reactify the root component
+(def ^:export App (r/reactify-component app-root))

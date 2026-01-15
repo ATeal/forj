@@ -1,5 +1,5 @@
-(ns {{namespace}}.core
-  (:require [{{namespace}}.routes :as routes]
+(ns {{project-name}}.core
+  (:require [{{project-name}}.routes :as routes]
             [ring.adapter.jetty :as jetty]))
 
 (defonce server (atom nil))
@@ -31,6 +31,6 @@
   (stop-server)
 
   ;; Test the routes
-  (require '[{{namespace}}.routes :as routes])
+  (require '[{{project-name}}.routes :as routes])
   (routes/app {:request-method :get :uri "/api/hello"})
   )
