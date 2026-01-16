@@ -1,5 +1,5 @@
-{:name "backend"
- :description "Clojure backend with Ring/Reitit"
+{:name "api"
+ :description "Clojure API server with Ring/Reitit"
  :requires ["base"]
 
  ;; Merge configs (deep merge with special handling)

@@ -15,8 +15,8 @@ Start or connect to an nREPL server for REPL-driven development.
 | `/clj-repl bb` | Start Babashka nREPL |
 | `/clj-repl clj` | Start JVM Clojure nREPL |
 | `/clj-repl shadow` | Start shadow-cljs nREPL |
-| `/clj-repl status` | Check running REPLs |
-| `/clj-repl stop` | Stop REPL |
+| `/clj-repl status` | Check tracked + discovered REPLs |
+| `/clj-repl stop` | Stop all tracked REPLs (uses `stop_project` tool) |
 
 ## CRITICAL: Use MCP Tools for REPL Operations
 
@@ -43,9 +43,27 @@ Start or connect to an nREPL server for REPL-driven development.
 
 ## Instructions
 
-### Step 1: Check Current Status
+### Step 1: Check for Existing Processes
 
-Use the MCP tool to discover running REPLs:
+**First, check for tracked processes from a previous session:**
+
+```
+list_tracked_processes
+```
+
+If there are tracked processes that are still alive:
+- Tell the user what's already running (names, ports, PIDs)
+- Ask: "Found existing processes from a previous session. Would you like to:"
+  1. **Keep them** - Use the existing REPLs (recommended if they're working)
+  2. **Restart** - Stop all and start fresh
+  3. **Stop only** - Just stop them, don't start new ones
+
+If processes are tracked but all dead, clean them up silently:
+```
+stop_project
+```
+
+**Then discover running REPLs (may include untracked ones):**
 
 ```
 discover_repls
@@ -84,8 +102,9 @@ If `bb.edn` has relevant tasks, **you MUST use them** instead of raw commands.
 | Task | Use For |
 |------|---------|
 | `bb dev` or `bb repl` | Backend REPL |
-| `bb shadow` | ClojureScript/shadow-cljs |
-| `bb mobile` | Expo |
+| `bb shadow:mobile` | ClojureScript for Expo (outputs to `app/`) |
+| `bb shadow:web` | ClojureScript for browser |
+| `bb expo` / `bb expo:android` / `bb expo:ios` / `bb expo:web` | Expo dev server |
 
 **Only fall back to raw commands if NO bb task exists.**
 
@@ -102,8 +121,19 @@ mkdir -p .forj/logs
 ```bash
 # Pattern: command 2>&1 | tee .forj/logs/<name>.log &
 bb dev 2>&1 | tee .forj/logs/backend.log &
-bb shadow 2>&1 | tee .forj/logs/shadow.log &
+bb shadow:web 2>&1 | tee .forj/logs/shadow.log &   # or shadow:mobile for Expo
 ```
+
+**IMPORTANT: Track each process after starting!**
+
+After each background process starts, call `track_process` with the PID (from Bash tool output):
+```
+track_process with pid=<PID> name="backend-repl" port=<PORT> command="bb dev"
+track_process with pid=<PID> name="shadow-cljs" port=9630 command="bb shadow:mobile"  # or shadow:web
+track_process with pid=<PID> name="expo" port=8081 command="bb expo"
+```
+
+This enables `/clj-repl stop` to cleanly shut down all processes later.
 
 **To view logs later, use the `view_repl_logs` MCP tool:**
 - `view_repl_logs` with `log: "all"` - see all logs at once
@@ -114,7 +144,7 @@ bb shadow 2>&1 | tee .forj/logs/shadow.log &
 ```bash
 mkdir -p .forj/logs
 bb dev 2>&1 | tee .forj/logs/backend.log &
-bb shadow 2>&1 | tee .forj/logs/shadow.log &
+bb shadow:mobile 2>&1 | tee .forj/logs/shadow.log &  # MUST use shadow:mobile for Expo!
 # Then prompt for device (see Step 4a)
 ```
 
@@ -138,12 +168,12 @@ grep -q "react-native-web" package.json && echo "WEB_ENABLED"
 
 **Android:**
 ```bash
-bb android 2>&1 | tee .forj/logs/expo.log &
+bb expo:android 2>&1 | tee .forj/logs/expo.log &
 ```
 
 **iOS:**
 ```bash
-bb ios 2>&1 | tee .forj/logs/expo.log &
+bb expo:ios 2>&1 | tee .forj/logs/expo.log &
 ```
 
 **Physical Device (Manual URL):**
@@ -152,7 +182,7 @@ bb ios 2>&1 | tee .forj/logs/expo.log &
 LOCAL_IP=$(ip route get 1 | awk '{print $7; exit}')
 
 # Start Expo in background with logging
-bb mobile 2>&1 | tee .forj/logs/expo.log &
+bb expo 2>&1 | tee .forj/logs/expo.log &
 
 # Wait for startup
 sleep 3
@@ -164,7 +194,7 @@ echo "  exp://${LOCAL_IP}:8081"
 
 **Web Browser (if react-native-web installed):**
 ```bash
-npx expo start --web 2>&1 | tee .forj/logs/expo.log &
+bb expo:web 2>&1 | tee .forj/logs/expo.log &
 
 # Wait for startup
 sleep 3
@@ -176,7 +206,7 @@ echo "Open http://localhost:8081 in your browser"
 ```bash
 mkdir -p .forj/logs
 bb dev 2>&1 | tee .forj/logs/backend.log &
-bb shadow 2>&1 | tee .forj/logs/shadow.log &
+bb shadow:web 2>&1 | tee .forj/logs/shadow.log &
 ```
 
 **Backend only:**
@@ -232,10 +262,28 @@ repl_eval with code="(+ 1 2)" port=<shadow-port>
 - [ ] Application server running and accepting requests?
 - [ ] Expo running (if mobile project)?
 
+**Check shadow-cljs.edn for dev-http ports:**
+```bash
+grep -o ':dev-http {[0-9]*' shadow-cljs.edn
+```
+
+If `:dev-http` is present (e.g., `{8080 "resources/public"}`), the web app is served on that port.
+
+**Report all services in a table:**
+
+| Service | Port | URL |
+|---------|------|-----|
+| Backend API | 3000 | http://localhost:3000 |
+| Web App (dev-http) | 8080 | http://localhost:8080 |
+| Expo Web | 8081 | http://localhost:8081 |
+| shadow-cljs UI | 9630 | http://localhost:9630 |
+
+**Include only the services actually running for this project type.**
+
 Tell the user:
 - All processes started
-- Port numbers for each
-- URLs (http://localhost:3000, http://localhost:9630, etc.)
+- Port numbers for each service
+- URLs for accessing each service
 - They can now use forj MCP tools
 
 ## Evaluating Code
@@ -248,9 +296,34 @@ repl_eval with code="(+ 1 2 3)"
 
 The tool auto-discovers ports. Do NOT shell out to `clj-nrepl-eval`.
 
-## Stopping a REPL
+## Checking Status (`/clj-repl status`)
 
-Find and kill the process (bash OK here):
+Run both tools and summarize:
+```
+list_tracked_processes
+discover_repls
+```
+
+Report to user:
+- **Tracked processes**: What this session started (with alive/dead status)
+- **Discovered REPLs**: All nREPL servers found (may include untracked ones)
+
+## Stopping REPLs
+
+**Use the `stop_project` MCP tool** to stop all tracked processes:
+
+```
+stop_project
+```
+
+This kills all REPLs, shadow-cljs, and Expo processes that were tracked with `track_process`.
+
+**To check what's tracked before stopping:**
+```
+list_tracked_processes
+```
+
+**Manual fallback** (if processes weren't tracked):
 ```bash
 lsof -i :<port>
 kill $(lsof -t -i :<port>)

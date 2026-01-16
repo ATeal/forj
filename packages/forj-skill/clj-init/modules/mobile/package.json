@@ -6,8 +6,8 @@
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "shadow:watch": "shadow-cljs watch app",
-    "shadow:release": "shadow-cljs release app",
+    "shadow:watch": "shadow-cljs watch mobile",
+    "shadow:release": "shadow-cljs release mobile",
     "prebuild": "expo prebuild"
   },
   "dependencies": {

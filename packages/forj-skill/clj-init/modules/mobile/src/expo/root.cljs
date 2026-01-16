@@ -2,8 +2,8 @@
   (:require [reagent.core :as r]
             ["expo-status-bar" :refer [StatusBar]]
             ["react-native-safe-area-context" :refer [SafeAreaProvider]]
-            [{{project-name}}.core :as core]
-            [{{project-name}}.views :as views]))
+            [mobile.core :as core]
+            [mobile.views :as views]))
 
 ;; Root state holds the current app component
 (defonce root-state (r/atom nil))

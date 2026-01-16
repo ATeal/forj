@@ -1,6 +1,8 @@
 (ns forj.mcp.tools
   "MCP tool implementations for REPL connectivity."
-  (:require [babashka.process :as p]
+  (:require [babashka.fs :as fs]
+            [babashka.process :as p]
+            [clojure.edn :as edn]
             [clojure.string :as str]
             [edamame.core :as edamame]
             [forj.hooks.loop-state :as loop-state]
@@ -148,7 +150,33 @@
                                          :description "Module names to include: 'script', 'backend', 'web', 'mobile', 'db-postgres', 'db-sqlite'"}
                                :output_path {:type "string"
                                              :description "Directory to create project in (default: current directory)"}}
-                  :required ["project_name" "modules"]}}])
+                  :required ["project_name" "modules"]}}
+
+   ;; Process tracking tools
+   {:name "track_process"
+    :description "Track a started process for later cleanup. Call this after starting each background process (REPL, shadow-cljs, Expo). Processes are tracked per-project so /clj-repl stop can kill them."
+    :inputSchema {:type "object"
+                  :properties {:pid {:type "integer"
+                                     :description "Process ID of the started process"}
+                               :name {:type "string"
+                                      :description "Human-readable name (e.g., 'backend-repl', 'shadow-cljs', 'expo')"}
+                               :port {:type "integer"
+                                      :description "Port the process is listening on (optional)"}
+                               :command {:type "string"
+                                         :description "Command that was used to start the process (for reference)"}}
+                  :required ["pid" "name"]}}
+
+   {:name "stop_project"
+    :description "Stop all tracked processes for the current project. Kills REPLs, shadow-cljs, Expo, etc. that were started with /clj-repl. Use this when the user says 'stop' or when ending a session."
+    :inputSchema {:type "object"
+                  :properties {:path {:type "string"
+                                      :description "Project path (defaults to current directory)"}}}}
+
+   {:name "list_tracked_processes"
+    :description "List all tracked processes for the current project. Shows what's been started and can be stopped with stop_project."
+    :inputSchema {:type "object"
+                  :properties {:path {:type "string"
+                                      :description "Project path (defaults to current directory)"}}}}])
 
 ;; =============================================================================
 ;; REPL Type Detection (Path-based routing)
@@ -950,16 +978,36 @@
       (when version-match (parse-long (second version-match))))
     (catch Exception _ nil)))
 
+(defn- get-shadow-cljs-major-version
+  "Get the major version of shadow-cljs from package.json (2 or 3)."
+  [path]
+  (let [package-json (java.io.File. path "package.json")]
+    (when (.exists package-json)
+      (try
+        (let [content (slurp package-json)]
+          (cond
+            (re-find #"\"shadow-cljs\":\s*\"[\^~]?3\." content) 3
+            (re-find #"\"shadow-cljs\":\s*\"[\^~]?2\." content) 2
+            :else nil))
+        (catch Exception _ nil)))))
+
 (defn- check-java-version
-  "Check Java version meets minimum for shadow-cljs."
-  [path min-version]
+  "Check Java version meets minimum for shadow-cljs.
+   shadow-cljs 2.x requires Java 11+, 3.x requires Java 21+."
+  [path]
   (let [shadow-file (java.io.File. path "shadow-cljs.edn")]
     (when (.exists shadow-file)
       (try
-        (let [major-version (get-java-version path)]
+        (let [shadow-major (get-shadow-cljs-major-version path)
+              min-version (case shadow-major
+                            3 21
+                            2 11
+                            21) ;; default to 21 if unknown
+              major-version (get-java-version path)]
           (when (and major-version (< major-version min-version))
             {:issue :java-version-low
-             :message (str "Java " major-version " found, but shadow-cljs requires Java " min-version "+")
+             :message (str "Java " major-version " detected — shadow-cljs "
+                           (or shadow-major "3") ".x requires Java " min-version "+")
              :current-version major-version
              :required-version min-version
              :fix-available (mise-available?)}))
@@ -1022,30 +1070,6 @@
       {:fix-failed :npm-install
        :message (str "Failed to run npm install: " (.getMessage e))})))
 
-(defn- fix-java-version-mise
-  "Create .mise.toml with Java 21 for shadow-cljs projects."
-  [path]
-  (let [mise-file (java.io.File. path ".mise.toml")]
-    (try
-      (if (.exists mise-file)
-        ;; Append java to existing file
-        (let [content (slurp mise-file)]
-          (if (str/includes? content "java")
-            {:fix-failed :java-version
-             :message ".mise.toml already has java configured"}
-            (do
-              (spit mise-file (str content "\n[tools]\njava = \"21\"\n"))
-              {:fixed :java-version
-               :message "Added java = \"21\" to .mise.toml - run 'mise install' to install"})))
-        ;; Create new file
-        (do
-          (spit mise-file "[tools]\njava = \"21\"\n")
-          {:fixed :java-version
-           :message "Created .mise.toml with java = \"21\" - run 'mise install' to install"}))
-      (catch Exception e
-        {:fix-failed :java-version
-         :message (str "Failed to create .mise.toml: " (.getMessage e))}))))
-
 (defn validate-project
   "Validate a Clojure project setup. Checks common issues after scaffolding."
   [{:keys [path fix] :or {path "." fix false}}]
@@ -1055,7 +1079,7 @@
                   (check-bb-tasks-use-clj path)
                   (check-deps-resolve path)
                   (check-npm-install path)
-                  (check-java-version path 21)
+                  (check-java-version path)
                   (check-shadow-cljs-upgrade path)]
           issues (remove nil? checks)
 
@@ -1067,12 +1091,7 @@
                            (when (some #(= (:issue %) :bb-tasks-use-clj) issues)
                              (fix-bb-tasks-clj-to-clojure path))
                            (when (some #(= (:issue %) :npm-not-installed) issues)
-                             (run-npm-install path))
-                           ;; NOTE: Java version fix via mise disabled - npm install usually
-                           ;; resolves shadow-cljs issues. Enable if mise setup is desired:
-                           #_(when (some #(and (= (:issue %) :java-version-low)
-                                               (:fix-available %)) issues)
-                               (fix-java-version-mise path))]))
+                             (run-npm-install path))]))
 
           ;; Re-check issues after fixes to update status
           ;; Java version is informational only (doesn't block success)
@@ -1155,6 +1174,124 @@
       {:success false
        :error (str "Failed to read logs: " (.getMessage e))})))
 
+;; =============================================================================
+;; Process Tracking (for /clj-repl stop)
+;; =============================================================================
+
+(defn- session-file-path
+  "Get the session file path for a project directory.
+   Uses a hash of the absolute path to create a unique filename."
+  [project-path]
+  (let [abs-path (str (fs/absolutize project-path))
+        hash-str (format "%08x" (hash abs-path))
+        sessions-dir (str (fs/path (System/getProperty "user.home") ".forj" "sessions"))]
+    (fs/create-dirs sessions-dir)
+    (str (fs/path sessions-dir (str hash-str ".edn")))))
+
+(defn- read-session
+  "Read session data for a project."
+  [project-path]
+  (let [file (session-file-path project-path)]
+    (when (fs/exists? file)
+      (try
+        (edn/read-string (slurp file))
+        (catch Exception _ nil)))))
+
+(defn- write-session
+  "Write session data for a project."
+  [project-path data]
+  (let [file (session-file-path project-path)]
+    (spit file (pr-str data))))
+
+(defn- process-alive?
+  "Check if a process with given PID is still running."
+  [pid]
+  (try
+    (let [result (p/shell {:out :string :err :string :continue true}
+                          "kill" "-0" (str pid))]
+      (zero? (:exit result)))
+    (catch Exception _ false)))
+
+(defn track-process
+  "Track a process for later cleanup."
+  [{:keys [pid name port command]}]
+  (try
+    (let [path "."
+          session (or (read-session path) {:processes [] :path (str (fs/absolutize path))})
+          process-entry {:pid pid
+                         :name name
+                         :port port
+                         :command command
+                         :started-at (str (java.time.Instant/now))}
+          ;; Remove any existing entry with same name (replacing)
+          existing (remove #(= (:name %) name) (:processes session))
+          updated (assoc session :processes (conj (vec existing) process-entry))]
+      (write-session path updated)
+      {:success true
+       :message (str "Tracking process '" name "' (PID " pid ")")
+       :tracked process-entry})
+    (catch Exception e
+      {:success false
+       :error (str "Failed to track process: " (.getMessage e))})))
+
+(defn list-tracked-processes
+  "List all tracked processes for a project."
+  [{:keys [path] :or {path "."}}]
+  (try
+    (if-let [session (read-session path)]
+      (let [processes (:processes session)
+            ;; Check which are still alive
+            with-status (mapv (fn [p]
+                                (assoc p :alive (process-alive? (:pid p))))
+                              processes)]
+        {:success true
+         :project-path (:path session)
+         :processes with-status
+         :count (count processes)
+         :alive-count (count (filter :alive with-status))})
+      {:success true
+       :processes []
+       :count 0
+       :message "No tracked processes for this project"})
+    (catch Exception e
+      {:success false
+       :error (str "Failed to list processes: " (.getMessage e))})))
+
+(defn stop-project
+  "Stop all tracked processes for a project."
+  [{:keys [path] :or {path "."}}]
+  (try
+    (if-let [session (read-session path)]
+      (let [processes (:processes session)
+            results (mapv (fn [{:keys [pid name]}]
+                            (if (process-alive? pid)
+                              (try
+                                ;; Kill the process and its children
+                                (let [result (p/shell {:out :string :err :string :continue true}
+                                                      "kill" "-TERM" (str pid))]
+                                  (if (zero? (:exit result))
+                                    {:name name :pid pid :stopped true}
+                                    {:name name :pid pid :stopped false :error (:err result)}))
+                                (catch Exception e
+                                  {:name name :pid pid :stopped false :error (.getMessage e)}))
+                              {:name name :pid pid :stopped false :already-dead true}))
+                          processes)
+            stopped-count (count (filter :stopped results))
+            ;; Clear the session file
+            session-file (session-file-path path)]
+        (when (fs/exists? session-file)
+          (fs/delete session-file))
+        {:success true
+         :stopped-count stopped-count
+         :results results
+         :message (str "Stopped " stopped-count " of " (count processes) " processes")})
+      {:success true
+       :stopped-count 0
+       :message "No tracked processes to stop"})
+    (catch Exception e
+      {:success false
+       :error (str "Failed to stop processes: " (.getMessage e))})))
+
 (defn call-tool
   "Dispatch tool call to appropriate handler."
   [{:keys [name arguments]}]
@@ -1177,4 +1314,7 @@
                         {:project-name (:project_name arguments)
                          :modules (:modules arguments)
                          :output-path (or (:output_path arguments) ".")})
+    "track_process" (track-process arguments)
+    "stop_project" (stop-project arguments)
+    "list_tracked_processes" (list-tracked-processes arguments)
     {:success false :error (str "Unknown tool: " name)}))

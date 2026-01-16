@@ -1,15 +1,18 @@
 {:tasks
- {shadow {:doc "Start shadow-cljs watch"
-          :task (shell "npx" "shadow-cljs" "watch" "app")}
+ {shadow:mobile {:doc "Start shadow-cljs for mobile"
+                 :task (shell "npx" "shadow-cljs" "watch" "mobile")}
 
-  mobile {:doc "Start Expo"
-          :task (shell "npx" "expo" "start")}
+  expo {:doc "Start Expo dev server"
+        :task (shell "npx" "expo" "start")}
 
-  android {:doc "Start on Android"
-           :task (shell "npx" "expo" "run:android")}
+  expo:web {:doc "Run Expo in browser"
+            :task (shell "npx" "expo" "start" "--web")}
 
-  ios {:doc "Start on iOS"
-       :task (shell "npx" "expo" "run:ios")}
+  expo:android {:doc "Run on Android"
+                :task (shell "npx" "expo" "run:android")}
 
-  release {:doc "Build release"
-           :task (shell "npx" "shadow-cljs" "release" "app")}}}
+  expo:ios {:doc "Run on iOS"
+            :task (shell "npx" "expo" "run:ios")}
+
+  release:mobile {:doc "Build mobile release"
+                  :task (shell "npx" "shadow-cljs" "release" "mobile")}}}

@@ -10,11 +10,14 @@
  ;; Copy files as-is
  :files ["app.json" "index.js" "babel.config.js"]
 
+ ;; Asset directories to copy
+ :dirs ["assets"]
+
  ;; Source files to copy
  :sources [{:from "src/core.cljs"
-            :to "src/{{namespace}}/core.cljs"}
+            :to "src/mobile/core.cljs"}
            {:from "src/views.cljs"
-            :to "src/{{namespace}}/views.cljs"}
+            :to "src/mobile/views.cljs"}
            {:from "src/expo/root.cljs"
             :to "src/expo/root.cljs"}]
 

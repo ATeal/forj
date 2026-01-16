@@ -1,18 +1,21 @@
-(ns {{project-name}}.core
-  (:require [reagent.dom :as rdom]
+(ns web.core
+  (:require [reagent.dom.client :as rdom]
             [re-frame.core :as rf]
-            [{{project-name}}.views :as views]))
+            [web.views :as views]))
 
-;; -- App initialization --
+;; -- App initialization (React 18+) --
+
+(defonce root (atom nil))
 
 (defn ^:dev/after-load reload []
   (rf/clear-subscription-cache!)
-  (rdom/render [views/app]
-               (.getElementById js/document "app")))
+  (when @root
+    (rdom/render @root [views/app])))
 
 (defn init []
   (rf/dispatch-sync [:initialize-db])
-  (reload))
+  (reset! root (rdom/create-root (.getElementById js/document "app")))
+  (rdom/render @root [views/app]))
 
 ;; -- Re-frame setup --
 

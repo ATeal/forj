@@ -30,16 +30,16 @@ The user will build their app with forj and REPLs after scaffolding.
 Skip questions with flags:
 
 ```
-/clj-init my-app --backend --db postgres --web
+/clj-init my-app --api --db postgres --web
 /clj-init my-app --mobile
-/clj-init my-app --backend --mobile
+/clj-init my-app --api --mobile
 /clj-init my-app --script
 ```
 
 **Flags:**
 | Flag | Module | Description |
 |------|--------|-------------|
-| `--backend` | backend | Clojure server with Ring/Reitit |
+| `--api` | api | Clojure server with Ring/Reitit |
 | `--db postgres` | db-postgres | PostgreSQL with next.jdbc |
 | `--db sqlite` | db-sqlite | SQLite with next.jdbc |
 | `--web` | web | ClojureScript web (Reagent/Re-frame) |
@@ -47,7 +47,7 @@ Skip questions with flags:
 | `--script` | script | Babashka script only |
 
 **Examples:**
-- `/clj-init api-server --backend --db postgres` → Backend + PostgreSQL
+- `/clj-init api-server --api --db postgres` → Backend + PostgreSQL
 - `/clj-init my-site --web` → Web frontend only
 - `/clj-init my-tool --script` → Babashka script
 
@@ -72,7 +72,7 @@ If not provided, ask in plain text:
 
 ### Step 2: Backend
 
-**Question:** "Do you need a backend?"
+**Question:** "Do you need a api?"
 **Options:**
 1. **Yes** - Clojure server with Ring/Reitit
 2. **No** - Frontend only or script
@@ -96,7 +96,7 @@ If not provided, ask in plain text:
 
 ### Step 4: Script-Only
 
-If user selected No backend AND No frontend → Script project (Babashka only)
+If user selected No api AND No frontend → Script project (Babashka only)
 
 ## Module Selection
 
@@ -105,15 +105,15 @@ Based on answers, determine modules for `scaffold_project`:
 | Configuration | Modules |
 |---------------|---------|
 | Script only | `["script"]` |
-| Backend only | `["backend"]` |
-| Backend + PostgreSQL | `["backend", "db-postgres"]` |
-| Backend + SQLite | `["backend", "db-sqlite"]` |
+| Backend only | `["api"]` |
+| Backend + PostgreSQL | `["api", "db-postgres"]` |
+| Backend + SQLite | `["api", "db-sqlite"]` |
 | Web only | `["web"]` |
 | Mobile only | `["mobile"]` |
-| Backend + Web | `["backend", "web"]` |
-| Backend + Mobile | `["backend", "mobile"]` |
-| Backend + Web + Mobile | `["backend", "web", "mobile"]` |
-| Backend + PostgreSQL + Web | `["backend", "db-postgres", "web"]` |
+| Backend + Web | `["api", "web"]` |
+| Backend + Mobile | `["api", "mobile"]` |
+| Backend + Web + Mobile | `["api", "web", "mobile"]` |
+| Backend + PostgreSQL + Web | `["api", "db-postgres", "web"]` |
 
 ## Creating the Project
 
@@ -124,7 +124,7 @@ Once you have the project name and modules list:
 ```
 scaffold_project with:
   project_name: "my-app"
-  modules: ["backend", "web"]
+  modules: ["api", "web"]
   output_path: "." (optional, defaults to current directory)
 ```
 
@@ -132,7 +132,7 @@ The tool handles everything:
 - Merges configs from all modules (deps.edn, bb.edn, shadow-cljs.edn, package.json)
 - Substitutes version placeholders from versions.edn
 - Copies source files with namespace substitution
-- Handles module dependencies (e.g., db-postgres requires backend)
+- Handles module dependencies (e.g., db-postgres requires api)
 
 ## Validation (REQUIRED)
 
@@ -152,10 +152,55 @@ This tool handles:
 
 ## After Scaffolding
 
+### Step 1: Ask About Permissions
+
+**Question:** "Would you like to enable forj tool permissions for this project?"
+**Options:**
+1. **Yes (Recommended)** - Auto-approve forj MCP tools and bb tasks
+2. **No** - I'll approve tools manually as needed
+
+**If Yes**, create `.claude/settings.local.json` in the project:
+
+```bash
+mkdir -p ./my-app/.claude
+```
+
+Then write this file:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(bb:*)",
+      "Bash(mkdir:*)",
+      "Bash(pgrep:*)",
+      "Bash(pkill:*)",
+      "Bash(lsof:*)",
+      "mcp__forj__repl_eval",
+      "mcp__forj__discover_repls",
+      "mcp__forj__reload_namespace",
+      "mcp__forj__doc_symbol",
+      "mcp__forj__eval_at",
+      "mcp__forj__eval_comment_block",
+      "mcp__forj__run_tests",
+      "mcp__forj__analyze_project",
+      "mcp__forj__validate_changed_files",
+      "mcp__forj__track_process",
+      "mcp__forj__stop_project",
+      "mcp__forj__list_tracked_processes",
+      "mcp__forj__view_repl_logs"
+    ]
+  }
+}
+```
+
+### Step 2: Report Success
+
 Tell the user:
 1. Project created at `./my-app`
 2. Dependencies verified ✓
-3. **Next step: Start a new Claude Code session with REPL:**
+3. Permissions configured (if they chose yes)
+4. **Next step: Start a new Claude Code session with REPL:**
    ```
    cd my-app && claude /clj-repl
    ```
@@ -173,13 +218,13 @@ Tell the user:
 |--------|-------------|----------|
 | base | Common files | .gitignore, README.md |
 | script | Babashka script | bb.edn, hello-world src |
-| backend | Ring/Reitit server | deps.edn, bb.edn, core.clj, routes.clj |
+| api | Ring/Reitit server | deps.edn, bb.edn, core.clj, routes.clj |
 | db-postgres | PostgreSQL support | next.jdbc, honeysql, pg driver |
 | db-sqlite | SQLite support | next.jdbc, honeysql, sqlite driver |
 | web | ClojureScript web | shadow-cljs.edn, package.json, reagent, re-frame |
 | mobile | Expo mobile | shadow-cljs.edn, package.json, app.json, expo config |
 
-Modules automatically include their dependencies (e.g., `backend` includes `base`).
+Modules automatically include their dependencies (e.g., `api` includes `base`).
 
 ## DevOps (Optional)
 
