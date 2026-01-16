@@ -63,6 +63,18 @@
 ;; REPL Validation
 ;; =============================================================================
 
+(defn- extract-repl-value
+  "Extract just the value from REPL output.
+   Input: '=> 3\n*======== user | bb ========*'
+   Output: '3'"
+  [output]
+  (when output
+    (let [lines (str/split-lines output)
+          first-line (first lines)]
+      (if (str/starts-with? first-line "=> ")
+        (subs first-line 3)
+        first-line))))
+
 (defn- eval-repl-validation
   "Run a REPL validation using clj-nrepl-eval."
   [{:keys [expression]} port]
@@ -74,7 +86,8 @@
           result (p/shell {:out :string :err :string :continue true}
                           "clj-nrepl-eval" "-p" (str port) "-t" "5000" expr)]
       (if (zero? (:exit result))
-        (let [actual (str/trim (:out result))
+        (let [raw-output (str/trim (:out result))
+              actual (extract-repl-value raw-output)
               passed? (or (nil? expected)
                           (= (str/trim expected) actual))]
           {:passed passed?
