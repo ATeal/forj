@@ -80,13 +80,12 @@
 (defn- spawn-claude-iteration!
   "Spawn a Claude instance for one iteration. Returns the process."
   [project-path prompt config log-file]
-  (let [cmd ["claude" "-p" prompt
+  (p/process {:dir project-path
+              :out log-file
+              :err :out}
+             "claude" "-p" prompt
              "--output-format" "json"
-             "--allowedTools" (:allowed-tools config)]]
-    (p/process {:dir project-path
-                :out log-file
-                :err :out}
-               cmd)))
+             "--allowedTools" (:allowed-tools config)))
 
 (defn- wait-for-process
   "Wait for process to complete, polling at intervals. Returns exit code."
