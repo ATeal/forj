@@ -78,13 +78,17 @@
     (spit signs-path sign-entry :append true)))
 
 (defn- spawn-claude-iteration!
-  "Spawn a Claude instance for one iteration. Returns the process."
+  "Spawn a Claude instance for one iteration. Returns the process.
+   Uses stdin to pass prompt, avoiding shell quoting issues."
   [project-path prompt config log-file]
+  ;; Pass prompt via stdin to avoid shell escaping issues
+  ;; --dangerously-skip-permissions is REQUIRED for non-interactive mode
   (p/process {:dir project-path
-              :out log-file
-              :err :out}
-             "claude" "-p" prompt
-             "--output-format" "json"
+              :in prompt
+              :out (java.io.File. log-file)
+              :err :stdout}
+             "claude" "-p" "--output-format" "json"
+             "--dangerously-skip-permissions"
              "--allowedTools" (:allowed-tools config)))
 
 (defn- wait-for-process

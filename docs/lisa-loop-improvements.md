@@ -566,10 +566,12 @@ while [ $ITERATION -lt $MAX_ITERATIONS ]; do
   LOG_FILE=".forj/logs/lisa-iter-${ITERATION}.json"
 
   # Spawn fresh Claude instance
+  # NOTE: --dangerously-skip-permissions is REQUIRED for non-interactive -p mode
   claude -p "Read $PLAN_FILE. Work on the current [IN_PROGRESS] checkpoint. \
              When complete, mark it [DONE] and output 'CHECKPOINT_COMPLETE'. \
              If all checkpoints done, output 'LOOP_COMPLETE'." \
     --output-format json \
+    --dangerously-skip-permissions \
     --allowedTools "Bash,Edit,Read,Write,Glob,Grep,mcp__forj__*" \
     > "$LOG_FILE" 2>&1 &
 
@@ -598,6 +600,26 @@ done
 
 echo "Max iterations reached"
 ```
+
+### Babashka Implementation Notes
+
+The actual implementation in `forj.lisa.orchestrator` uses `babashka.process`:
+
+```clojure
+;; Key insight: Pass prompt via stdin to avoid shell quoting issues
+(p/process {:dir project-path
+            :in prompt                    ; prompt via stdin
+            :out (java.io.File. log-file) ; capture JSON output
+            :err :stdout}
+           "claude" "-p" "--output-format" "json"
+           "--dangerously-skip-permissions"
+           "--allowedTools" allowed-tools)
+```
+
+**Critical flags:**
+- `--dangerously-skip-permissions` - REQUIRED for non-interactive mode
+- `--output-format json` - Structured output for parsing
+- `:in prompt` - Avoids shell escaping issues with complex prompts
 
 ### Considerations for Implementation
 
