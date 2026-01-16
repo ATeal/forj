@@ -75,21 +75,36 @@ If REPLs are already running for this project, report them and ask if user wants
 
 Check which config files exist:
 
-| Files Present | Project Type | Start These |
-|---------------|--------------|-------------|
-| `deps.edn` + `shadow-cljs.edn` + `app.json` | Full-stack Mobile | Backend + shadow-cljs + Expo |
-| `deps.edn` + `shadow-cljs.edn` | Full-stack Web | Backend REPL + shadow-cljs |
-| `shadow-cljs.edn` + `app.json` | Mobile Only | shadow-cljs + Expo |
-| `deps.edn` only | Backend | Backend REPL |
-| `shadow-cljs.edn` only | Frontend Web | shadow-cljs |
-| `bb.edn` only | Script | Babashka REPL |
+| Files Present | What to Start |
+|---------------|---------------|
+| `deps.edn` + `shadow-cljs.edn` + `app.json` | Backend + shadow-cljs (check for multiple builds!) + Expo |
+| `deps.edn` + `shadow-cljs.edn` | Backend + shadow-cljs (check for multiple builds!) |
+| `shadow-cljs.edn` + `app.json` | shadow-cljs + Expo |
+| `deps.edn` only | Backend REPL |
+| `shadow-cljs.edn` only | shadow-cljs |
+| `bb.edn` only | Babashka REPL |
 
 ---
 
-**⚠️ FULL-STACK MOBILE PROJECT? You MUST start ALL THREE:**
-1. Backend REPL (`bb dev`)
-2. shadow-cljs (`bb shadow`)
-3. Expo (`bb mobile`)
+**⚠️ CHECK FOR MULTIPLE SHADOW BUILDS:**
+
+Many projects have BOTH `:web` and `:mobile` builds. **Check shadow-cljs.edn:**
+
+```bash
+grep -E "^\s+:(web|mobile|app|main)" shadow-cljs.edn
+```
+
+If you see multiple builds (e.g., `:web` AND `:mobile`):
+- Start **both** shadow builds: `bb shadow:web` AND `bb shadow:mobile`
+- Don't assume one is enough!
+
+**Example project with both:**
+```
+bb dev           # Backend REPL
+bb shadow:web    # Web frontend (port 8080)
+bb shadow:mobile # Mobile frontend
+bb expo:web      # Expo dev server
+```
 
 **Do NOT stop after starting REPLs. The app server must also be running.**
 
@@ -140,11 +155,13 @@ This enables `/clj-repl stop` to cleanly shut down all processes later.
 - `view_repl_logs` with `log: "backend"` / `"shadow"` / `"expo"` - specific log
 - `lines: 50` (default) - number of lines to return
 
-**Full-stack mobile:**
+**Full-stack with web + mobile (check shadow-cljs.edn for builds!):**
 ```bash
 mkdir -p .forj/logs
 bb dev 2>&1 | tee .forj/logs/backend.log &
-bb shadow:mobile 2>&1 | tee .forj/logs/shadow.log &  # MUST use shadow:mobile for Expo!
+# Check shadow-cljs.edn for builds - start ALL that exist:
+bb shadow:web 2>&1 | tee .forj/logs/shadow-web.log &     # If :web build exists
+bb shadow:mobile 2>&1 | tee .forj/logs/shadow-mobile.log &  # If :mobile build exists
 # Then prompt for device (see Step 4a)
 ```
 
