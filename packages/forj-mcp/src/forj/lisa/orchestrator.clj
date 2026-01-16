@@ -68,12 +68,26 @@
    You MUST take a screenshot and visually verify the UI before marking this checkpoint complete.
    Do NOT mark [DONE] based only on REPL validation - you need visual evidence.
 
-   Steps:
-   a) Use visual MCP tools (Chrome MCP, Playwright MCP, Mobile MCP - whichever is available)
-   b) Navigate to the app URL (localhost:8081 for Expo, localhost:8080 for web)
-   c) Take a screenshot of the rendered UI
-   d) Verify the screenshot shows the expected UI matching acceptance criteria
-   e) If UI doesn't match, fix the code and re-verify visually
+   **Chrome MCP Workflow** (use these exact steps):
+   ```
+   1. mcp__claude-in-chrome__tabs_context_mcp with createIfEmpty=true
+   2. mcp__claude-in-chrome__tabs_create_mcp (creates a fresh tab, returns tabId)
+   3. mcp__claude-in-chrome__navigate with url and tabId
+   4. mcp__claude-in-chrome__browser_wait_for with time=3 (wait for render)
+   5. mcp__claude-in-chrome__computer with action='screenshot' and tabId
+   ```
+
+   **Alternative - Playwright MCP**:
+   ```
+   1. mcp__playwright__browser_navigate to the app URL
+   2. mcp__playwright__browser_wait_for with time=3
+   3. mcp__playwright__browser_take_screenshot
+   ```
+
+   URLs: localhost:8081 (Expo), localhost:8080 (web dev server), localhost:3000 (API)
+
+   After taking screenshot, analyze it to verify the UI matches acceptance criteria.
+   If UI doesn't match, fix the code and re-verify visually.
 
    CHECKPOINT WILL BE REJECTED if you mark complete without screenshot verification.")
                        (str (if is-ui? "5" "4") ". When acceptance criteria are met, edit LISA_PLAN.md to mark this checkpoint [DONE]")
