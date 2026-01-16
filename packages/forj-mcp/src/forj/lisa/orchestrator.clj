@@ -239,6 +239,27 @@
        :error (or (:result result) "Failed to generate plan")
        :cost (:total_cost_usd result)})))
 
+(defn -main
+  "Entry point for running the orchestrator from command line.
+   Usage: bb -m forj.lisa.orchestrator <project-path> [max-iterations]"
+  [& args]
+  (let [project-path (or (first args) ".")
+        max-iterations (if (second args)
+                         (parse-long (second args))
+                         20)]
+    (println "[Lisa] Starting orchestrator")
+    (println "[Lisa] Project:" project-path)
+    (println "[Lisa] Max iterations:" max-iterations)
+
+    (let [result (run-loop! project-path {:max-iterations max-iterations
+                                          :on-iteration (fn [i _r]
+                                                          (println (str "[Lisa] Iteration " i " complete")))
+                                          :on-complete (fn [_plan cost]
+                                                         (println (str "[Lisa] All checkpoints complete! Total cost: $" cost)))})]
+      (println "[Lisa] Final status:" (:status result))
+      (println "[Lisa] Total iterations:" (:iterations result))
+      (System/exit (if (= :complete (:status result)) 0 1)))))
+
 (comment
   ;; Test expressions
 
