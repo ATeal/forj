@@ -1,33 +1,30 @@
 ---
 name: lisa-loop
-description: REPL-driven autonomous development loops for Clojure. Validates with REPL evaluation instead of tests for 10x faster feedback.
+description: REPL-driven autonomous development loops for Clojure. Spawns fresh Claude instances per iteration with REPL validation for 10x faster feedback.
 commands:
   - name: lisa-loop
-    description: Start an autonomous development loop with planning and REPL-first validation
-    args: "<prompt> [--max-iterations N] [--no-plan]"
+    description: Start an autonomous development loop - spawns fresh Claude instances per checkpoint
+    args: "<prompt> [--max-iterations N]"
   - name: cancel-lisa
     description: Cancel the active Lisa loop
-  - name: ralph-loop
-    description: Start a Lisa Loop with true outer orchestration (fresh Claude instances per iteration)
-    args: "<prompt> [--max-iterations N]"
 ---
 
 # Lisa Loop - REPL-Driven Autonomous Development
 
-Lisa Loop is forj's native autonomous development loop. Named after Lisa Simpson (methodical, analytical), it validates code through REPL evaluation rather than test runs.
+Lisa Loop is forj's native autonomous development loop. It spawns **fresh Claude instances for each iteration**, using LISA_PLAN.md for state and REPL for validation.
 
-## Key Concepts (v2 Architecture)
+## Key Concepts
 
-1. **Planning Phase**: Generate `LISA_PLAN.md` with checkpoints before coding
-2. **One Checkpoint Per Iteration**: Focus on ONE task at a time
-3. **REPL as State**: Query REPL for ground truth, not LLM memory
-4. **Pluggable Validation**: REPL eval, Chrome MCP, or LLM-as-judge based on task
+1. **Fresh Context Per Iteration**: Each checkpoint gets a fresh Claude instance (no context bloat)
+2. **LISA_PLAN.md as State**: Checkpoints persist progress across instances
+3. **REPL as Ground Truth**: Query REPL for actual state, not LLM memory
+4. **Signs for Learnings**: Failures are recorded so future iterations don't repeat mistakes
 
 ## Commands
 
 ### /lisa-loop
 
-Start an autonomous development loop with planning:
+Start an autonomous development loop:
 
 ```
 /lisa-loop "Build a REST API for users with CRUD operations" --max-iterations 20
@@ -35,117 +32,94 @@ Start an autonomous development loop with planning:
 
 **Arguments:**
 - `<prompt>` - The task description (required)
-- `--max-iterations N` - Maximum iterations before stopping (default: 30)
-- `--no-plan` - Skip planning phase, start coding immediately (not recommended)
-- `--prd <path>` - Path to PRD or specification document to base plan on
-
-**Common documentation patterns to look for:**
-- `PRD.md`, `SPEC.md`, `REQUIREMENTS.md` - Product requirements
-- `docs/architecture.md`, `docs/design.md` - Design docs
-- `README.md` - May contain feature descriptions
-- Inline task description with requirements in the prompt itself
+- `--max-iterations N` - Maximum iterations before stopping (default: 20)
+- `--prd <path>` - Path to PRD or specification document
 
 ### /cancel-lisa
 
-Stop the active loop immediately:
+Stop the loop:
 
 ```
 /cancel-lisa
 ```
 
-### /ralph-loop
-
-Start with true outer orchestration (spawns fresh Claude instances):
+## How It Works
 
 ```
-/ralph-loop "Build user authentication" --max-iterations 20
+/lisa-loop "Build user auth"
+         │
+         ▼
+┌─────────────────────┐
+│ 1. PLANNING PHASE   │  ◄── Current Claude session
+│                     │
+│ - Read PRD if exists│
+│ - Propose checkpoints│
+│ - Get user approval │
+│ - Create LISA_PLAN.md│
+└─────────┬───────────┘
+          │
+          ▼
+┌─────────────────────┐
+│ 2. RUN ORCHESTRATOR │  ◄── Calls lisa_run_orchestrator
+│                     │
+│ Spawns fresh Claude │
+│ instance for each   │──────┐
+│ checkpoint          │      │
+└─────────────────────┘      │
+                             │
+    ┌────────────────────────┘
+    │
+    ▼
+┌─────────────────────┐
+│ ITERATION N         │  ◄── Fresh Claude instance
+│ (Fresh Context)     │
+│                     │
+│ - Read LISA_PLAN.md │
+│ - Read LISA_SIGNS.md│
+│ - Work on checkpoint│
+│ - Validate via REPL │
+│ - Mark done if pass │
+└─────────┬───────────┘
+          │
+          ▼
+    Checkpoint done?
+    ├── Yes → Next iteration (fresh instance)
+    └── No  → Retry (fresh instance)
+          │
+          ▼
+    All done? → COMPLETE
 ```
 
-This runs the orchestrator which spawns fresh Claude instances for each iteration,
-providing true context isolation per the original Ralph Wiggum methodology.
+## Quick Start Instructions
 
-## How It Works (v2 Flow)
+When user runs `/lisa-loop`:
 
+### Step 1: Planning Phase (Current Session)
+
+**Check for existing plan:**
 ```
-/lisa-loop "Build user authentication"
-                    │
-                    ▼
-            ┌───────────────┐
-            │ PLANNING PHASE │
-            │               │
-            │ Generate:     │
-            │ - LISA_PLAN.md│
-            │ - Checkpoints │
-            │ - Validation  │
-            └───────┬───────┘
-                    │
-                    ▼
-            ┌───────────────┐
-            │ WORK ON       │◄────────────────┐
-            │ CHECKPOINT    │                  │
-            │               │                  │
-            │ - Write code  │                  │
-            │ - REPL eval   │                  │
-            │ - Validate    │                  │
-            └───────┬───────┘                  │
-                    │                          │
-           Checkpoint complete?                │
-           │                                   │
-     ┌─────┴─────┐                            │
-     Yes         No ──────────────────────────┘
-     │
-     ▼
-    Mark DONE in LISA_PLAN.md
-    Advance to next checkpoint
-     │
-     ▼
-    All checkpoints done? ──Yes──► Complete!
-     │
-     No
-     │
-     └────────────────────────────┘
-```
-
-## Quick Start
-
-### 1. Receive `/lisa-loop` Command
-
-Parse arguments and determine task scope.
-
-### 2. Check for Existing Plan or Documentation
-
-**CRITICAL: Before creating a new plan, check what already exists:**
-
-```
-# Check for existing plan
 lisa_get_plan
+```
 
-# Look for PRD or documentation
-Glob for: PRD.md, SPEC.md, README.md, docs/*.md
+**Check for PRD/documentation:**
+```
+Glob for: PRD.md, SPEC.md, REQUIREMENTS.md, docs/*.md
 ```
 
 **Decision tree:**
 
 | Situation | Action |
 |-----------|--------|
-| LISA_PLAN.md exists and has pending checkpoints | Resume from current checkpoint |
-| LISA_PLAN.md exists and is complete | Ask user: start fresh or continue? |
-| PRD.md or similar exists, no plan | Read PRD, propose checkpoints, get approval |
-| No plan, no PRD | Create plan from the prompt, propose to user |
+| LISA_PLAN.md exists with pending checkpoints | Ask: resume or start fresh? |
+| PRD exists, no plan | Read PRD, propose checkpoints |
+| No plan, no PRD | Create plan from prompt |
 
-### 3. Planning Phase (From PRD or Prompt)
+### Step 2: Propose Plan to User
 
-**If PRD/documentation exists:**
-
-1. **Read the PRD** to understand full requirements
-2. **Analyze for natural checkpoints** - look for:
-   - Distinct features or components
-   - Dependencies between parts
-   - Testable milestones
-3. **Propose the plan to user** before creating:
+**ALWAYS show the proposed checkpoints before creating:**
 
 ```markdown
-I've analyzed the PRD and propose these checkpoints:
+I've analyzed the requirements and propose these checkpoints:
 
 1. **Create password hashing module** (src/auth/password.clj)
    - Acceptance: `(verify-password "test" (hash-password "test")) => true`
@@ -153,16 +127,14 @@ I've analyzed the PRD and propose these checkpoints:
 2. **Create JWT token module** (src/auth/jwt.clj)
    - Acceptance: `(verify-token (create-token {:user-id 1})) => truthy`
 
-3. **Create auth middleware** (src/middleware/auth.clj)
-   - Acceptance: Middleware extracts user from valid token
-
-Does this plan look right? I can adjust checkpoints before we begin.
+Does this plan look right? I can adjust before starting the loop.
 ```
 
-4. **Wait for user approval** - use AskUserQuestion or wait for confirmation
-5. **Create the plan** only after approval:
+**Wait for user approval before proceeding.**
 
-Use `lisa_create_plan` to generate a plan with checkpoints:
+### Step 3: Create Plan and Start Orchestrator
+
+After approval, create the plan:
 
 ```
 lisa_create_plan with:
@@ -171,49 +143,32 @@ lisa_create_plan with:
     {description: "Create password hashing module",
      file: "src/auth/password.clj",
      acceptance: "(verify-password \"test\" (hash-password \"test\")) => true"},
-    {description: "Create JWT token module",
-     file: "src/auth/jwt.clj",
-     acceptance: "(verify-token (create-token {:user-id 1})) => {:user-id 1}"},
     ...
   ]
 ```
 
-This creates `LISA_PLAN.md` in the project root.
+Then **start the orchestrator**:
 
-### 3. Work on ONE Checkpoint at a Time
-
-For each checkpoint:
-
-1. **Read the plan** to understand the current checkpoint:
-   ```
-   lisa_get_plan
-   ```
-
-2. **Query REPL state** to understand what's already done:
-   ```
-   repl_snapshot with namespace: "myapp.auth"
-   ```
-
-3. **Write code** with comment blocks for validation
-
-4. **Validate with REPL**:
-   ```
-   reload_namespace with ns: "myapp.auth"
-   eval_comment_block with file: "src/auth/password.clj"
-   ```
-
-5. **When checkpoint criteria met**, mark it done:
-   ```
-   lisa_mark_checkpoint_done with checkpoint: 1
-   ```
-
-6. **Move to next checkpoint** (plan auto-advances)
-
-### 4. Complete When All Checkpoints Done
-
-Output completion when `lisa_get_plan` shows all checkpoints done:
 ```
-<promise>COMPLETE</promise>
+lisa_run_orchestrator with:
+  max_iterations: 20
+```
+
+This spawns fresh Claude instances for each iteration. The orchestrator:
+1. Reads LISA_PLAN.md to find current checkpoint
+2. Spawns `claude -p <focused-prompt>` for that checkpoint
+3. Waits for completion
+4. Repeats until all checkpoints done or max iterations
+
+### Step 4: Report Progress
+
+The orchestrator logs to `.forj/logs/lisa/`. When it completes:
+
+```
+Lisa Loop complete!
+- Iterations: 8
+- All checkpoints: DONE
+- Logs: .forj/logs/lisa/
 ```
 
 ## LISA_PLAN.md Format
@@ -234,7 +189,6 @@ Output completion when `lisa_get_plan` shows all checkpoints done:
 ### 2. [IN_PROGRESS] Create JWT token module
 - File: src/auth/jwt.clj
 - Acceptance: (verify-token (create-token {:user-id 1})) => {:user-id 1}
-- Started: 2026-01-16T10:31:00Z
 
 ### 3. [PENDING] Create auth middleware
 - File: src/middleware/auth.clj
@@ -250,103 +204,33 @@ Output completion when `lisa_get_plan` shows all checkpoints done:
 | `lisa_create_plan` | Create LISA_PLAN.md with checkpoints |
 | `lisa_get_plan` | Read current plan status |
 | `lisa_mark_checkpoint_done` | Mark checkpoint complete |
+| `lisa_run_orchestrator` | **Start the loop** (spawns fresh instances) |
 
-### REPL Tools
-
-| Tool | Purpose |
-|------|---------|
-| `repl_snapshot` | Query REPL for loaded namespaces, vars, server state |
-| `reload_namespace` | Reload namespace after code changes |
-| `eval_comment_block` | Evaluate test expressions in comment blocks |
-| `eval_at` | Evaluate specific form at a line |
-| `repl_eval` | Ad-hoc REPL evaluation |
-| `validate_changed_files` | Bulk validation of all changed files |
-| `run_tests` | Final test validation |
-
-### Signs (Guardrails) Tools
+### Signs (Learnings) Tools
 
 | Tool | Purpose |
 |------|---------|
-| `lisa_append_sign` | Record a failure/learning for future iterations |
-| `lisa_get_signs` | Read signs summary and recent learnings |
-| `lisa_clear_signs` | Clear signs file (at loop start or completion) |
+| `lisa_append_sign` | Record a failure/learning |
+| `lisa_get_signs` | Read signs from previous iterations |
+| `lisa_clear_signs` | Clear signs file |
 
 ### Validation Tools
 
 | Tool | Purpose |
 |------|---------|
 | `lisa_run_validation` | Run validation checks (REPL, Chrome, Judge) |
-| `lisa_check_gates` | Check if all gates pass before advancing |
+| `lisa_check_gates` | Check if gates pass before advancing |
 
 ### Loop Management
 
 | Tool | Purpose |
 |------|---------|
-| `start_loop` | Initialize loop state (legacy) |
 | `cancel_loop` | Cancel active loop |
 | `loop_status` | Check loop iteration count |
 
-## The REPL Advantage
-
-### REPL as Persistent State Layer
-
-The REPL survives across iterations and holds ground truth:
-
-| Layer | What It Holds |
-|-------|---------------|
-| Git | Committed code |
-| LISA_PLAN.md | Task progress, checkpoints |
-| **REPL** | Loaded namespaces, running servers, defined vars |
-| Claude context | Current reasoning (resets each iteration) |
-
-Use `repl_snapshot` to query what's actually defined rather than trusting memory:
-
-```clojure
-;; What's defined?
-(ns-publics 'myapp.auth)
-;; => {hash-password #'myapp.auth/hash-password}
-
-;; Is server running?
-@myapp.core/server
-;; => #object[org.eclipse.jetty.server.Server ...]
-```
-
-### Faster Feedback
-
-| Approach | Validation | Feedback Time |
-|----------|------------|---------------|
-| Test-based loops | Run tests | ~2-10 seconds |
-| **Lisa Loop** | REPL eval | ~10ms |
-
-Lisa sees **actual data**, not just pass/fail.
-
-## Example Prompt
-
-```
-/lisa-loop "Build a user authentication module.
-
-REQUIREMENTS:
-- hash-password: takes plaintext, returns bcrypt hash
-- verify-password: takes plaintext and hash, returns boolean
-- create-token: creates JWT from user claims
-- verify-token: validates JWT, returns claims
-
-VALIDATION:
-- Each function has comment block with test expressions
-- All comment blocks evaluate without error
-- bb test passes at the end"
-```
-
-Claude should:
-1. Create a plan with 4-5 checkpoints (one per function + integration)
-2. Work through each checkpoint sequentially
-3. Use REPL eval to validate each checkpoint
-4. Mark checkpoints done as completed
-5. Run `bb test` only when all REPL validation passes
-
 ## Signs (Guardrails)
 
-Signs record failures and learnings that persist across iterations. When something goes wrong, append a sign so future iterations don't repeat the mistake.
+Signs record failures that persist across iterations. When something goes wrong in iteration 3, future iterations can read it and avoid the same mistake.
 
 ### LISA_SIGNS.md Format
 
@@ -355,95 +239,68 @@ Signs record failures and learnings that persist across iterations. When somethi
 
 ## Sign 1 (Iteration 3, 2026-01-16T10:30:00Z)
 **Checkpoint:** 2 - Create JWT module
-**Issue:** Forgot to require clojure.string in namespace
+**Issue:** Forgot to require clojure.string
 **Fix:** Always check requires when adding string functions
 **Severity:** error
 ```
 
 ### When to Append Signs
 
+The spawned Claude instances should append signs when:
 - REPL evaluation fails with a fixable error
 - Validation check fails due to missing setup
 - Common mistake that might recur
 
-### Reading Signs
+## The Fresh Instance Advantage
 
-At the start of each iteration, read signs to avoid known pitfalls:
-```
-lisa_get_signs
-```
+Each iteration gets a **fresh Claude context**:
 
-## Pluggable Validation
+| Layer | Persists Across Iterations? |
+|-------|----------------------------|
+| LISA_PLAN.md | ✅ Yes - progress tracking |
+| LISA_SIGNS.md | ✅ Yes - learnings |
+| Git/Files | ✅ Yes - code changes |
+| REPL state | ✅ Yes - loaded namespaces |
+| Claude context | ❌ No - fresh each time |
 
-Validation supports three methods, combinable with `|`:
-
-### REPL Validation
-```
-repl:(verify-password "test" hash) => true
-repl:(count (get-users db))
-```
-
-### Chrome MCP Validation (UI)
-```
-chrome:screenshot /login
-chrome:click #submit-button
-```
-Note: Chrome validations return `:pending` and require manual MCP execution.
-
-### LLM-as-Judge (Subjective)
-```
-judge:Does this form look professional and clean?
-judge:Is the error message clear and helpful?
-```
-Note: Judge validations return `:pending` and require LLM evaluation.
-
-### Combined Validation Example
-
-```markdown
-### 2. [PENDING] Create login form
-- Validation: repl:(render [login-form]) returns hiccup | chrome:screenshot /login | judge:Form has clean layout
-- Gates: repl:(some? [login-form])
-```
-
-## Anti-Patterns
-
-### Don't: Skip the planning phase
-Without a plan, you lose checkpoint tracking and may work on multiple things at once.
-
-### Don't: Run tests on every iteration
-```
-# Slow - full test suite each time
-1. Write code
-2. bb test
-3. See failure, fix
-4. bb test again
-```
-
-### Do: REPL first, tests last
-```
-# Fast - tests only at completion
-1. Write code with comment block
-2. reload_namespace
-3. eval_comment_block
-4. See actual output, iterate
-5. Mark checkpoint done
-6. bb test (once, at end)
-```
-
-## Completion Criteria
-
-A Lisa Loop is complete when:
-
-1. All checkpoints in LISA_PLAN.md are `[DONE]`
-2. `lisa_get_plan` shows `all-complete: true`
-3. Final test validation passes (`run_tests`)
-4. Output completion: `<promise>COMPLETE</promise>`
+This prevents context bloat and hallucination from stale memory.
 
 ## For /cancel-lisa
 
-Simply call:
+Call:
 ```
 cancel_loop
 ```
 
-This clears loop state and stops the iteration.
+Or manually kill the orchestrator process.
+
+## Example Session
+
+```
+> /lisa-loop "Build user authentication per PRD.md"
+
+I found PRD.md. Let me analyze it for checkpoints...
+
+I propose these checkpoints:
+1. Create password hashing (src/auth/password.clj)
+2. Create JWT tokens (src/auth/jwt.clj)
+3. Create auth middleware (src/middleware/auth.clj)
+4. Integration test
+
+Does this look right?
+
+> yes
+
+Creating LISA_PLAN.md and starting orchestrator...
+
+[Lisa] Iteration 1: Checkpoint 1 - Create password hashing
+[Lisa] Checkpoint 1 complete
+[Lisa] Iteration 2: Checkpoint 2 - Create JWT tokens
+[Lisa] Iteration 2 failed - adding sign
+[Lisa] Iteration 3: Checkpoint 2 - Create JWT tokens (retry)
+[Lisa] Checkpoint 2 complete
+...
+[Lisa] All checkpoints complete!
+
+Lisa Loop finished in 6 iterations.
+```
