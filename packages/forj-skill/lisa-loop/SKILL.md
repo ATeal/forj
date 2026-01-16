@@ -208,6 +208,21 @@ Output completion when `lisa_get_plan` shows all checkpoints done:
 | `validate_changed_files` | Bulk validation of all changed files |
 | `run_tests` | Final test validation |
 
+### Signs (Guardrails) Tools
+
+| Tool | Purpose |
+|------|---------|
+| `lisa_append_sign` | Record a failure/learning for future iterations |
+| `lisa_get_signs` | Read signs summary and recent learnings |
+| `lisa_clear_signs` | Clear signs file (at loop start or completion) |
+
+### Validation Tools
+
+| Tool | Purpose |
+|------|---------|
+| `lisa_run_validation` | Run validation checks (REPL, Chrome, Judge) |
+| `lisa_check_gates` | Check if all gates pass before advancing |
+
 ### Loop Management
 
 | Tool | Purpose |
@@ -273,6 +288,67 @@ Claude should:
 3. Use REPL eval to validate each checkpoint
 4. Mark checkpoints done as completed
 5. Run `bb test` only when all REPL validation passes
+
+## Signs (Guardrails)
+
+Signs record failures and learnings that persist across iterations. When something goes wrong, append a sign so future iterations don't repeat the mistake.
+
+### LISA_SIGNS.md Format
+
+```markdown
+# Lisa Loop Signs (Learnings)
+
+## Sign 1 (Iteration 3, 2026-01-16T10:30:00Z)
+**Checkpoint:** 2 - Create JWT module
+**Issue:** Forgot to require clojure.string in namespace
+**Fix:** Always check requires when adding string functions
+**Severity:** error
+```
+
+### When to Append Signs
+
+- REPL evaluation fails with a fixable error
+- Validation check fails due to missing setup
+- Common mistake that might recur
+
+### Reading Signs
+
+At the start of each iteration, read signs to avoid known pitfalls:
+```
+lisa_get_signs
+```
+
+## Pluggable Validation
+
+Validation supports three methods, combinable with `|`:
+
+### REPL Validation
+```
+repl:(verify-password "test" hash) => true
+repl:(count (get-users db))
+```
+
+### Chrome MCP Validation (UI)
+```
+chrome:screenshot /login
+chrome:click #submit-button
+```
+Note: Chrome validations return `:pending` and require manual MCP execution.
+
+### LLM-as-Judge (Subjective)
+```
+judge:Does this form look professional and clean?
+judge:Is the error message clear and helpful?
+```
+Note: Judge validations return `:pending` and require LLM evaluation.
+
+### Combined Validation Example
+
+```markdown
+### 2. [PENDING] Create login form
+- Validation: repl:(render [login-form]) returns hiccup | chrome:screenshot /login | judge:Form has clean layout
+- Gates: repl:(some? [login-form])
+```
 
 ## Anti-Patterns
 
