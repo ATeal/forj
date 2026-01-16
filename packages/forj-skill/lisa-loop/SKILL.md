@@ -37,6 +37,13 @@ Start an autonomous development loop with planning:
 - `<prompt>` - The task description (required)
 - `--max-iterations N` - Maximum iterations before stopping (default: 30)
 - `--no-plan` - Skip planning phase, start coding immediately (not recommended)
+- `--prd <path>` - Path to PRD or specification document to base plan on
+
+**Common documentation patterns to look for:**
+- `PRD.md`, `SPEC.md`, `REQUIREMENTS.md` - Product requirements
+- `docs/architecture.md`, `docs/design.md` - Design docs
+- `README.md` - May contain feature descriptions
+- Inline task description with requirements in the prompt itself
 
 ### /cancel-lisa
 
@@ -105,7 +112,55 @@ providing true context isolation per the original Ralph Wiggum methodology.
 
 Parse arguments and determine task scope.
 
-### 2. Planning Phase (Generate LISA_PLAN.md)
+### 2. Check for Existing Plan or Documentation
+
+**CRITICAL: Before creating a new plan, check what already exists:**
+
+```
+# Check for existing plan
+lisa_get_plan
+
+# Look for PRD or documentation
+Glob for: PRD.md, SPEC.md, README.md, docs/*.md
+```
+
+**Decision tree:**
+
+| Situation | Action |
+|-----------|--------|
+| LISA_PLAN.md exists and has pending checkpoints | Resume from current checkpoint |
+| LISA_PLAN.md exists and is complete | Ask user: start fresh or continue? |
+| PRD.md or similar exists, no plan | Read PRD, propose checkpoints, get approval |
+| No plan, no PRD | Create plan from the prompt, propose to user |
+
+### 3. Planning Phase (From PRD or Prompt)
+
+**If PRD/documentation exists:**
+
+1. **Read the PRD** to understand full requirements
+2. **Analyze for natural checkpoints** - look for:
+   - Distinct features or components
+   - Dependencies between parts
+   - Testable milestones
+3. **Propose the plan to user** before creating:
+
+```markdown
+I've analyzed the PRD and propose these checkpoints:
+
+1. **Create password hashing module** (src/auth/password.clj)
+   - Acceptance: `(verify-password "test" (hash-password "test")) => true`
+
+2. **Create JWT token module** (src/auth/jwt.clj)
+   - Acceptance: `(verify-token (create-token {:user-id 1})) => truthy`
+
+3. **Create auth middleware** (src/middleware/auth.clj)
+   - Acceptance: Middleware extracts user from valid token
+
+Does this plan look right? I can adjust checkpoints before we begin.
+```
+
+4. **Wait for user approval** - use AskUserQuestion or wait for confirmation
+5. **Create the plan** only after approval:
 
 Use `lisa_create_plan` to generate a plan with checkpoints:
 
