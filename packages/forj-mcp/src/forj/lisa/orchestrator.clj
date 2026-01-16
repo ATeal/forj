@@ -84,7 +84,7 @@
    3. mcp__playwright__browser_take_screenshot
    ```
 
-   URLs: localhost:8081 (Expo), localhost:8080 (web dev server), localhost:3000 (API)
+   Check shadow-cljs.edn :dev-http, package.json scripts, or LISA_PLAN.md for the correct URL/port.
 
    After taking screenshot, analyze it to verify the UI matches acceptance criteria.
    If UI doesn't match, fix the code and re-verify visually.
