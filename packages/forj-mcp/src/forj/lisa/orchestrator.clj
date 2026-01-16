@@ -64,12 +64,18 @@
                        "2. Implement the checkpoint task"
                        "3. Validate using REPL evaluation (reload_namespace, eval_comment_block)"
                        (when is-ui?
-                         "4. **VISUAL VALIDATION REQUIRED**: Take a screenshot and verify the UI renders correctly.
-   Use whichever visual MCP tools are available (Chrome MCP, Playwright MCP, Mobile MCP, etc.):
-   - Navigate to the app URL (localhost:8081 for Expo, localhost:8080 for web, etc.)
-   - Take a screenshot of the rendered UI
-   - Verify the visual output matches the acceptance criteria
-   - If the UI doesn't match expectations, fix before marking complete")
+                         "4. **VISUAL VALIDATION REQUIRED - DO NOT SKIP**:
+   You MUST take a screenshot and visually verify the UI before marking this checkpoint complete.
+   Do NOT mark [DONE] based only on REPL validation - you need visual evidence.
+
+   Steps:
+   a) Use visual MCP tools (Chrome MCP, Playwright MCP, Mobile MCP - whichever is available)
+   b) Navigate to the app URL (localhost:8081 for Expo, localhost:8080 for web)
+   c) Take a screenshot of the rendered UI
+   d) Verify the screenshot shows the expected UI matching acceptance criteria
+   e) If UI doesn't match, fix the code and re-verify visually
+
+   CHECKPOINT WILL BE REJECTED if you mark complete without screenshot verification.")
                        (str (if is-ui? "5" "4") ". When acceptance criteria are met, edit LISA_PLAN.md to mark this checkpoint [DONE]")
                        (str (if is-ui? "6" "5") ". Output 'CHECKPOINT_COMPLETE' when done, or 'CHECKPOINT_BLOCKED: <reason>' if stuck")
                        ""
