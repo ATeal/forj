@@ -7,6 +7,8 @@
             [edamame.core :as edamame]
             [forj.hooks.loop-state :as loop-state]
             [forj.lisa.plan :as lisa-plan]
+            [forj.lisa.signs :as lisa-signs]
+            [forj.lisa.validation :as lisa-validation]
             [forj.scaffold :as scaffold]))
 
 (def tools
@@ -224,7 +226,61 @@
                   :properties {:port {:type "integer"
                                       :description "nREPL port (auto-discovered if not provided)"}
                                :namespace {:type "string"
-                                           :description "Specific namespace to inspect (optional, inspects all project namespaces if not provided)"}}}}])
+                                           :description "Specific namespace to inspect (optional, inspects all project namespaces if not provided)"}}}}
+
+   ;; Signs (guardrails) tools
+   {:name "lisa_append_sign"
+    :description "Append a sign (learning) to LISA_SIGNS.md. Signs record failures and learnings for future iterations to avoid repeating mistakes."
+    :inputSchema {:type "object"
+                  :properties {:iteration {:type "integer"
+                                           :description "Current iteration number"}
+                               :checkpoint {:type "string"
+                                            :description "Checkpoint description (e.g., '2 - Create JWT module')"}
+                               :issue {:type "string"
+                                       :description "What went wrong"}
+                               :fix {:type "string"
+                                     :description "How to avoid this in the future"}
+                               :severity {:type "string"
+                                          :enum ["error" "warning"]
+                                          :description "Severity level (default: error)"}
+                               :path {:type "string"
+                                      :description "Project path (defaults to current directory)"}}
+                  :required ["issue" "fix"]}}
+
+   {:name "lisa_get_signs"
+    :description "Read LISA_SIGNS.md and return recent signs (learnings from previous iterations)."
+    :inputSchema {:type "object"
+                  :properties {:path {:type "string"
+                                      :description "Project path (defaults to current directory)"}}}}
+
+   {:name "lisa_clear_signs"
+    :description "Delete LISA_SIGNS.md. Typically used when starting a new loop or after loop completion."
+    :inputSchema {:type "object"
+                  :properties {:path {:type "string"
+                                      :description "Project path (defaults to current directory)"}}}}
+
+   ;; Validation tools
+   {:name "lisa_run_validation"
+    :description "Run validation checks for a checkpoint. Supports REPL expressions, Chrome MCP actions, and LLM-as-judge criteria. Format: 'repl:(fn arg) => expected | chrome:screenshot /path | judge:Is this clear?'"
+    :inputSchema {:type "object"
+                  :properties {:validation {:type "string"
+                                            :description "Validation string with items separated by |"}
+                               :port {:type "integer"
+                                      :description "nREPL port for REPL validations (auto-discovered if not provided)"}
+                               :path {:type "string"
+                                      :description "Project path (defaults to current directory)"}}
+                  :required ["validation"]}}
+
+   {:name "lisa_check_gates"
+    :description "Check if all gates for a checkpoint have passed. Gates are strict validations that must pass before advancing to the next checkpoint."
+    :inputSchema {:type "object"
+                  :properties {:gates {:type "string"
+                                       :description "Gates string with items separated by |"}
+                               :port {:type "integer"
+                                      :description "nREPL port for REPL validations (auto-discovered if not provided)"}
+                               :path {:type "string"
+                                      :description "Project path (defaults to current directory)"}}
+                  :required ["gates"]}}])
 
 ;; =============================================================================
 ;; REPL Type Detection (Path-based routing)
@@ -1438,6 +1494,84 @@
       {:success false
        :error (str "Failed to snapshot REPL: " (.getMessage e))})))
 
+;; =============================================================================
+;; Signs (Guardrails) Tools
+;; =============================================================================
+
+(defn lisa-append-sign
+  "Append a sign (learning) to LISA_SIGNS.md."
+  [{:keys [iteration checkpoint issue fix severity path] :or {path "." severity "error"}}]
+  (try
+    (let [sign (lisa-signs/append-sign! path
+                                        {:iteration iteration
+                                         :checkpoint checkpoint
+                                         :issue issue
+                                         :fix fix
+                                         :severity (keyword severity)})]
+      {:success true
+       :message (str "Appended sign " (:number sign) " to LISA_SIGNS.md")
+       :sign sign})
+    (catch Exception e
+      {:success false
+       :error (str "Failed to append sign: " (.getMessage e))})))
+
+(defn lisa-get-signs
+  "Read LISA_SIGNS.md and return signs."
+  [{:keys [path] :or {path "."}}]
+  (try
+    (if-let [summary (lisa-signs/signs-summary path)]
+      {:success true
+       :signs summary
+       :raw (lisa-signs/read-signs path)}
+      {:success true
+       :signs nil
+       :message "No signs file exists"})
+    (catch Exception e
+      {:success false
+       :error (str "Failed to read signs: " (.getMessage e))})))
+
+(defn lisa-clear-signs
+  "Delete LISA_SIGNS.md."
+  [{:keys [path] :or {path "."}}]
+  (try
+    (lisa-signs/clear-signs! path)
+    {:success true
+     :message "Cleared LISA_SIGNS.md"}
+    (catch Exception e
+      {:success false
+       :error (str "Failed to clear signs: " (.getMessage e))})))
+
+;; =============================================================================
+;; Validation Tools
+;; =============================================================================
+
+(defn lisa-run-validation
+  "Run validation checks."
+  [{:keys [validation port _path] :or {_path "."}}]
+  (try
+    (let [opts {:port port}
+          result (lisa-validation/run-validations validation opts)]
+      {:success true
+       :all-passed (:all-passed result)
+       :summary (:summary result)
+       :results (:results result)})
+    (catch Exception e
+      {:success false
+       :error (str "Failed to run validation: " (.getMessage e))})))
+
+(defn lisa-check-gates
+  "Check if all gates have passed."
+  [{:keys [gates port _path] :or {_path "."}}]
+  (try
+    (let [opts {:port port}
+          result (lisa-validation/checkpoint-gates-passed? gates opts)]
+      {:success true
+       :gates-passed (:passed result)
+       :message (:message result)})
+    (catch Exception e
+      {:success false
+       :error (str "Failed to check gates: " (.getMessage e))})))
+
 (defn call-tool
   "Dispatch tool call to appropriate handler."
   [{:keys [name arguments]}]
@@ -1469,4 +1603,11 @@
     "lisa_mark_checkpoint_done" (lisa-mark-checkpoint-done arguments)
     "lisa_run_orchestrator" (lisa-run-orchestrator arguments)
     "repl_snapshot" (repl-snapshot arguments)
+    ;; Signs (guardrails) tools
+    "lisa_append_sign" (lisa-append-sign arguments)
+    "lisa_get_signs" (lisa-get-signs arguments)
+    "lisa_clear_signs" (lisa-clear-signs arguments)
+    ;; Validation tools
+    "lisa_run_validation" (lisa-run-validation arguments)
+    "lisa_check_gates" (lisa-check-gates arguments)
     {:success false :error (str "Unknown tool: " name)}))
