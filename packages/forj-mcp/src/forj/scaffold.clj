@@ -76,17 +76,18 @@
   "Resolve a version spec that may have conditions."
   [version-spec java-version]
   (if-let [versions (:versions version-spec)]
-    ;; Conditional versions
-    (let [match (some (fn [{:keys [version when]}]
-                        (let [{java-cond :java} when]
-                          (when (cond
-                                  (nil? java-cond) true
-                                  (str/starts-with? java-cond ">=")
-                                  (>= (or java-version 0) (parse-long (str/trim (subs java-cond 2))))
-                                  (str/starts-with? java-cond "<")
-                                  (< (or java-version 99) (parse-long (str/trim (subs java-cond 1))))
-                                  :else true)
-                            version)))
+    ;; Conditional versions - note: use `conditions` not `when` to avoid shadowing the macro
+    (let [match (some (fn [{:keys [version] :as entry}]
+                        (let [conditions (:when entry)
+                              java-cond (:java conditions)
+                              matches? (cond
+                                         (nil? java-cond) true
+                                         (str/starts-with? java-cond ">=")
+                                         (>= (or java-version 0) (parse-long (str/trim (subs java-cond 2))))
+                                         (str/starts-with? java-cond "<")
+                                         (< (or java-version 99) (parse-long (str/trim (subs java-cond 1))))
+                                         :else true)]
+                          (when matches? version)))
                       versions)]
       (or match (:default version-spec)))
     ;; Simple version
@@ -203,10 +204,11 @@
   [& contents]
   (let [parsed (map edn/read-string contents)]
     (reduce (fn [acc shadow]
-              (-> acc
-                  (update :source-paths #(vec (distinct (concat % (:source-paths shadow)))))
-                  (update :dependencies #(vec (distinct (concat % (:dependencies shadow)))))
-                  (update :builds merge (:builds shadow))))
+              (cond-> acc
+                true (update :source-paths #(vec (distinct (concat % (:source-paths shadow)))))
+                true (update :dependencies #(vec (distinct (concat % (:dependencies shadow)))))
+                true (update :builds merge (:builds shadow))
+                (:dev-http shadow) (update :dev-http merge (:dev-http shadow))))
             {:source-paths [] :dependencies [] :builds {}}
             parsed)))
 
@@ -347,6 +349,13 @@
                 (let [content (substitute-placeholders (slurp src) project-name versions)]
                   (fs/create-dirs (fs/parent dest))
                   (spit dest content)))))
+
+          ;; Copy directories (binary assets, etc.)
+          (doseq [dir-name (:dirs mod)]
+            (let [src-dir (str (fs/path mod-dir dir-name))
+                  dest-dir (str (fs/path project-dir dir-name))]
+              (when (fs/exists? src-dir)
+                (fs/copy-tree src-dir dest-dir {:replace-existing true}))))
 
           ;; Copy source files with path substitution
           (doseq [{:keys [from to]} (:sources mod)]

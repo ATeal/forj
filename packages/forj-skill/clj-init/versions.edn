@@ -10,12 +10,12 @@
 ;;   :notes - compatibility notes
 
 {:npm
- {;; React ecosystem
-  :react {:version "19.2.3"
-          :notes "Must match react-native peer dep"}
+ {;; React ecosystem - pin to Expo SDK 54 compatible versions
+  :react {:version "19.1.0"
+          :notes "Must match Expo SDK 54 peer dep - use npx expo install to verify"}
 
-  :react-dom {:version "19.2.3"
-              :notes "For react-native-web projects only"}
+  :react-dom {:version "19.1.0"
+              :notes "Must match react version for react-native-web"}
 
   :react-native {:version "0.81.5"
                  :notes "Expo SDK 54 uses RN 0.81.x"}

@@ -9,9 +9,9 @@
  :files ["resources/public/index.html"]
 
  :sources [{:from "src/core.cljs"
-            :to "src/{{namespace}}/core.cljs"}
+            :to "src/web/core.cljs"}
            {:from "src/views.cljs"
-            :to "src/{{namespace}}/views.cljs"}]
+            :to "src/web/views.cljs"}]
 
  :gitignore-append ["node_modules/"
                     ".shadow-cljs/"

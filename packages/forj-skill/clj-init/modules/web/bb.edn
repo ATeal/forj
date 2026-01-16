@@ -1,6 +1,6 @@
 {:tasks
- {shadow {:doc "Start shadow-cljs watch"
-          :task (shell "npx" "shadow-cljs" "watch" "app")}
+ {shadow:web {:doc "Start shadow-cljs for web"
+              :task (shell "npx" "shadow-cljs" "watch" "web")}
 
-  release {:doc "Build release"
-           :task (shell "npx" "shadow-cljs" "release" "app")}}}
+  release:web {:doc "Build web release"
+               :task (shell "npx" "shadow-cljs" "release" "web")}}}

@@ -45,6 +45,9 @@ bb logs                   # View forj logs
 | `loop_status` | Check Lisa Loop status | - |
 | `validate_project` | Validate project setup (deps, bb.edn, npm, Java) | - |
 | `scaffold_project` | Create new project from composable modules | - |
+| `track_process` | Track a background process for cleanup | - |
+| `stop_project` | Stop all tracked processes for a project | `/clj-repl stop` |
+| `list_tracked_processes` | List what's been tracked | - |
 
 ## Architecture
 
@@ -64,7 +67,7 @@ Path-based REPL routing auto-selects clj/cljs/bb REPLs.
 
 - **Script/CLI** (bb) - Babashka script with tasks
 - **Library** (clj) - deps.edn library with tests
-- **Web API** (api) - Ring/Reitit backend
+- **API Server** (api) - Ring/Reitit backend
 - **Full-stack** (fullstack) - Clojure + ClojureScript + shadow-cljs
 - **Mobile** (mobile) - Expo + ClojureScript (Reagent/Re-frame)
 
@@ -128,3 +131,5 @@ All tools tested and working:
 - Composable module system for scaffolding (replaces templates)
 - `scaffold_project` MCP tool with config merging
 - Version management via versions.edn (single source of truth)
+- Process tracking (`track_process`, `stop_project`, `list_tracked_processes`)
+- Conditional version resolution fix (shadow-cljs 2.x vs 3.x based on Java version)

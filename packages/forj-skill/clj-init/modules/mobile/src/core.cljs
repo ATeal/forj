@@ -1,7 +1,7 @@
-(ns {{project-name}}.core
+(ns mobile.core
   (:require [reagent.core :as r]
             [re-frame.core :as rf]
-            [{{project-name}}.views :as views]))
+            [mobile.views :as views]))
 
 ;; -- App initialization --
 
