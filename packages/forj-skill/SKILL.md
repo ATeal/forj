@@ -39,7 +39,15 @@ Start or connect to an nREPL server for REPL-driven development.
 
 - [ ] All required processes started for the project type
 - [ ] Application server is running (not just REPL process)
-- [ ] You've reported ports AND URLs to user
+- [ ] **Checked shadow-cljs.edn for `:dev-http` ports** (web apps served here!)
+- [ ] You've reported ALL ports AND URLs to user
+
+**⚠️ COMMON MISS: The `:dev-http` port in shadow-cljs.edn!**
+```bash
+grep ":dev-http" shadow-cljs.edn
+# Example output: :dev-http {8080 "resources/public"}
+# This means web app is at http://localhost:8080 - REPORT IT!
+```
 
 ## Instructions
 
