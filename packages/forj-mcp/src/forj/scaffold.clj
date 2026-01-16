@@ -303,6 +303,21 @@
          "/clj-repl status  # Check what's running\n"
          "/clj-repl stop    # Stop all REPLs\n"
          "```\n\n"
+         ;; Shadow builds section when multiple builds exist
+         (when (and has-web? has-mobile?)
+           (str "### Shadow Builds\n\n"
+                "**IMPORTANT:** This project has TWO shadow-cljs builds - you may need both:\n\n"
+                "| Build | Command | Port | Purpose |\n"
+                "|-------|---------|------|--------|\n"
+                "| `:web` | `bb shadow:web` | 8080 | Browser app |\n"
+                "| `:mobile` | `bb shadow:mobile` | - | Expo/React Native |\n\n"
+                "For full-stack development, start both shadow builds plus Expo:\n"
+                "```bash\n"
+                "bb dev           # Backend REPL\n"
+                "bb shadow:web    # Web frontend (port 8080)\n"
+                "bb shadow:mobile # Mobile frontend\n"
+                "bb expo:web      # Expo dev server\n"
+                "```\n\n"))
          "### forj MCP Tools\n\n"
          "| Tool | Purpose |\n"
          "|------|--------|\n"
@@ -319,8 +334,9 @@
          "```\n"
          (cond-> "src/\n"
            has-backend? (str "  " (str/replace project-name "-" "_") "/core.clj    # Backend entry\n")
-           has-web? (str "  " (str/replace project-name "-" "_") "/app.cljs    # Web frontend\n")
-           has-mobile? (str "  " (str/replace project-name "-" "_") "/app.cljs    # Mobile app\n"))
+           (and has-web? has-mobile?) (str "  " (str/replace project-name "-" "_") "/app.cljs    # Web + Mobile frontend\n")
+           (and has-web? (not has-mobile?)) (str "  " (str/replace project-name "-" "_") "/app.cljs    # Web frontend\n")
+           (and has-mobile? (not has-web?)) (str "  " (str/replace project-name "-" "_") "/app.cljs    # Mobile app\n"))
          "test/                    # Tests\n"
          "```\n")))
 
