@@ -15,9 +15,11 @@
 
 (def default-config
   {:max-iterations 20
-   :allowed-tools "Bash,Edit,Read,Write,Glob,Grep,mcp__forj__*"
+   :allowed-tools "Bash,Edit,Read,Write,Glob,Grep,mcp__forj__*,mcp__claude-in-chrome__*"
    :log-dir ".forj/logs/lisa"
-   :poll-interval-ms 5000})
+   :poll-interval-ms 5000
+   ;; Pass user's MCP config so Chrome MCP is available for visual validation
+   :mcp-config (str (fs/home) "/.claude.json")})
 
 (defn- ensure-log-dir!
   "Create the log directory if it doesn't exist."
@@ -25,6 +27,14 @@
   (let [log-dir (str (fs/path project-path (:log-dir config)))]
     (fs/create-dirs log-dir)
     log-dir))
+
+(defn- ui-checkpoint?
+  "Check if checkpoint appears to be UI-related based on description."
+  [description]
+  (let [desc-lower (str/lower-case (or description ""))]
+    (some #(str/includes? desc-lower %)
+          ["ui" "view" "screen" "page" "component" "display" "show" "render"
+           "mobile" "web" "frontend" "button" "form" "list" "card"])))
 
 (defn- build-iteration-prompt
   "Build the prompt for a single iteration focused on the current checkpoint."
@@ -34,7 +44,8 @@
         cp-desc (:description checkpoint)
         cp-file (:file checkpoint)
         cp-acceptance (:acceptance checkpoint)
-        cp-validation (:validation checkpoint)]
+        cp-validation (:validation checkpoint)
+        is-ui? (ui-checkpoint? cp-desc)]
     (str/join "\n\n"
               (filter some?
                       [(str "# Lisa Loop: " plan-title)
@@ -52,8 +63,14 @@
                        "1. Read the current state - check LISA_PLAN.md and query the REPL"
                        "2. Implement the checkpoint task"
                        "3. Validate using REPL evaluation (reload_namespace, eval_comment_block)"
-                       "4. When acceptance criteria are met, edit LISA_PLAN.md to mark this checkpoint [DONE]"
-                       "5. Output 'CHECKPOINT_COMPLETE' when done, or 'CHECKPOINT_BLOCKED: <reason>' if stuck"
+                       (when is-ui?
+                         "4. **VISUAL VALIDATION REQUIRED**: Use Chrome MCP to take a screenshot and verify the UI renders correctly:
+   - Use mcp__claude-in-chrome__tabs_context_mcp to get browser context
+   - Navigate to the app URL (e.g., http://localhost:8081 for Expo)
+   - Use mcp__claude-in-chrome__computer with action 'screenshot' to capture the UI
+   - Verify the visual output matches acceptance criteria")
+                       (str (if is-ui? "5" "4") ". When acceptance criteria are met, edit LISA_PLAN.md to mark this checkpoint [DONE]")
+                       (str (if is-ui? "6" "5") ". Output 'CHECKPOINT_COMPLETE' when done, or 'CHECKPOINT_BLOCKED: <reason>' if stuck")
                        ""
                        (when (seq signs-content)
                          (str "## Previous Learnings (Signs)\n\n" signs-content))
@@ -83,13 +100,15 @@
   [project-path prompt config log-file]
   ;; Pass prompt via stdin to avoid shell escaping issues
   ;; --dangerously-skip-permissions is REQUIRED for non-interactive mode
+  ;; --mcp-config passes user config so Chrome MCP is available for visual validation
   (p/process {:dir project-path
               :in prompt
               :out (java.io.File. log-file)
               :err :stdout}
              "claude" "-p" "--output-format" "json"
              "--dangerously-skip-permissions"
-             "--allowedTools" (:allowed-tools config)))
+             "--allowedTools" (:allowed-tools config)
+             "--mcp-config" (:mcp-config config)))
 
 (defn- wait-for-process
   "Wait for process to complete, polling at intervals. Returns exit code."
