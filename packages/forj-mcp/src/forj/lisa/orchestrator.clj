@@ -64,11 +64,12 @@
                        "2. Implement the checkpoint task"
                        "3. Validate using REPL evaluation (reload_namespace, eval_comment_block)"
                        (when is-ui?
-                         "4. **VISUAL VALIDATION REQUIRED**: Use Chrome MCP to take a screenshot and verify the UI renders correctly:
-   - Use mcp__claude-in-chrome__tabs_context_mcp to get browser context
-   - Navigate to the app URL (e.g., http://localhost:8081 for Expo)
-   - Use mcp__claude-in-chrome__computer with action 'screenshot' to capture the UI
-   - Verify the visual output matches acceptance criteria")
+                         "4. **VISUAL VALIDATION REQUIRED**: Take a screenshot and verify the UI renders correctly.
+   Use whichever visual MCP tools are available (Chrome MCP, Playwright MCP, Mobile MCP, etc.):
+   - Navigate to the app URL (localhost:8081 for Expo, localhost:8080 for web, etc.)
+   - Take a screenshot of the rendered UI
+   - Verify the visual output matches the acceptance criteria
+   - If the UI doesn't match expectations, fix before marking complete")
                        (str (if is-ui? "5" "4") ". When acceptance criteria are met, edit LISA_PLAN.md to mark this checkpoint [DONE]")
                        (str (if is-ui? "6" "5") ". Output 'CHECKPOINT_COMPLETE' when done, or 'CHECKPOINT_BLOCKED: <reason>' if stuck")
                        ""
@@ -149,6 +150,21 @@
     (when-let [[_ reason] (re-find #"CHECKPOINT_BLOCKED:\s*(.*)" text)]
       reason)))
 
+(defn- auto-commit-checkpoint!
+  "Create a git commit as a rollback point after successful checkpoint.
+   Fails silently if not a git repo or nothing to commit."
+  [project-path checkpoint-num checkpoint-desc]
+  (try
+    (let [msg (str "Lisa: Checkpoint " checkpoint-num " - " checkpoint-desc)]
+      ;; Stage all changes and commit
+      (p/shell {:dir project-path :out :string :err :string :continue true}
+               "git" "add" "-A")
+      (p/shell {:dir project-path :out :string :err :string :continue true}
+               "git" "commit" "-m" msg "--no-verify"))
+    (catch Exception _
+      ;; Silently ignore - not a git repo or nothing to commit
+      nil)))
+
 (defn run-loop!
   "Run the Lisa Loop orchestrator.
 
@@ -220,6 +236,8 @@
               (checkpoint-completed? result)
               (do
                 (println (str "[Lisa] Checkpoint " (:number checkpoint) " complete"))
+                ;; Auto-commit as rollback point
+                (auto-commit-checkpoint! project-path (:number checkpoint) (:description checkpoint))
                 (recur (inc iteration) (+ total-cost iteration-cost)))
 
               ;; Iteration ran but checkpoint not marked complete
