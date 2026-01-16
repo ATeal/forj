@@ -6,6 +6,7 @@
             [clojure.string :as str]
             [edamame.core :as edamame]
             [forj.hooks.loop-state :as loop-state]
+            [forj.lisa.plan :as lisa-plan]
             [forj.scaffold :as scaffold]))
 
 (def tools
@@ -176,7 +177,54 @@
     :description "List all tracked processes for the current project. Shows what's been started and can be stopped with stop_project."
     :inputSchema {:type "object"
                   :properties {:path {:type "string"
-                                      :description "Project path (defaults to current directory)"}}}}])
+                                      :description "Project path (defaults to current directory)"}}}}
+
+   ;; Lisa Loop v2 tools (planning + orchestration)
+   {:name "lisa_create_plan"
+    :description "Create a LISA_PLAN.md with checkpoints for a task. Use this to plan before starting a Lisa Loop."
+    :inputSchema {:type "object"
+                  :properties {:title {:type "string"
+                                       :description "Plan title (e.g., 'Build user authentication')"}
+                               :checkpoints {:type "array"
+                                             :items {:type "object"
+                                                     :properties {:description {:type "string"}
+                                                                  :file {:type "string"}
+                                                                  :acceptance {:type "string"}}}
+                                             :description "List of checkpoints with description, file, and acceptance criteria"}
+                               :path {:type "string"
+                                      :description "Project path (defaults to current directory)"}}
+                  :required ["title" "checkpoints"]}}
+
+   {:name "lisa_get_plan"
+    :description "Read the current LISA_PLAN.md and return its status, checkpoints, and current checkpoint."
+    :inputSchema {:type "object"
+                  :properties {:path {:type "string"
+                                      :description "Project path (defaults to current directory)"}}}}
+
+   {:name "lisa_mark_checkpoint_done"
+    :description "Mark a checkpoint as done in LISA_PLAN.md. Automatically advances to the next checkpoint."
+    :inputSchema {:type "object"
+                  :properties {:checkpoint {:type "integer"
+                                            :description "Checkpoint number to mark as done"}
+                               :path {:type "string"
+                                      :description "Project path (defaults to current directory)"}}
+                  :required ["checkpoint"]}}
+
+   {:name "lisa_run_orchestrator"
+    :description "Run the Lisa Loop orchestrator. Spawns fresh Claude instances for each iteration until all checkpoints complete."
+    :inputSchema {:type "object"
+                  :properties {:path {:type "string"
+                                      :description "Project path (defaults to current directory)"}
+                               :max_iterations {:type "integer"
+                                                :description "Maximum iterations before stopping (default: 20)"}}}}
+
+   {:name "repl_snapshot"
+    :description "Take a snapshot of current REPL state. Returns loaded namespaces, defined vars in project namespaces, and running servers. Use this to understand what's live in the REPL."
+    :inputSchema {:type "object"
+                  :properties {:port {:type "integer"
+                                      :description "nREPL port (auto-discovered if not provided)"}
+                               :namespace {:type "string"
+                                           :description "Specific namespace to inspect (optional, inspects all project namespaces if not provided)"}}}}])
 
 ;; =============================================================================
 ;; REPL Type Detection (Path-based routing)
@@ -1292,6 +1340,104 @@
       {:success false
        :error (str "Failed to stop processes: " (.getMessage e))})))
 
+;; =============================================================================
+;; Lisa Loop v2 Tools (Planning + Orchestration)
+;; =============================================================================
+
+(defn lisa-create-plan
+  "Create a LISA_PLAN.md with checkpoints."
+  [{:keys [title checkpoints path] :or {path "."}}]
+  (try
+    (let [checkpoint-data (mapv (fn [cp]
+                                  {:description (:description cp)
+                                   :file (:file cp)
+                                   :acceptance (:acceptance cp)})
+                                checkpoints)]
+      (lisa-plan/create-plan! path {:title title :checkpoints checkpoint-data})
+      {:success true
+       :message (str "Created LISA_PLAN.md with " (count checkpoints) " checkpoints")
+       :path (str (fs/path path "LISA_PLAN.md"))})
+    (catch Exception e
+      {:success false
+       :error (str "Failed to create plan: " (.getMessage e))})))
+
+(defn lisa-get-plan
+  "Read the current LISA_PLAN.md."
+  [{:keys [path] :or {path "."}}]
+  (try
+    (if-let [plan (lisa-plan/parse-plan path)]
+      {:success true
+       :plan plan
+       :current-checkpoint (lisa-plan/current-checkpoint plan)
+       :all-complete (lisa-plan/all-complete? plan)}
+      {:success false
+       :error "No LISA_PLAN.md found"})
+    (catch Exception e
+      {:success false
+       :error (str "Failed to read plan: " (.getMessage e))})))
+
+(defn lisa-mark-checkpoint-done
+  "Mark a checkpoint as done."
+  [{:keys [checkpoint path] :or {path "."}}]
+  (try
+    (if-let [updated-plan (lisa-plan/mark-checkpoint-done! path checkpoint)]
+      {:success true
+       :message (str "Marked checkpoint " checkpoint " as done")
+       :all-complete (lisa-plan/all-complete? updated-plan)
+       :next-checkpoint (lisa-plan/current-checkpoint updated-plan)}
+      {:success false
+       :error "Failed to update plan - plan may not exist"})
+    (catch Exception e
+      {:success false
+       :error (str "Failed to mark checkpoint: " (.getMessage e))})))
+
+(defn lisa-run-orchestrator
+  "Run the Lisa Loop orchestrator (spawns Claude instances)."
+  [{:keys [path max_iterations] :or {path "." max_iterations 20}}]
+  ;; Note: This is a long-running operation. For MCP, we return instructions
+  ;; to run it externally rather than blocking the MCP server.
+  {:success true
+   :message "Lisa Loop orchestrator should be run externally"
+   :command (str "bb -cp " (System/getProperty "java.class.path")
+                 " -m forj.lisa.orchestrator " path " " max_iterations)
+   :note "The orchestrator spawns fresh Claude instances and is not suitable for MCP blocking calls"})
+
+(defn repl-snapshot
+  "Take a snapshot of REPL state."
+  [{:keys [port namespace]}]
+  (try
+    ;; Get all loaded namespaces
+    (let [ns-code "(mapv (comp str ns-name) (all-ns))"
+          ns-result (eval-code {:code ns-code :port port :timeout 5000})
+
+          ;; Get namespace publics if specified
+          vars-result (when namespace
+                        (eval-code
+                         {:code (str "(mapv (fn [[k v]] {:name (str k) :type (str (type @v))}) "
+                                     "(ns-publics '" namespace "))")
+                          :port port
+                          :timeout 5000}))
+
+          ;; Check for common server state vars
+          server-check (eval-code
+                        {:code "(vec (filter some? [(when (resolve 'user/system) {:user/system @(resolve 'user/system)})
+                                        (when (resolve 'mount.core/running-states) {:mount/running @(resolve 'mount.core/running-states)})]))"
+                         :port port
+                         :timeout 5000})]
+
+      (if (:success ns-result)
+        {:success true
+         :namespaces (when-let [v (:value ns-result)] (edn/read-string v))
+         :vars (when (and vars-result (:success vars-result))
+                 (when-let [v (:value vars-result)] (edn/read-string v)))
+         :server-state (when (:success server-check)
+                         (when-let [v (:value server-check)] (edn/read-string v)))}
+        {:success false
+         :error (or (:error ns-result) "Failed to query REPL")}))
+    (catch Exception e
+      {:success false
+       :error (str "Failed to snapshot REPL: " (.getMessage e))})))
+
 (defn call-tool
   "Dispatch tool call to appropriate handler."
   [{:keys [name arguments]}]
@@ -1317,4 +1463,10 @@
     "track_process" (track-process arguments)
     "stop_project" (stop-project arguments)
     "list_tracked_processes" (list-tracked-processes arguments)
+    ;; Lisa Loop v2 tools
+    "lisa_create_plan" (lisa-create-plan arguments)
+    "lisa_get_plan" (lisa-get-plan arguments)
+    "lisa_mark_checkpoint_done" (lisa-mark-checkpoint-done arguments)
+    "lisa_run_orchestrator" (lisa-run-orchestrator arguments)
+    "repl_snapshot" (repl-snapshot arguments)
     {:success false :error (str "Unknown tool: " name)}))
