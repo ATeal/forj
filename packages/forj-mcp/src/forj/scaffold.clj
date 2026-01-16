@@ -260,6 +260,71 @@
                    (conj seen mod-name))))))))
 
 ;; =============================================================================
+;; CLAUDE.md Generation
+;; =============================================================================
+
+(defn- generate-claude-md
+  "Generate CLAUDE.md content based on selected modules."
+  [project-name modules]
+  (let [has-backend? (some #{"backend"} modules)
+        has-web? (some #{"web"} modules)
+        has-mobile? (some #{"mobile"} modules)
+        has-db? (some #{"db-postgres" "db-sqlite"} modules)
+        has-shadow? (or has-web? has-mobile?)
+
+        ;; Build commands section
+        commands (cond-> []
+                   true (conj "bb tasks          # List available tasks")
+                   has-backend? (conj "bb dev            # Start backend REPL")
+                   has-shadow? (conj "bb shadow         # Start shadow-cljs watch")
+                   has-mobile? (conj "bb expo           # Start Expo dev server")
+                   true (conj "bb test           # Run tests"))
+
+        ;; Build project type description
+        project-type (cond
+                       (and has-backend? has-mobile?) "Full-stack mobile (Clojure + ClojureScript + Expo)"
+                       (and has-backend? has-web?) "Full-stack web (Clojure + ClojureScript)"
+                       has-mobile? "Mobile (ClojureScript + Expo)"
+                       has-web? "Frontend (ClojureScript + shadow-cljs)"
+                       has-backend? "Backend (Clojure)"
+                       :else "Script (Babashka)")]
+
+    (str "# " project-name "\n\n"
+         project-type "\n\n"
+         "## Quick Start\n\n"
+         "```bash\n"
+         (str/join "\n" commands)
+         "\n```\n\n"
+         "## Development\n\n"
+         "This project uses REPL-driven development with forj.\n\n"
+         "### Starting the REPL\n\n"
+         "```bash\n"
+         "/clj-repl         # Auto-detect and start appropriate REPLs\n"
+         "/clj-repl status  # Check what's running\n"
+         "/clj-repl stop    # Stop all REPLs\n"
+         "```\n\n"
+         "### forj MCP Tools\n\n"
+         "| Tool | Purpose |\n"
+         "|------|--------|\n"
+         "| `repl_eval` | Evaluate Clojure code |\n"
+         "| `reload_namespace` | Reload a namespace after changes |\n"
+         "| `eval_comment_block` | Evaluate test expressions in comment blocks |\n"
+         "| `run_tests` | Run project tests |\n\n"
+         (when has-db?
+           (str "## Database\n\n"
+                (if (some #{"db-postgres"} modules)
+                  "Uses PostgreSQL. Configure connection in environment or config.\n\n"
+                  "Uses SQLite. Database file is created automatically.\n\n")))
+         "## Project Structure\n\n"
+         "```\n"
+         (cond-> "src/\n"
+           has-backend? (str "  " (str/replace project-name "-" "_") "/core.clj    # Backend entry\n")
+           has-web? (str "  " (str/replace project-name "-" "_") "/app.cljs    # Web frontend\n")
+           has-mobile? (str "  " (str/replace project-name "-" "_") "/app.cljs    # Mobile app\n"))
+         "test/                    # Tests\n"
+         "```\n")))
+
+;; =============================================================================
 ;; File Generation
 ;; =============================================================================
 
@@ -379,6 +444,10 @@
           (spit gitignore-file
                 (str (slurp gitignore-file) "\n" (str/join "\n" gitignore-entries) "\n")
                 :append true)))
+
+      ;; Generate CLAUDE.md
+      (let [claude-md (str (fs/path project-dir "CLAUDE.md"))]
+        (spit claude-md (generate-claude-md project-name all-modules)))
 
       {:success true
        :project-dir project-dir
