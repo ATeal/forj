@@ -24,6 +24,14 @@ Future improvements discussed during development.
   - Pretty-print tool calls as they happen: `[Iter 4] Editing views.cljs...`
   - Show real-time progress without waiting for iteration to complete
 
+- [ ] **Checkpoint-named screenshots** - Rename `page-2026-01-17T00-53-29.png` to `checkpoint-4-history-view.png`
+
+- [ ] **Token tracking** - Capture input/output token breakdown from Claude's JSON output, not just cost
+
+- [ ] **Implement judge: validation** - LLM-as-judge for subjective criteria ("does this look good?")
+  - Currently a stub in validation.clj
+  - Would call Claude API to evaluate screenshot against criteria
+
 ---
 
 ## /clj-repl Improvements
@@ -75,3 +83,8 @@ Key metrics from that run:
 - 8 checkpoints / 7 iterations = 1.14 iterations per checkpoint
 - ~$10 total = ~$1.25 per checkpoint
 - Full-stack app with backend, mobile UI, persistence
+
+**Cost breakdown (with visual validation):**
+- Backend checkpoints: ~$0.75-0.95 each
+- UI checkpoints with Playwright screenshots: ~$5-7 each
+- ~6-7x multiplier for visual validation (useful for planning budgets)
