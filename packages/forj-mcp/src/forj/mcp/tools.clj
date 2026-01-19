@@ -226,12 +226,16 @@
                   :required ["checkpoint"]}}
 
    {:name "lisa_run_orchestrator"
-    :description "Run the Lisa Loop orchestrator. Spawns fresh Claude instances for each iteration until all checkpoints complete."
+    :description "Run the Lisa Loop orchestrator. Spawns fresh Claude instances for each iteration until all checkpoints complete. Supports parallel execution for EDN plans with dependencies."
     :inputSchema {:type "object"
                   :properties {:path {:type "string"
                                       :description "Project path (defaults to current directory)"}
                                :max_iterations {:type "integer"
-                                                :description "Maximum iterations before stopping (default: 20)"}}}}
+                                                :description "Maximum iterations before stopping (default: 20)"}
+                               :parallel {:type "boolean"
+                                          :description "Enable parallel execution for EDN plans (default: false)"}
+                               :max_parallel {:type "integer"
+                                              :description "Max concurrent checkpoints when parallel (default: 3)"}}}}
 
    {:name "repl_snapshot"
     :description "Take a snapshot of current REPL state. Returns loaded namespaces, defined vars in project namespaces, and running servers. Use this to understand what's live in the REPL."
@@ -1545,14 +1549,23 @@
 
 (defn lisa-run-orchestrator
   "Run the Lisa Loop orchestrator (spawns Claude instances)."
-  [{:keys [path max_iterations] :or {path "." max_iterations 20}}]
+  [{:keys [path max_iterations parallel max_parallel]
+    :or {path "." max_iterations 20 parallel false max_parallel 3}}]
   ;; Note: This is a long-running operation. For MCP, we return instructions
   ;; to run it externally rather than blocking the MCP server.
-  {:success true
-   :message "Lisa Loop orchestrator should be run externally"
-   :command (str "bb -cp " (System/getProperty "java.class.path")
-                 " -m forj.lisa.orchestrator " path " " max_iterations)
-   :note "The orchestrator spawns fresh Claude instances and is not suitable for MCP blocking calls"})
+  (let [base-cmd (str "bb -cp " (System/getProperty "java.class.path")
+                      " -m forj.lisa.orchestrator " path
+                      " --max-iterations " max_iterations)
+        cmd (cond-> base-cmd
+              parallel (str " --parallel")
+              (and parallel max_parallel) (str " --max-parallel " max_parallel))]
+    {:success true
+     :message (if parallel
+                (str "Lisa Loop orchestrator (parallel mode, max " max_parallel " concurrent)")
+                "Lisa Loop orchestrator (sequential mode)")
+     :command cmd
+     :parallel parallel
+     :note "The orchestrator spawns fresh Claude instances and is not suitable for MCP blocking calls"}))
 
 (defn repl-snapshot
   "Take a snapshot of REPL state."
