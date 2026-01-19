@@ -2,7 +2,7 @@
   "Lisa Loop orchestrator - spawns fresh Claude instances for each iteration.
 
    The orchestrator:
-   1. Reads LISA_PLAN.md to find current checkpoint
+   1. Reads LISA_PLAN.edn (or .md) to find current checkpoint
    2. Spawns a Claude instance with focused prompt
    3. Waits for completion
    4. Reads output JSON for success/failure
@@ -11,7 +11,8 @@
             [babashka.process :as p]
             [cheshire.core :as json]
             [clojure.string :as str]
-            [forj.lisa.plan :as plan]))
+            [forj.lisa.plan :as plan]
+            [forj.lisa.plan-edn :as plan-edn]))
 
 (def default-config
   {:max-iterations 20
@@ -40,27 +41,35 @@
   "Build the prompt for a single iteration focused on the current checkpoint."
   [plan checkpoint signs-content]
   (let [plan-title (:title plan)
-        cp-num (:number checkpoint)
+        ;; Support both EDN (:id) and markdown (:number) formats
+        cp-id (or (:number checkpoint) (:id checkpoint))
         cp-desc (:description checkpoint)
         cp-file (:file checkpoint)
         cp-acceptance (:acceptance checkpoint)
         cp-validation (:validation checkpoint)
-        is-ui? (ui-checkpoint? cp-desc)]
+        cp-gates (:gates checkpoint)
+        cp-deps (:depends-on checkpoint)
+        is-ui? (ui-checkpoint? cp-desc)
+        ;; Detect if using EDN format (has :id keyword)
+        is-edn? (keyword? (:id checkpoint))
+        plan-file (if is-edn? "LISA_PLAN.edn" "LISA_PLAN.md")]
     (str/join "\n\n"
               (filter some?
                       [(str "# Lisa Loop: " plan-title)
                        ""
                        "You are working on a focused checkpoint. Complete this ONE task, then exit."
                        ""
-                       (str "## Current Checkpoint: " cp-num)
+                       (str "## Current Checkpoint: " cp-id)
                        (str "**Task:** " cp-desc)
                        (when cp-file (str "**File:** " cp-file))
                        (when cp-acceptance (str "**Acceptance Criteria:** " cp-acceptance))
+                       (when (seq cp-gates) (str "**Gates:** " (str/join " | " cp-gates)))
+                       (when (seq cp-deps) (str "**Depends on:** " (str/join ", " (map name cp-deps))))
                        (when cp-validation (str "**Validation:** " cp-validation))
                        ""
                        "## Instructions"
                        ""
-                       "1. Read the current state - check LISA_PLAN.md and query the REPL"
+                       (str "1. Read the current state - check " plan-file " and query the REPL")
                        "2. Implement the checkpoint task"
                        "3. Validate using REPL evaluation (reload_namespace, eval_comment_block)"
                        (when is-ui?
@@ -90,7 +99,10 @@
    If UI doesn't match, fix the code and re-verify visually.
 
    CHECKPOINT WILL BE REJECTED if you mark complete without screenshot verification.")
-                       (str (if is-ui? "5" "4") ". When acceptance criteria are met, edit LISA_PLAN.md to mark this checkpoint [DONE]")
+                       (str (if is-ui? "5" "4") ". When acceptance criteria are met, "
+                            (if is-edn?
+                              (str "use lisa_mark_checkpoint_done tool with checkpoint '" (name cp-id) "'")
+                              (str "edit " plan-file " to mark this checkpoint [DONE]")))
                        (str (if is-ui? "6" "5") ". Output 'CHECKPOINT_COMPLETE' when done, or 'CHECKPOINT_BLOCKED: <reason>' if stuck")
                        ""
                        (when (seq signs-content)
@@ -98,22 +110,47 @@
                        ""
                        "Focus ONLY on this checkpoint. Do not work ahead."]))))
 
-(defn- read-signs
-  "Read the LISA_SIGNS.md file if it exists."
+(defn- use-edn-format?
+  "Check if we should use EDN format."
   [project-path]
-  (let [signs-path (str (fs/path project-path "LISA_SIGNS.md"))]
-    (when (fs/exists? signs-path)
-      (slurp signs-path))))
+  (plan-edn/plan-exists? project-path))
+
+(defn- read-signs
+  "Read signs - from EDN embedded or LISA_SIGNS.md."
+  [project-path]
+  (if (use-edn-format? project-path)
+    ;; EDN format - get recent signs and format them
+    (let [plan (plan-edn/read-plan project-path)
+          signs (plan-edn/recent-signs plan 5)]
+      (when (seq signs)
+        (str/join "\n\n"
+                  (map (fn [s]
+                         (str "### Sign (iteration " (:iteration s) ")\n"
+                              "**Issue:** " (:issue s) "\n"
+                              "**Fix:** " (:fix s)))
+                       signs))))
+    ;; Markdown fallback
+    (let [signs-path (str (fs/path project-path "LISA_SIGNS.md"))]
+      (when (fs/exists? signs-path)
+        (slurp signs-path)))))
 
 (defn- append-sign!
-  "Append a sign (learning) to LISA_SIGNS.md."
+  "Append a sign (learning) - to EDN embedded or LISA_SIGNS.md."
   [project-path iteration issue fix]
-  (let [signs-path (str (fs/path project-path "LISA_SIGNS.md"))
-        timestamp (str (java.time.Instant/now))
-        sign-entry (str "\n## Sign " iteration " (" timestamp ")\n"
-                        "**Issue:** " issue "\n"
-                        "**Fix:** " fix "\n")]
-    (spit signs-path sign-entry :append true)))
+  (if (use-edn-format? project-path)
+    ;; EDN format - embedded signs
+    (plan-edn/append-sign! project-path
+                           {:iteration iteration
+                            :issue issue
+                            :fix fix
+                            :severity :error})
+    ;; Markdown fallback
+    (let [signs-path (str (fs/path project-path "LISA_SIGNS.md"))
+          timestamp (str (java.time.Instant/now))
+          sign-entry (str "\n## Sign " iteration " (" timestamp ")\n"
+                          "**Issue:** " issue "\n"
+                          "**Fix:** " fix "\n")]
+      (spit signs-path sign-entry :append true))))
 
 (defn- spawn-claude-iteration!
   "Spawn a Claude instance for one iteration. Returns the process.
@@ -197,6 +234,34 @@
       (when (fs/exists? orch-log)
         (spit orch-log "")))))
 
+(defn- read-plan
+  "Read plan from EDN (preferred) or markdown format."
+  [project-path]
+  (cond
+    (plan-edn/plan-exists? project-path)
+    {:format :edn
+     :plan (plan-edn/read-plan project-path)}
+
+    (plan/plan-exists? project-path)
+    {:format :markdown
+     :plan (plan/parse-plan project-path)}
+
+    :else nil))
+
+(defn- plan-all-complete?
+  "Check if all checkpoints are complete (format-aware)."
+  [{:keys [format plan]}]
+  (case format
+    :edn (plan-edn/all-complete? plan)
+    :markdown (plan/all-complete? plan)))
+
+(defn- plan-current-checkpoint
+  "Get current checkpoint (format-aware)."
+  [{:keys [format plan]}]
+  (case format
+    :edn (plan-edn/current-checkpoint plan)
+    :markdown (plan/current-checkpoint plan)))
+
 (defn run-loop!
   "Run the Lisa Loop orchestrator.
 
@@ -215,20 +280,21 @@
            total-cost 0.0
            total-input-tokens 0
            total-output-tokens 0]
-      (let [current-plan (plan/parse-plan project-path)]
+      (let [plan-data (read-plan project-path)
+            current-plan (:plan plan-data)]
 
         (cond
           ;; No plan found
-          (nil? current-plan)
+          (nil? plan-data)
           {:status :error
-           :error "No LISA_PLAN.md found"
+           :error "No LISA_PLAN.edn or LISA_PLAN.md found"
            :iterations iteration
            :total-cost total-cost
            :total-input-tokens total-input-tokens
            :total-output-tokens total-output-tokens}
 
           ;; All checkpoints complete
-          (plan/all-complete? current-plan)
+          (plan-all-complete? plan-data)
           (let [result {:status :complete
                         :iterations (dec iteration)
                         :total-cost total-cost
@@ -247,12 +313,14 @@
 
           ;; Run iteration
           :else
-          (let [checkpoint (plan/current-checkpoint current-plan)
+          (let [checkpoint (plan-current-checkpoint plan-data)
+                ;; For EDN, use :id if no :number; add number for display
+                cp-display (or (:number checkpoint) (:id checkpoint))
                 signs (read-signs project-path)
                 prompt (build-iteration-prompt current-plan checkpoint signs)
                 log-file (str (fs/path log-dir (str "iter-" iteration ".json")))
 
-                _ (println (str "[Lisa] Iteration " iteration ": Checkpoint " (:number checkpoint)
+                _ (println (str "[Lisa] Iteration " iteration ": Checkpoint " cp-display
                                 " - " (:description checkpoint)))
 
                 proc (spawn-claude-iteration! project-path prompt config log-file)
@@ -285,9 +353,9 @@
               ;; Checkpoint completed
               (checkpoint-completed? result)
               (do
-                (println (str "[Lisa] Checkpoint " (:number checkpoint) " complete"))
+                (println (str "[Lisa] Checkpoint " cp-display " complete"))
                 ;; Auto-commit as rollback point
-                (auto-commit-checkpoint! project-path (:number checkpoint) (:description checkpoint))
+                (auto-commit-checkpoint! project-path cp-display (:description checkpoint))
                 (recur (inc iteration)
                        (+ total-cost iteration-cost)
                        (+ total-input-tokens iter-input)
