@@ -7,6 +7,7 @@
             [edamame.core :as edamame]
             [forj.hooks.loop-state :as loop-state]
             [forj.lisa.plan :as lisa-plan]
+            [forj.lisa.plan-edn :as plan-edn]
             [forj.lisa.signs :as lisa-signs]
             [forj.lisa.validation :as lisa-validation]
             [forj.scaffold :as scaffold]))
@@ -183,31 +184,43 @@
 
    ;; Lisa Loop v2 tools (planning + orchestration)
    {:name "lisa_create_plan"
-    :description "Create a LISA_PLAN.md with checkpoints for a task. Use this to plan before starting a Lisa Loop."
+    :description "Create a LISA_PLAN.edn with checkpoints for a task. Supports dependency graphs between checkpoints."
     :inputSchema {:type "object"
                   :properties {:title {:type "string"
                                        :description "Plan title (e.g., 'Build user authentication')"}
                                :checkpoints {:type "array"
                                              :items {:type "object"
-                                                     :properties {:description {:type "string"}
+                                                     :properties {:id {:type "string"
+                                                                       :description "Unique keyword ID (e.g., 'auth-module'). Auto-generated if not provided."}
+                                                                  :description {:type "string"}
                                                                   :file {:type "string"}
-                                                                  :acceptance {:type "string"}}}
-                                             :description "List of checkpoints with description, file, and acceptance criteria"}
+                                                                  :acceptance {:type "string"}
+                                                                  :gates {:type "array"
+                                                                          :items {:type "string"}
+                                                                          :description "Validation gates (e.g., 'repl:(fn) => expected')"}
+                                                                  :depends_on {:type "array"
+                                                                               :items {:type "string"}
+                                                                               :description "IDs of checkpoints this depends on"}}}
+                                             :description "List of checkpoints with optional dependencies"}
                                :path {:type "string"
                                       :description "Project path (defaults to current directory)"}}
                   :required ["title" "checkpoints"]}}
 
    {:name "lisa_get_plan"
-    :description "Read the current LISA_PLAN.md and return its status, checkpoints, and current checkpoint."
+    :description "Read the current plan (LISA_PLAN.edn or .md) and return optimized context for iteration. Includes dependency info, ready/blocked checkpoints, and recent signs."
     :inputSchema {:type "object"
                   :properties {:path {:type "string"
-                                      :description "Project path (defaults to current directory)"}}}}
+                                      :description "Project path (defaults to current directory)"}
+                               :max_signs {:type "integer"
+                                           :description "Max number of recent signs to include (default: 5)"}
+                               :full {:type "boolean"
+                                      :description "Return full plan instead of compressed context (default: false)"}}}}
 
    {:name "lisa_mark_checkpoint_done"
-    :description "Mark a checkpoint as done in LISA_PLAN.md. Automatically advances to the next checkpoint."
+    :description "Mark a checkpoint as done. Automatically advances to the next ready checkpoint based on dependencies."
     :inputSchema {:type "object"
-                  :properties {:checkpoint {:type "integer"
-                                            :description "Checkpoint number to mark as done"}
+                  :properties {:checkpoint {:type "string"
+                                            :description "Checkpoint ID (keyword like 'auth-module') or number"}
                                :path {:type "string"
                                       :description "Project path (defaults to current directory)"}}
                   :required ["checkpoint"]}}
@@ -1418,49 +1431,114 @@
 ;; Lisa Loop v2 Tools (Planning + Orchestration)
 ;; =============================================================================
 
+(defn- use-edn-format?
+  "Check if we should use EDN format (LISA_PLAN.edn exists or no plan exists yet)."
+  [path]
+  (or (plan-edn/plan-exists? path)
+      (not (lisa-plan/plan-exists? path))))
+
+(defn- parse-checkpoint-id
+  "Parse checkpoint ID from string - could be a number or keyword name."
+  [checkpoint-str]
+  (if-let [n (parse-long (str checkpoint-str))]
+    n
+    (keyword (str/replace (str checkpoint-str) #"^:" ""))))
+
 (defn lisa-create-plan
-  "Create a LISA_PLAN.md with checkpoints."
+  "Create a LISA_PLAN.edn with checkpoints (supports dependencies)."
   [{:keys [title checkpoints path] :or {path "."}}]
   (try
     (let [checkpoint-data (mapv (fn [cp]
-                                  {:description (:description cp)
-                                   :file (:file cp)
-                                   :acceptance (:acceptance cp)})
+                                  (cond-> {:description (:description cp)}
+                                    (:id cp) (assoc :id (keyword (:id cp)))
+                                    (:file cp) (assoc :file (:file cp))
+                                    (:acceptance cp) (assoc :acceptance (:acceptance cp))
+                                    (:gates cp) (assoc :gates (vec (:gates cp)))
+                                    (:depends_on cp) (assoc :depends-on (mapv keyword (:depends_on cp)))))
                                 checkpoints)]
-      (lisa-plan/create-plan! path {:title title :checkpoints checkpoint-data})
+      (plan-edn/create-plan! path {:title title :checkpoints checkpoint-data})
       {:success true
-       :message (str "Created LISA_PLAN.md with " (count checkpoints) " checkpoints")
-       :path (str (fs/path path "LISA_PLAN.md"))})
+       :message (str "Created LISA_PLAN.edn with " (count checkpoints) " checkpoints")
+       :path (str (fs/path path "LISA_PLAN.edn"))})
     (catch Exception e
       {:success false
        :error (str "Failed to create plan: " (.getMessage e))})))
 
 (defn lisa-get-plan
-  "Read the current LISA_PLAN.md."
-  [{:keys [path] :or {path "."}}]
+  "Read the current plan (EDN preferred, markdown fallback).
+   Returns compressed context optimized for Claude iterations."
+  [{:keys [path max_signs full] :or {path "." max_signs 5 full false}}]
   (try
-    (if-let [plan (lisa-plan/parse-plan path)]
-      {:success true
-       :plan plan
-       :current-checkpoint (lisa-plan/current-checkpoint plan)
-       :all-complete (lisa-plan/all-complete? plan)}
+    (cond
+      ;; EDN format (preferred)
+      (plan-edn/plan-exists? path)
+      (let [plan (plan-edn/read-plan path)]
+        (if full
+          {:success true
+           :format :edn
+           :plan plan}
+          {:success true
+           :format :edn
+           :context (plan-edn/context-for-iteration plan {:max-signs max_signs})
+           :current-checkpoint (plan-edn/current-checkpoint plan)
+           :all-complete (plan-edn/all-complete? plan)}))
+
+      ;; Markdown fallback
+      (lisa-plan/plan-exists? path)
+      (let [plan (lisa-plan/parse-plan path)]
+        {:success true
+         :format :markdown
+         :plan plan
+         :current-checkpoint (lisa-plan/current-checkpoint plan)
+         :all-complete (lisa-plan/all-complete? plan)})
+
+      :else
       {:success false
-       :error "No LISA_PLAN.md found"})
+       :error "No LISA_PLAN.edn or LISA_PLAN.md found"})
     (catch Exception e
       {:success false
        :error (str "Failed to read plan: " (.getMessage e))})))
 
 (defn lisa-mark-checkpoint-done
-  "Mark a checkpoint as done."
+  "Mark a checkpoint as done (supports both EDN and markdown formats)."
   [{:keys [checkpoint path] :or {path "."}}]
   (try
-    (if-let [updated-plan (lisa-plan/mark-checkpoint-done! path checkpoint)]
-      {:success true
-       :message (str "Marked checkpoint " checkpoint " as done")
-       :all-complete (lisa-plan/all-complete? updated-plan)
-       :next-checkpoint (lisa-plan/current-checkpoint updated-plan)}
+    (cond
+      ;; EDN format
+      (plan-edn/plan-exists? path)
+      (let [cp-id (parse-checkpoint-id checkpoint)
+            ;; If given a number, find the checkpoint ID
+            plan (plan-edn/read-plan path)
+            actual-id (if (number? cp-id)
+                        (:id (plan-edn/checkpoint-by-number plan cp-id))
+                        cp-id)]
+        (if-let [updated-plan (plan-edn/mark-checkpoint-done! path actual-id)]
+          (let [next-cp (plan-edn/current-checkpoint updated-plan)
+                ready (plan-edn/ready-checkpoints updated-plan)]
+            {:success true
+             :message (str "Marked checkpoint " actual-id " as done")
+             :all-complete (plan-edn/all-complete? updated-plan)
+             :next-checkpoint next-cp
+             :ready-checkpoints (mapv :id ready)})
+          {:success false
+           :error "Failed to update plan - checkpoint may not exist"}))
+
+      ;; Markdown fallback
+      (lisa-plan/plan-exists? path)
+      (let [cp-num (if (number? (parse-checkpoint-id checkpoint))
+                     (parse-checkpoint-id checkpoint)
+                     (throw (ex-info "Markdown plans require numeric checkpoint IDs" {})))]
+        (if-let [updated-plan (lisa-plan/mark-checkpoint-done! path cp-num)]
+          {:success true
+           :message (str "Marked checkpoint " cp-num " as done")
+           :all-complete (lisa-plan/all-complete? updated-plan)
+           :next-checkpoint (lisa-plan/current-checkpoint updated-plan)}
+          {:success false
+           :error "Failed to update plan - plan may not exist"}))
+
+      :else
       {:success false
-       :error "Failed to update plan - plan may not exist"})
+       :error "No LISA_PLAN.edn or LISA_PLAN.md found"})
     (catch Exception e
       {:success false
        :error (str "Failed to mark checkpoint: " (.getMessage e))})))
@@ -1517,44 +1595,81 @@
 ;; =============================================================================
 
 (defn lisa-append-sign
-  "Append a sign (learning) to LISA_SIGNS.md."
+  "Append a sign (learning). Uses EDN embedded signs if LISA_PLAN.edn exists, otherwise LISA_SIGNS.md."
   [{:keys [iteration checkpoint issue fix severity path] :or {path "." severity "error"}}]
   (try
-    (let [sign (lisa-signs/append-sign! path
-                                        {:iteration iteration
-                                         :checkpoint checkpoint
-                                         :issue issue
-                                         :fix fix
-                                         :severity (keyword severity)})]
-      {:success true
-       :message (str "Appended sign " (:number sign) " to LISA_SIGNS.md")
-       :sign sign})
+    (if (plan-edn/plan-exists? path)
+      ;; EDN format - embedded signs
+      (let [cp-key (if (string? checkpoint) (keyword checkpoint) checkpoint)]
+        (plan-edn/append-sign! path {:iteration iteration
+                                     :checkpoint cp-key
+                                     :issue issue
+                                     :fix fix
+                                     :severity (keyword severity)})
+        {:success true
+         :format :edn
+         :message "Appended sign to LISA_PLAN.edn"})
+      ;; Markdown fallback
+      (let [sign (lisa-signs/append-sign! path
+                                          {:iteration iteration
+                                           :checkpoint checkpoint
+                                           :issue issue
+                                           :fix fix
+                                           :severity (keyword severity)})]
+        {:success true
+         :format :markdown
+         :message (str "Appended sign " (:number sign) " to LISA_SIGNS.md")
+         :sign sign}))
     (catch Exception e
       {:success false
        :error (str "Failed to append sign: " (.getMessage e))})))
 
 (defn lisa-get-signs
-  "Read LISA_SIGNS.md and return signs."
-  [{:keys [path] :or {path "."}}]
+  "Read signs. Uses EDN embedded signs if LISA_PLAN.edn exists, otherwise LISA_SIGNS.md."
+  [{:keys [path max_signs] :or {path "." max_signs 10}}]
   (try
-    (if-let [summary (lisa-signs/signs-summary path)]
+    (cond
+      ;; EDN format - embedded signs
+      (plan-edn/plan-exists? path)
+      (let [plan (plan-edn/read-plan path)
+            signs (plan-edn/recent-signs plan max_signs)]
+        {:success true
+         :format :edn
+         :signs signs
+         :count (count signs)})
+
+      ;; Markdown fallback
+      (lisa-signs/signs-exist? path)
       {:success true
-       :signs summary
+       :format :markdown
+       :signs (lisa-signs/signs-summary path)
        :raw (lisa-signs/read-signs path)}
+
+      :else
       {:success true
        :signs nil
-       :message "No signs file exists"})
+       :message "No signs found"})
     (catch Exception e
       {:success false
        :error (str "Failed to read signs: " (.getMessage e))})))
 
 (defn lisa-clear-signs
-  "Delete LISA_SIGNS.md."
+  "Clear signs. For EDN, clears embedded signs. For markdown, deletes LISA_SIGNS.md."
   [{:keys [path] :or {path "."}}]
   (try
-    (lisa-signs/clear-signs! path)
-    {:success true
-     :message "Cleared LISA_SIGNS.md"}
+    (if (plan-edn/plan-exists? path)
+      ;; EDN format - clear embedded signs
+      (do
+        (plan-edn/prune-old-signs! path 0)  ;; Keep 0 iterations = clear all
+        {:success true
+         :format :edn
+         :message "Cleared signs from LISA_PLAN.edn"})
+      ;; Markdown fallback
+      (do
+        (lisa-signs/clear-signs! path)
+        {:success true
+         :format :markdown
+         :message "Cleared LISA_SIGNS.md"}))
     (catch Exception e
       {:success false
        :error (str "Failed to clear signs: " (.getMessage e))})))
