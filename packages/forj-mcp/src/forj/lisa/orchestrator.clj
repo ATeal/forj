@@ -16,6 +16,7 @@
 
 (def default-config
   {:max-iterations 20
+   :max-parallel 3  ;; Max concurrent checkpoints (EDN format only)
    :allowed-tools "Bash,Edit,Read,Write,Glob,Grep,mcp__forj__*,mcp__claude-in-chrome__*"
    :log-dir ".forj/logs/lisa"
    :poll-interval-ms 5000
@@ -262,24 +263,223 @@
     :edn (plan-edn/current-checkpoint plan)
     :markdown (plan/current-checkpoint plan)))
 
+;;; =============================================================================
+;;; Parallel Execution (EDN format only)
+;;; =============================================================================
+
+(defn- get-ready-checkpoints
+  "Get all checkpoints ready to run (dependencies satisfied, not in-progress)."
+  [project-path]
+  (when (use-edn-format? project-path)
+    (let [plan (plan-edn/read-plan project-path)]
+      ;; ready-checkpoints returns pending checkpoints with deps met
+      ;; Also include current in-progress checkpoint
+      (concat
+       (filter #(= :in-progress (:status %)) (:checkpoints plan))
+       (plan-edn/ready-checkpoints plan)))))
+
+(defn- spawn-checkpoint-process!
+  "Spawn a Claude process for a specific checkpoint. Returns process info map."
+  [project-path checkpoint config log-dir iteration-base]
+  (let [cp-id (or (:id checkpoint) (:number checkpoint))
+        cp-name (name cp-id)
+        log-file (str (fs/path log-dir (str "parallel-" cp-name "-" iteration-base ".json")))
+        plan (plan-edn/read-plan project-path)
+        signs (read-signs project-path)
+        prompt (build-iteration-prompt plan checkpoint signs)
+        proc (spawn-claude-iteration! project-path prompt config log-file)]
+    {:checkpoint-id cp-id
+     :checkpoint checkpoint
+     :process proc
+     :log-file log-file
+     :started-at (System/currentTimeMillis)}))
+
+(defn- check-process-complete
+  "Check if a process has completed. Returns updated info with result if done."
+  [proc-info]
+  (if (p/alive? (:process proc-info))
+    proc-info
+    (let [result (parse-iteration-result (:log-file proc-info))]
+      (assoc proc-info
+             :completed true
+             :result result
+             :succeeded (iteration-succeeded? result)
+             :checkpoint-complete (checkpoint-completed? result)))))
+
+(defn- process-completed-checkpoints!
+  "Handle completed processes - mark checkpoints done, auto-commit, log."
+  [project-path completed-procs]
+  (doseq [{:keys [checkpoint-id checkpoint checkpoint-complete succeeded result]} completed-procs]
+    (let [cp-display (or (:number checkpoint) checkpoint-id)]
+      (cond
+        ;; Checkpoint completed successfully
+        (and succeeded checkpoint-complete)
+        (do
+          (println (str "[Lisa] ✓ Checkpoint " cp-display " complete"))
+          ;; Mark done in plan (orchestrator manages plan state)
+          (plan-edn/mark-checkpoint-done! project-path checkpoint-id)
+          ;; Auto-commit as rollback point
+          (auto-commit-checkpoint! project-path cp-display (:description checkpoint)))
+
+        ;; Process succeeded but checkpoint not marked complete - may need more work
+        succeeded
+        (println (str "[Lisa] → Checkpoint " cp-display " iteration done, may need more work"))
+
+        ;; Process failed
+        :else
+        (do
+          (println (str "[Lisa] ✗ Checkpoint " cp-display " iteration failed"))
+          (when-let [blocked (extract-blocked-reason result)]
+            (append-sign! project-path 0 blocked "Needs resolution")))))))
+
+(defn- sum-costs
+  "Sum costs from completed process results."
+  [completed-procs]
+  (reduce (fn [acc {:keys [result]}]
+            (let [usage (:usage result)
+                  cost (or (:total_cost_usd result) 0.0)
+                  input (+ (or (:input_tokens usage) 0)
+                           (or (:cache_read_input_tokens usage) 0)
+                           (or (:cache_creation_input_tokens usage) 0))
+                  output (or (:output_tokens usage) 0)]
+              {:cost (+ (:cost acc) cost)
+               :input (+ (:input acc) input)
+               :output (+ (:output acc) output)}))
+          {:cost 0.0 :input 0 :output 0}
+          completed-procs))
+
+(defn run-loop-parallel!
+  "Run Lisa Loop with parallel checkpoint execution (EDN format only).
+
+   Spawns multiple Claude processes for independent checkpoints.
+   Checkpoints with satisfied dependencies run concurrently.
+
+   Options:
+   - :max-iterations - Maximum total iterations (default: 20)
+   - :max-parallel - Max concurrent checkpoints (default: 3)
+   - :on-checkpoint-complete - Callback (fn [checkpoint]) per completion
+   - :on-complete - Callback (fn [final-plan total-cost]) when all done"
+  [project-path & [{:keys [on-checkpoint-complete on-complete]
+                    :as opts}]]
+  (let [config (merge default-config opts)
+        log-dir (ensure-log-dir! project-path config)
+        _ (cleanup-previous-run! project-path config)
+        max-parallel (:max-parallel config)]
+
+    (println (str "[Lisa] Starting parallel execution (max " max-parallel " concurrent)"))
+
+    (loop [iteration 1
+           active-procs []
+           total-cost 0.0
+           total-input 0
+           total-output 0]
+
+      ;; Check for completion or limits
+      (let [plan (plan-edn/read-plan project-path)]
+        (cond
+          ;; All done
+          (plan-edn/all-complete? plan)
+          (let [result {:status :complete
+                        :iterations iteration
+                        :total-cost total-cost
+                        :total-input-tokens total-input
+                        :total-output-tokens total-output}]
+            (println "[Lisa] All checkpoints complete!")
+            (when on-complete (on-complete plan total-cost))
+            result)
+
+          ;; Max iterations
+          (> iteration (:max-iterations config))
+          {:status :max-iterations
+           :iterations iteration
+           :total-cost total-cost
+           :total-input-tokens total-input
+           :total-output-tokens total-output}
+
+          :else
+          ;; Main parallel loop logic
+          (let [;; Check which active processes have completed
+                checked-procs (mapv check-process-complete active-procs)
+                completed (filter :completed checked-procs)
+                still-active (remove :completed checked-procs)
+
+                ;; Process completions
+                _ (when (seq completed)
+                    (process-completed-checkpoints! project-path completed)
+                    (doseq [{:keys [checkpoint]} completed]
+                      (when on-checkpoint-complete
+                        (on-checkpoint-complete checkpoint))))
+
+                ;; Sum up costs from completed
+                costs (sum-costs completed)
+
+                ;; Re-read plan to get updated ready checkpoints
+                ready (when (< (count still-active) max-parallel)
+                        (let [fresh-plan (plan-edn/read-plan project-path)
+                              ready-cps (plan-edn/ready-checkpoints fresh-plan)
+                              active-ids (set (map :checkpoint-id still-active))]
+                          ;; Filter out already active checkpoints
+                          (remove #(active-ids (:id %)) ready-cps)))
+
+                ;; How many new processes to spawn
+                slots-available (- max-parallel (count still-active))
+                to-spawn (take slots-available ready)
+
+                ;; Spawn new processes
+                new-procs (when (seq to-spawn)
+                            (println (str "[Lisa] Spawning " (count to-spawn)
+                                          " parallel checkpoint(s): "
+                                          (str/join ", " (map #(name (:id %)) to-spawn))))
+                            (mapv #(spawn-checkpoint-process! project-path % config log-dir iteration)
+                                  to-spawn))
+
+                ;; Combine active processes
+                all-active (into (vec still-active) new-procs)]
+
+            ;; If nothing active and nothing to spawn, we might be stuck
+            (if (and (empty? all-active) (empty? to-spawn))
+              (do
+                (println "[Lisa] No active processes and no ready checkpoints - may be stuck")
+                {:status :stuck
+                 :iterations iteration
+                 :total-cost (+ total-cost (:cost costs))
+                 :total-input-tokens (+ total-input (:input costs))
+                 :total-output-tokens (+ total-output (:output costs))})
+
+              ;; Continue loop - poll interval
+              (do
+                (Thread/sleep (:poll-interval-ms config))
+                (recur (if (seq completed) (inc iteration) iteration)
+                       all-active
+                       (+ total-cost (:cost costs))
+                       (+ total-input (:input costs))
+                       (+ total-output (:output costs)))))))))))
+
 (defn run-loop!
   "Run the Lisa Loop orchestrator.
 
    Options:
    - :max-iterations - Maximum iterations (default: 20)
+   - :max-parallel - Max concurrent checkpoints for parallel mode (default: 3)
+   - :parallel - Enable parallel execution for EDN plans (default: false)
    - :allowed-tools - Tools to allow (default: standard set)
    - :on-iteration - Callback (fn [iteration result]) for each iteration
+   - :on-checkpoint-complete - Callback (fn [checkpoint]) for parallel mode
    - :on-complete - Callback (fn [final-plan total-cost]) when done"
-  [project-path & [{:keys [on-iteration on-complete]
+  [project-path & [{:keys [on-iteration on-complete on-checkpoint-complete parallel]
                     :as opts}]]
-  (let [config (merge default-config opts)
-        log-dir (ensure-log-dir! project-path config)
-        _ (cleanup-previous-run! project-path config)]
+  ;; Dispatch to parallel mode if requested and using EDN format
+  (if (and parallel (use-edn-format? project-path))
+    (run-loop-parallel! project-path opts)
+    ;; Sequential mode (default)
+    (let [config (merge default-config opts)
+          log-dir (ensure-log-dir! project-path config)
+          _ (cleanup-previous-run! project-path config)]
 
-    (loop [iteration 1
-           total-cost 0.0
-           total-input-tokens 0
-           total-output-tokens 0]
+      (loop [iteration 1]
+        total-cost 0.0
+        total-input-tokens 0
+        total-output-tokens 0)
       (let [plan-data (read-plan project-path)
             current-plan (:plan plan-data)]
 
@@ -405,21 +605,51 @@
 
 (defn -main
   "Entry point for running the orchestrator from command line.
-   Usage: bb -m forj.lisa.orchestrator <project-path> [max-iterations]"
+   Usage: bb -m forj.lisa.orchestrator <project-path> [options]
+   Options:
+     --max-iterations N  Maximum iterations (default: 20)
+     --parallel          Enable parallel execution (EDN plans only)
+     --max-parallel N    Max concurrent checkpoints (default: 3)"
   [& args]
-  (let [project-path (or (first args) ".")
-        max-iterations (if (second args)
-                         (parse-long (second args))
-                         20)]
+  (let [;; Parse args
+        {:keys [project-path max-iterations parallel max-parallel]}
+        (loop [args args
+               opts {:project-path "." :max-iterations 20 :parallel false :max-parallel 3}]
+          (if (empty? args)
+            opts
+            (let [[arg & rest] args]
+              (cond
+                (= "--parallel" arg)
+                (recur rest (assoc opts :parallel true))
+
+                (= "--max-iterations" arg)
+                (recur (rest rest) (assoc opts :max-iterations (parse-long (first rest))))
+
+                (= "--max-parallel" arg)
+                (recur (rest rest) (assoc opts :max-parallel (parse-long (first rest))))
+
+                (not (str/starts-with? arg "--"))
+                (recur rest (assoc opts :project-path arg))
+
+                :else
+                (recur rest opts)))))]
+
     (println "[Lisa] Starting orchestrator")
     (println "[Lisa] Project:" project-path)
     (println "[Lisa] Max iterations:" max-iterations)
+    (when parallel
+      (println "[Lisa] Parallel mode enabled (max" max-parallel "concurrent)"))
 
-    (let [result (run-loop! project-path {:max-iterations max-iterations
-                                          :on-iteration (fn [i _r]
-                                                          (println (str "[Lisa] Iteration " i " complete")))
-                                          :on-complete (fn [_plan cost]
-                                                         (println (str "[Lisa] All checkpoints complete! Total cost: $" cost)))})]
+    (let [result (run-loop! project-path
+                            {:max-iterations max-iterations
+                             :parallel parallel
+                             :max-parallel max-parallel
+                             :on-iteration (fn [i _r]
+                                             (println (str "[Lisa] Iteration " i " complete")))
+                             :on-checkpoint-complete (fn [cp]
+                                                       (println (str "[Lisa] Checkpoint " (:id cp) " complete")))
+                             :on-complete (fn [_plan cost]
+                                            (println (str "[Lisa] All checkpoints complete! Total cost: $" cost)))})]
       (println "[Lisa] Final status:" (:status result))
       (println "[Lisa] Total iterations:" (:iterations result))
       (println "[Lisa] Total tokens:" (:total-input-tokens result) "in /" (:total-output-tokens result) "out")
