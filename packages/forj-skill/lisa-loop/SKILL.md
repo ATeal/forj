@@ -5,6 +5,8 @@ commands:
   - name: lisa-loop
     description: Start an autonomous development loop - spawns fresh Claude instances per checkpoint
     args: "<prompt> [--max-iterations N]"
+  - name: lisa-loop watch
+    description: Watch the active Lisa loop - auto-refreshes status every 10s until complete
   - name: cancel-lisa
     description: Cancel the active Lisa loop
 ---
@@ -42,6 +44,69 @@ Stop the loop:
 ```
 /cancel-lisa
 ```
+
+### /lisa-loop watch
+
+Watch the loop progress in real-time:
+
+```
+/lisa-loop watch
+```
+
+**This will:**
+1. Poll `lisa_get_plan` every 10 seconds
+2. Display a progress table showing checkpoint status
+3. Show iteration count and current checkpoint
+4. Auto-refresh until loop completes or you press Ctrl+C
+5. Ring terminal bell when complete
+
+**Example output:**
+```
+[Lisa Watch] Refreshing every 10s (Ctrl+C to stop)
+
+┌────────────┬─────────────────────────────────┬────────┐
+│ Checkpoint │           Description           │ Status │
+├────────────┼─────────────────────────────────┼────────┤
+│ 1          │ Create password hashing         │ ✅ Done │
+│ 2          │ Create JWT tokens               │ ✅ Done │
+│ 3          │ Create auth middleware          │ 🔄 In Progress │
+│ 4          │ Integration test                │ ⏳ Pending │
+└────────────┴─────────────────────────────────┴────────┘
+Iteration: 4 | Current: Checkpoint 3 | Cost: $2.34
+```
+
+## How to implement /lisa-loop watch
+
+When user runs `/lisa-loop watch`:
+
+```python
+# Pseudo-code for watch loop
+while True:
+    plan = lisa_get_plan()
+
+    if plan.status == "COMPLETE":
+        print("🎉 Lisa Loop complete!")
+        print("\u0007")  # Terminal bell
+        break
+
+    # Display table of checkpoints
+    display_checkpoint_table(plan.checkpoints)
+
+    # Show progress summary
+    print(f"Iteration: {iteration} | Current: {plan.current_checkpoint}")
+
+    # Check for orchestrator log for iteration/cost
+    read latest from .forj/logs/lisa/orchestrator.log
+
+    sleep(10)  # Wait 10 seconds before refresh
+```
+
+**Important:** In Claude Code, you can't truly loop. Instead:
+1. Call `lisa_get_plan` to get status
+2. Display the table
+3. Tell user: "Refreshing in 10 seconds... (say 'stop' to quit watching)"
+4. If user says nothing, refresh after a moment
+5. If all checkpoints done, announce completion
 
 ## How It Works
 

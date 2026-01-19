@@ -11,12 +11,36 @@ Start or connect to an nREPL server for REPL-driven development.
 
 | Command | Action |
 |---------|--------|
-| `/clj-repl` | Auto-detect project, start REPL |
+| `/clj-repl` | Auto-detect project, start REPL (asks if existing found) |
+| `/clj-repl fresh` | Restart all - stop existing, start new (no prompts) |
+| `/clj-repl keep` | Use existing REPLs if running (no prompts) |
 | `/clj-repl bb` | Start Babashka nREPL |
 | `/clj-repl clj` | Start JVM Clojure nREPL |
 | `/clj-repl shadow` | Start shadow-cljs nREPL |
 | `/clj-repl status` | Check tracked + discovered REPLs |
-| `/clj-repl stop` | Stop all tracked REPLs (uses `stop_project` tool) |
+| `/clj-repl stop` | Stop all tracked REPLs |
+| `/clj-repl --verbose` | Show detailed MCP tool output |
+
+## Output Style
+
+**Default: Concise** - Show brief status updates, final summary table only.
+**With `--verbose`** - Show MCP tool call details and intermediate output.
+
+Example concise output:
+```
+Starting backend + shadow-cljs...
+✓ Backend REPL on port 1669
+✓ shadow-cljs on port 9630
+✓ App server started
+
+| Service | Port | URL |
+|---------|------|-----|
+| Backend | 1669 | - |
+| shadow-cljs | 9630 | http://localhost:9630 |
+| Web App | 8080 | http://localhost:8080 |
+```
+
+**DO NOT** show raw MCP JSON responses or tool call internals unless `--verbose` is specified.
 
 ## CRITICAL: Use MCP Tools for REPL Operations
 
@@ -53,31 +77,41 @@ grep ":dev-http" shadow-cljs.edn
 
 ### Step 1: Check for Existing Processes
 
-**First, check for tracked processes from a previous session:**
+**Handle flags first:**
+
+| Flag | Behavior |
+|------|----------|
+| `fresh` | Skip prompts. Stop all tracked processes, start new ones. |
+| `keep` | Skip prompts. Use existing REPLs if found, start only what's missing. |
+| (none) | Ask user if existing processes found. |
+
+**Check for tracked processes:**
 
 ```
 list_tracked_processes
+discover_repls
 ```
 
+**With `fresh` flag:**
+```
+stop_project   # Stop all tracked processes
+# Then proceed to start new ones (Step 2+)
+```
+
+**With `keep` flag:**
+- If REPLs are already running for this project → report them and done
+- If some are missing → start only what's missing
+- No prompts, just proceed
+
+**With no flag (default):**
 If there are tracked processes that are still alive:
-- Tell the user what's already running (names, ports, PIDs)
-- Ask: "Found existing processes from a previous session. Would you like to:"
-  1. **Keep them** - Use the existing REPLs (recommended if they're working)
-  2. **Restart** - Stop all and start fresh
-  3. **Stop only** - Just stop them, don't start new ones
+- Tell the user what's already running (brief: "Found backend on 1669, shadow on 9630")
+- Ask: "Keep existing, restart fresh, or stop only?"
 
 If processes are tracked but all dead, clean them up silently:
 ```
 stop_project
 ```
-
-**Then discover running REPLs (may include untracked ones):**
-
-```
-discover_repls
-```
-
-If REPLs are already running for this project, report them and ask if user wants to use existing or start fresh.
 
 ### Step 2: Detect Project Type & What to Start
 
