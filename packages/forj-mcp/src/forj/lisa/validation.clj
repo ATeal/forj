@@ -118,18 +118,101 @@
    :note (str "Chrome validation requires MCP: " (name action) " " args)})
 
 ;; =============================================================================
-;; LLM-as-Judge Validation (Stub)
+;; LLM-as-Judge Validation
 ;; =============================================================================
 
+(defn- find-recent-screenshot
+  "Find the most recent screenshot in .forj/logs/lisa/ or common screenshot locations."
+  [project-path]
+  (try
+    (let [candidates [(str project-path "/.forj/logs/lisa/")
+                      (str project-path "/")
+                      "/tmp/"]
+          find-latest (fn [dir]
+                        (let [result (p/shell {:out :string :err :string :continue true}
+                                              "find" dir "-maxdepth" "2"
+                                              "-name" "*.png" "-o" "-name" "*.jpg"
+                                              "-type" "f" "-mmin" "-10" "-printf" "%T@ %p\\n"
+                                              "|" "sort" "-rn" "|" "head" "-1")]
+                          (when (and (zero? (:exit result))
+                                     (not (str/blank? (:out result))))
+                            (second (str/split (str/trim (:out result)) #" " 2)))))]
+      (some find-latest candidates))
+    (catch Exception _
+      nil)))
+
+(defn- build-judge-prompt
+  "Build the prompt for LLM-as-judge evaluation."
+  [criteria screenshot-path]
+  (str "You are evaluating a UI or code output against specific criteria.\n\n"
+       "## Criteria\n"
+       criteria "\n\n"
+       (when screenshot-path
+         (str "## Screenshot\n"
+              "A screenshot has been provided at: " screenshot-path "\n"
+              "Analyze the visual content to evaluate the criteria.\n\n"))
+       "## Instructions\n"
+       "Evaluate whether the criteria is met. Respond with ONLY:\n"
+       "- PASS: <brief reason> - if the criteria is clearly met\n"
+       "- FAIL: <brief reason> - if the criteria is not met\n"
+       "- UNCLEAR: <brief reason> - if you cannot determine from available information\n\n"
+       "Be strict but fair. Minor imperfections are okay if the core criteria is met."))
+
+(defn- parse-judge-response
+  "Parse the judge response to extract pass/fail/unclear and reason."
+  [response]
+  (let [trimmed (str/trim response)]
+    (cond
+      (str/starts-with? (str/upper-case trimmed) "PASS")
+      {:passed true
+       :reason (str/trim (subs trimmed (min 5 (count trimmed))))}
+
+      (str/starts-with? (str/upper-case trimmed) "FAIL")
+      {:passed false
+       :reason (str/trim (subs trimmed (min 5 (count trimmed))))}
+
+      (str/starts-with? (str/upper-case trimmed) "UNCLEAR")
+      {:passed :unclear
+       :reason (str/trim (subs trimmed (min 8 (count trimmed))))}
+
+      :else
+      {:passed :unclear
+       :reason trimmed})))
+
 (defn- eval-judge-validation
-  "Run an LLM-as-judge validation.
-   Note: This is a stub - actual implementation would call Claude API."
-  [{:keys [criteria]}]
-  ;; Stub implementation - returns instructions for manual/LLM execution
-  {:passed :pending
-   :type :judge
-   :criteria criteria
-   :note (str "Judge validation requires LLM evaluation: " criteria)})
+  "Run an LLM-as-judge validation by shelling out to Claude.
+   Optionally uses a recent screenshot for visual evaluation."
+  [{:keys [criteria]} {:keys [project-path screenshot-path]}]
+  (try
+    (let [;; Try to find a recent screenshot if not provided
+          screenshot (or screenshot-path
+                         (when project-path
+                           (find-recent-screenshot project-path)))
+          prompt (build-judge-prompt criteria screenshot)
+          ;; Shell out to Claude with haiku for speed/cost
+          result (p/shell {:out :string :err :string :continue true
+                           :in prompt}
+                          "claude" "-p"
+                          "--model" "claude-haiku-4-20250514"
+                          "--output-format" "text"
+                          "--max-turns" "1"
+                          "--dangerously-skip-permissions")]
+      (if (zero? (:exit result))
+        (let [{:keys [passed reason]} (parse-judge-response (:out result))]
+          {:passed passed
+           :type :judge
+           :criteria criteria
+           :reason reason
+           :screenshot screenshot})
+        {:passed false
+         :type :judge
+         :criteria criteria
+         :error (or (not-empty (:err result)) "Claude evaluation failed")}))
+    (catch Exception e
+      {:passed false
+       :type :judge
+       :criteria criteria
+       :error (.getMessage e)})))
 
 ;; =============================================================================
 ;; Main Validation Runner
@@ -140,12 +223,14 @@
 
    Options:
    - :port - nREPL port for REPL validations
+   - :project-path - Project path for judge validations (screenshot discovery)
+   - :screenshot-path - Explicit screenshot path for judge validations
    - :chrome-tab - Chrome tab ID for Chrome validations (future)"
-  [validation-item {:keys [port]}]
+  [validation-item {:keys [port project-path screenshot-path] :as opts}]
   (case (:type validation-item)
     :repl (eval-repl-validation validation-item port)
     :chrome (eval-chrome-validation validation-item)
-    :judge (eval-judge-validation validation-item)
+    :judge (eval-judge-validation validation-item opts)
     {:passed false :error (str "Unknown validation type: " (:type validation-item))}))
 
 (defn run-validations
@@ -189,6 +274,11 @@
   ;; Run REPL validation (requires running nREPL)
   (run-validation {:type :repl :expression "(+ 1 2) => 3"} {:port 1667})
 
+  ;; Run judge validation (calls Claude haiku)
+  (run-validation {:type :judge :criteria "The UI has a clean, modern layout"}
+                  {:project-path "/tmp/test-project"})
+
   ;; Run all validations
-  (run-validations "repl:(+ 1 2) => 3" {:port 1667})
+  (run-validations "repl:(+ 1 2) => 3 | judge:UI looks professional"
+                   {:port 1667 :project-path "/tmp/test-project"})
   )

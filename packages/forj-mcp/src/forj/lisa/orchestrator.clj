@@ -185,6 +185,18 @@
       ;; Silently ignore - not a git repo or nothing to commit
       nil)))
 
+(defn- cleanup-previous-run!
+  "Clean up logs from previous runs to prevent stale output confusion."
+  [project-path config]
+  (let [log-dir (str (fs/path project-path (:log-dir config)))]
+    ;; Clear iteration logs from previous runs
+    (doseq [f (fs/glob log-dir "iter-*.json")]
+      (fs/delete f))
+    ;; Clear orchestrator log if it exists
+    (let [orch-log (str (fs/path log-dir "orchestrator.log"))]
+      (when (fs/exists? orch-log)
+        (spit orch-log "")))))
+
 (defn run-loop!
   "Run the Lisa Loop orchestrator.
 
@@ -196,10 +208,13 @@
   [project-path & [{:keys [on-iteration on-complete]
                     :as opts}]]
   (let [config (merge default-config opts)
-        log-dir (ensure-log-dir! project-path config)]
+        log-dir (ensure-log-dir! project-path config)
+        _ (cleanup-previous-run! project-path config)]
 
     (loop [iteration 1
-           total-cost 0.0]
+           total-cost 0.0
+           total-input-tokens 0
+           total-output-tokens 0]
       (let [current-plan (plan/parse-plan project-path)]
 
         (cond
@@ -208,13 +223,17 @@
           {:status :error
            :error "No LISA_PLAN.md found"
            :iterations iteration
-           :total-cost total-cost}
+           :total-cost total-cost
+           :total-input-tokens total-input-tokens
+           :total-output-tokens total-output-tokens}
 
           ;; All checkpoints complete
           (plan/all-complete? current-plan)
           (let [result {:status :complete
                         :iterations (dec iteration)
-                        :total-cost total-cost}]
+                        :total-cost total-cost
+                        :total-input-tokens total-input-tokens
+                        :total-output-tokens total-output-tokens}]
             (when on-complete (on-complete current-plan total-cost))
             result)
 
@@ -222,7 +241,9 @@
           (> iteration (:max-iterations config))
           {:status :max-iterations
            :iterations iteration
-           :total-cost total-cost}
+           :total-cost total-cost
+           :total-input-tokens total-input-tokens
+           :total-output-tokens total-output-tokens}
 
           ;; Run iteration
           :else
@@ -237,7 +258,13 @@
                 proc (spawn-claude-iteration! project-path prompt config log-file)
                 _exit-code (wait-for-process proc (:poll-interval-ms config))
                 result (parse-iteration-result log-file)
-                iteration-cost (or (:total_cost_usd result) 0.0)]
+                iteration-cost (or (:total_cost_usd result) 0.0)
+                usage (:usage result)
+                iter-input (+ (or (:input_tokens usage) 0)
+                              (or (:cache_read_input_tokens usage) 0)
+                              (or (:cache_creation_input_tokens usage) 0))
+                iter-output (or (:output_tokens usage) 0)
+                _ (println (str "[Lisa] Tokens: " iter-input " in / " iter-output " out, Cost: $" (format "%.2f" iteration-cost)))]
 
             ;; Call iteration callback if provided
             (when on-iteration
@@ -250,7 +277,10 @@
                 (println (str "[Lisa] Iteration " iteration " failed"))
                 (when-let [blocked (extract-blocked-reason result)]
                   (append-sign! project-path iteration blocked "Needs resolution"))
-                (recur (inc iteration) (+ total-cost iteration-cost)))
+                (recur (inc iteration)
+                       (+ total-cost iteration-cost)
+                       (+ total-input-tokens iter-input)
+                       (+ total-output-tokens iter-output)))
 
               ;; Checkpoint completed
               (checkpoint-completed? result)
@@ -258,13 +288,19 @@
                 (println (str "[Lisa] Checkpoint " (:number checkpoint) " complete"))
                 ;; Auto-commit as rollback point
                 (auto-commit-checkpoint! project-path (:number checkpoint) (:description checkpoint))
-                (recur (inc iteration) (+ total-cost iteration-cost)))
+                (recur (inc iteration)
+                       (+ total-cost iteration-cost)
+                       (+ total-input-tokens iter-input)
+                       (+ total-output-tokens iter-output)))
 
               ;; Iteration ran but checkpoint not marked complete
               :else
               (do
                 (println (str "[Lisa] Iteration " iteration " completed, continuing..."))
-                (recur (inc iteration) (+ total-cost iteration-cost))))))))))
+                (recur (inc iteration)
+                       (+ total-cost iteration-cost)
+                       (+ total-input-tokens iter-input)
+                       (+ total-output-tokens iter-output))))))))))
 
 (defn generate-plan!
   "Generate a LISA_PLAN.md by asking Claude to analyze the task and create checkpoints."
@@ -318,6 +354,11 @@
                                                          (println (str "[Lisa] All checkpoints complete! Total cost: $" cost)))})]
       (println "[Lisa] Final status:" (:status result))
       (println "[Lisa] Total iterations:" (:iterations result))
+      (println "[Lisa] Total tokens:" (:total-input-tokens result) "in /" (:total-output-tokens result) "out")
+      (println "[Lisa] Total cost: $" (format "%.2f" (or (:total-cost result) 0.0)))
+      ;; Terminal bell on completion
+      (print "\u0007")
+      (flush)
       (System/exit (if (= :complete (:status result)) 0 1)))))
 
 (comment
@@ -331,5 +372,4 @@
   (run-loop! "/tmp/test-project"
              {:max-iterations 5
               :on-iteration (fn [i r] (println "Iteration" i "cost:" (:total_cost_usd r)))
-              :on-complete (fn [_plan c] (println "Done! Total cost:" c))})
-  )
+              :on-complete (fn [_plan c] (println "Done! Total cost:" c))}))

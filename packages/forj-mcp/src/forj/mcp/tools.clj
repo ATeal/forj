@@ -1317,26 +1317,35 @@
     (catch Exception _ false)))
 
 (defn track-process
-  "Track a process for later cleanup."
+  "Track a process for later cleanup.
+   SAFETY: Refuses to track PID 0 or negative PIDs - kill 0 sends signals to entire process group."
   [{:keys [pid name port command]}]
-  (try
-    (let [path "."
-          session (or (read-session path) {:processes [] :path (str (fs/absolutize path))})
-          process-entry {:pid pid
-                         :name name
-                         :port port
-                         :command command
-                         :started-at (str (java.time.Instant/now))}
-          ;; Remove any existing entry with same name (replacing)
-          existing (remove #(= (:name %) name) (:processes session))
-          updated (assoc session :processes (conj (vec existing) process-entry))]
-      (write-session path updated)
-      {:success true
-       :message (str "Tracking process '" name "' (PID " pid ")")
-       :tracked process-entry})
-    (catch Exception e
-      {:success false
-       :error (str "Failed to track process: " (.getMessage e))})))
+  (cond
+    ;; Safety check: PID 0 is dangerous (kills process group), negative PIDs are invalid
+    (or (nil? pid) (not (pos-int? pid)))
+    {:success false
+     :error (str "Invalid PID: " pid " - must be a positive integer. "
+                 "PID 0 would kill the entire process group!")}
+
+    :else
+    (try
+      (let [path "."
+            session (or (read-session path) {:processes [] :path (str (fs/absolutize path))})
+            process-entry {:pid pid
+                           :name name
+                           :port port
+                           :command command
+                           :started-at (str (java.time.Instant/now))}
+            ;; Remove any existing entry with same name (replacing)
+            existing (remove #(= (:name %) name) (:processes session))
+            updated (assoc session :processes (conj (vec existing) process-entry))]
+        (write-session path updated)
+        {:success true
+         :message (str "Tracking process '" name "' (PID " pid ")")
+         :tracked process-entry})
+      (catch Exception e
+        {:success false
+         :error (str "Failed to track process: " (.getMessage e))}))))
 
 (defn list-tracked-processes
   "List all tracked processes for a project."
@@ -1362,13 +1371,20 @@
        :error (str "Failed to list processes: " (.getMessage e))})))
 
 (defn stop-project
-  "Stop all tracked processes for a project."
+  "Stop all tracked processes for a project.
+   SAFETY: Refuses to kill PID 0 or negative PIDs."
   [{:keys [path] :or {path "."}}]
   (try
     (if-let [session (read-session path)]
       (let [processes (:processes session)
             results (mapv (fn [{:keys [pid name]}]
-                            (if (process-alive? pid)
+                            (cond
+                              ;; SAFETY: Never kill PID 0 (kills process group) or invalid PIDs
+                              (or (nil? pid) (not (pos-int? pid)))
+                              {:name name :pid pid :stopped false
+                               :error "SAFETY: Refused to kill invalid PID (0 or negative)"}
+
+                              (process-alive? pid)
                               (try
                                 ;; Kill the process and its children
                                 (let [result (p/shell {:out :string :err :string :continue true}
@@ -1378,6 +1394,8 @@
                                     {:name name :pid pid :stopped false :error (:err result)}))
                                 (catch Exception e
                                   {:name name :pid pid :stopped false :error (.getMessage e)}))
+
+                              :else
                               {:name name :pid pid :stopped false :already-dead true}))
                           processes)
             stopped-count (count (filter :stopped results))

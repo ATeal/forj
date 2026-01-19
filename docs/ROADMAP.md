@@ -8,8 +8,8 @@ Future improvements discussed during development.
 
 ### P1 - High Value
 
-- [ ] **Watch mode** - `/lisa-loop watch` auto-refreshes status table every 10s until complete or Ctrl+C
-- [ ] **Terminal bell on completion** - `(println "\u0007")` when loop finishes
+- [x] **Watch mode** - `/lisa-loop watch` auto-refreshes status table every 10s until complete or Ctrl+C (2026-01-16)
+- [x] **Terminal bell on completion** - `(println "\u0007")` when loop finishes (2026-01-16)
 - [ ] **Structured acceptance criteria** - Plan generation creates:
   ```markdown
   - code_check: (require '[mobile.views] :reload) compiles
@@ -26,11 +26,11 @@ Future improvements discussed during development.
 
 - [ ] **Checkpoint-named screenshots** - Rename `page-2026-01-17T00-53-29.png` to `checkpoint-4-history-view.png`
 
-- [ ] **Token tracking** - Capture input/output token breakdown from Claude's JSON output, not just cost
+- [x] **Token tracking** - Capture input/output token breakdown from Claude's JSON output, not just cost (2026-01-16)
 
-- [ ] **Implement judge: validation** - LLM-as-judge for subjective criteria ("does this look good?")
-  - Currently a stub in validation.clj
-  - Would call Claude API to evaluate screenshot against criteria
+- [x] **Implement judge: validation** - LLM-as-judge for subjective criteria ("does this look good?") (2026-01-16)
+  - Uses Claude Haiku for speed/cost
+  - Auto-discovers recent screenshots for visual evaluation
 
 ---
 
@@ -38,15 +38,14 @@ Future improvements discussed during development.
 
 ### P1 - High Value
 
-- [ ] **Flags for common scenarios**
+- [x] **Flags for common scenarios** (2026-01-16)
   - `/clj-repl` - Smart default (ask if unclear)
   - `/clj-repl fresh` - Always restart all (no prompt)
   - `/clj-repl keep` - Use what's running (no prompt)
 
-- [ ] **Quieter output by default**
-  - Don't show raw MCP JSON responses
-  - Summarize results in tables or brief text
-  - `--verbose` flag for detailed output
+- [x] **Quieter output by default** (2026-01-16)
+  - Default: concise status updates, summary table only
+  - `--verbose` flag for detailed MCP output
 
 - [ ] **Offer to create `bb dev-all` task**
   - After first successful startup, ask: "Want me to create a `bb dev-all` task?"
