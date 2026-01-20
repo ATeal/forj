@@ -41,16 +41,6 @@
 
 ;;; Parsing
 
-(defn- parse-checkpoint-status
-  "Parse status from checkpoint header like '### 1. [DONE] Do something'"
-  [line]
-  (cond
-    (str/includes? line "[DONE]") :done
-    (str/includes? line "[IN_PROGRESS]") :in-progress
-    (str/includes? line "[PENDING]") :pending
-    (str/includes? line "[FAILED]") :failed
-    :else :pending))
-
 (defn- parse-checkpoint-header
   "Parse checkpoint header line.
    Returns {:number 1 :status :done :description \"Do something\"}"
@@ -129,11 +119,6 @@
   [plan]
   (every? #(= :done (:status %)) (:checkpoints plan)))
 
-(defn checkpoint-by-number
-  "Get a checkpoint by its number."
-  [plan n]
-  (first (filter #(= n (:number %)) (:checkpoints plan))))
-
 ;;; Writing
 
 (defn- checkpoint->markdown
@@ -202,28 +187,6 @@
               (assoc :checkpoints updated-checkpoints)
               (assoc :current-checkpoint (if all-done? checkpoint-number next-checkpoint))
               (assoc :status (if all-done? :complete :in-progress)))]
-
-      (write-plan! project-path updated-plan))))
-
-(defn mark-checkpoint-failed!
-  "Mark a checkpoint as failed."
-  [project-path checkpoint-number reason]
-  (when-let [plan (parse-plan project-path)]
-    (let [timestamp (str (java.time.Instant/now))
-          updated-checkpoints
-          (mapv (fn [cp]
-                  (if (= (:number cp) checkpoint-number)
-                    (-> cp
-                        (assoc :status :failed)
-                        (assoc :failed-at timestamp)
-                        (assoc :failure-reason reason))
-                    cp))
-                (:checkpoints plan))
-
-          updated-plan
-          (-> plan
-              (assoc :checkpoints updated-checkpoints)
-              (assoc :status :failed))]
 
       (write-plan! project-path updated-plan))))
 

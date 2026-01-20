@@ -226,7 +226,7 @@
    - :project-path - Project path for judge validations (screenshot discovery)
    - :screenshot-path - Explicit screenshot path for judge validations
    - :chrome-tab - Chrome tab ID for Chrome validations (future)"
-  [validation-item {:keys [port project-path screenshot-path] :as opts}]
+  [validation-item {:keys [port _project-path _screenshot-path] :as opts}]
   (case (:type validation-item)
     :repl (eval-repl-validation validation-item port)
     :chrome (eval-chrome-validation validation-item)
@@ -236,7 +236,7 @@
 (defn run-validations
   "Run all validations for a checkpoint.
    Returns {:all-passed bool :results [...] :summary string}"
-  [validation-str {:keys [port] :as opts}]
+  [validation-str {:keys [_port] :as opts}]
   (let [validations (parse-validation-string validation-str)
         results (mapv #(assoc (run-validation % opts) :raw (:raw %)) validations)
         passed (filter #(true? (:passed %)) results)
@@ -256,7 +256,7 @@
 (defn checkpoint-gates-passed?
   "Check if all gates for a checkpoint have passed.
    Gates are a stricter form of validation that MUST pass before advancing."
-  [gates-str {:keys [port] :as opts}]
+  [gates-str {:keys [_port] :as opts}]
   (if (or (nil? gates-str) (str/blank? gates-str))
     {:passed true :message "No gates defined"}
     (let [{:keys [all-passed summary]} (run-validations gates-str opts)]

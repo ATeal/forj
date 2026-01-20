@@ -91,12 +91,6 @@
   [plan]
   (every? #(= :done (:status %)) (:checkpoints plan)))
 
-(defn checkpoint-index
-  "Get the 0-based index of a checkpoint by ID."
-  [plan id]
-  (first (keep-indexed (fn [i cp] (when (= id (:id cp)) i))
-                       (:checkpoints plan))))
-
 ;;; =============================================================================
 ;;; Dependency Graph
 ;;; =============================================================================
@@ -204,16 +198,6 @@
                             :failed-at (timestamp)
                             :failure-reason reason})
         (assoc :status :failed)
-        (->> (write-plan! project-path)))))
-
-(defn start-checkpoint!
-  "Mark a checkpoint as in-progress."
-  [project-path checkpoint-id]
-  (when-let [plan (read-plan project-path)]
-    (-> plan
-        (update-checkpoint checkpoint-id
-                           {:status :in-progress
-                            :started (timestamp)})
         (->> (write-plan! project-path)))))
 
 ;;; =============================================================================
@@ -337,21 +321,6 @@
               :signs []
               :created (timestamp)}]
     (write-plan! project-path plan)))
-
-;;; =============================================================================
-;;; Migration from Markdown
-;;; =============================================================================
-
-(defn migrate-from-markdown!
-  "Migrate an existing LISA_PLAN.md to LISA_PLAN.edn.
-   Requires the old plan.clj namespace."
-  [project-path]
-  (let [md-path (str (fs/path project-path "LISA_PLAN.md"))]
-    (when (fs/exists? md-path)
-      ;; This would require the old plan namespace
-      ;; For now, just return instructions
-      {:error "Migration requires manual conversion"
-       :instructions "Convert LISA_PLAN.md to EDN format manually or use create-plan!"})))
 
 ;;; =============================================================================
 ;;; REPL Exploration

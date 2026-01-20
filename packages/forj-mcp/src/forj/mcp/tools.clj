@@ -2,6 +2,7 @@
   "MCP tool implementations for REPL connectivity."
   (:require [babashka.fs :as fs]
             [babashka.process :as p]
+            [cheshire.core :as json]
             [clojure.edn :as edn]
             [clojure.string :as str]
             [edamame.core :as edamame]
@@ -226,16 +227,24 @@
                   :required ["checkpoint"]}}
 
    {:name "lisa_run_orchestrator"
-    :description "Run the Lisa Loop orchestrator. Spawns fresh Claude instances for each iteration until all checkpoints complete. Supports parallel execution for EDN plans with dependencies."
+    :description "Run the Lisa Loop orchestrator. Spawns fresh Claude instances for each iteration until all checkpoints complete. Includes timeout detection (15 min per iteration, 5 min idle) to recover from stuck iterations."
     :inputSchema {:type "object"
                   :properties {:path {:type "string"
                                       :description "Project path (defaults to current directory)"}
                                :max_iterations {:type "integer"
                                                 :description "Maximum iterations before stopping (default: 20)"}
                                :parallel {:type "boolean"
-                                          :description "Enable parallel execution for EDN plans (default: false)"}
+                                          :description "Enable parallel execution for EDN plans (default: true)"}
                                :max_parallel {:type "integer"
-                                              :description "Max concurrent checkpoints when parallel (default: 3)"}}}}
+                                              :description "Max concurrent checkpoints when parallel (default: 3)"}
+                               :verbose {:type "boolean"
+                                         :description "Use stream-json for detailed tool call logs (default: false)"}
+                               :iteration_timeout {:type "integer"
+                                                   :description "Timeout per iteration in seconds (disabled by default)"}
+                               :idle_timeout {:type "integer"
+                                              :description "Kill if no file activity for N seconds (default: 300 = 5 min)"}
+                               :no_timeout {:type "boolean"
+                                            :description "Disable all timeouts (default: false)"}}}}
 
    {:name "repl_snapshot"
     :description "Take a snapshot of current REPL state. Returns loaded namespaces, defined vars in project namespaces, and running servers. Use this to understand what's live in the REPL."
@@ -297,7 +306,13 @@
                                       :description "nREPL port for REPL validations (auto-discovered if not provided)"}
                                :path {:type "string"
                                       :description "Project path (defaults to current directory)"}}
-                  :required ["gates"]}}])
+                  :required ["gates"]}}
+
+   {:name "lisa_watch"
+    :description "Get Lisa Loop status for monitoring. Returns checkpoint table, current iteration, elapsed time, cost, and file activity. Use this to watch loop progress."
+    :inputSchema {:type "object"
+                  :properties {:path {:type "string"
+                                      :description "Project path (defaults to current directory)"}}}}])
 
 ;; =============================================================================
 ;; REPL Type Detection (Path-based routing)
@@ -1435,11 +1450,6 @@
 ;; Lisa Loop v2 Tools (Planning + Orchestration)
 ;; =============================================================================
 
-(defn- use-edn-format?
-  "Check if we should use EDN format (LISA_PLAN.edn exists or no plan exists yet)."
-  [path]
-  (or (plan-edn/plan-exists? path)
-      (not (lisa-plan/plan-exists? path))))
 
 (defn- parse-checkpoint-id
   "Parse checkpoint ID from string - could be a number or keyword name."
@@ -1548,24 +1558,55 @@
        :error (str "Failed to mark checkpoint: " (.getMessage e))})))
 
 (defn lisa-run-orchestrator
-  "Run the Lisa Loop orchestrator (spawns Claude instances)."
-  [{:keys [path max_iterations parallel max_parallel]
-    :or {path "." max_iterations 20 parallel false max_parallel 3}}]
-  ;; Note: This is a long-running operation. For MCP, we return instructions
-  ;; to run it externally rather than blocking the MCP server.
-  (let [base-cmd (str "bb -cp " (System/getProperty "java.class.path")
-                      " -m forj.lisa.orchestrator " path
-                      " --max-iterations " max_iterations)
-        cmd (cond-> base-cmd
-              parallel (str " --parallel")
-              (and parallel max_parallel) (str " --max-parallel " max_parallel))]
-    {:success true
-     :message (if parallel
-                (str "Lisa Loop orchestrator (parallel mode, max " max_parallel " concurrent)")
-                "Lisa Loop orchestrator (sequential mode)")
-     :command cmd
-     :parallel parallel
-     :note "The orchestrator spawns fresh Claude instances and is not suitable for MCP blocking calls"}))
+  "Run the Lisa Loop orchestrator (spawns Claude instances).
+   Spawns as a detached background process and returns immediately."
+  [{:keys [path max_iterations parallel max_parallel verbose
+           iteration_timeout idle_timeout no_timeout]
+    :or {path "." max_iterations 20 parallel true max_parallel 3 verbose false
+         iteration_timeout nil idle_timeout 300 no_timeout false}}]
+  (try
+    (let [project-path (fs/absolutize path)
+          log-dir (str (fs/path project-path ".forj/logs/lisa"))
+          _ (fs/create-dirs log-dir)
+          timestamp (-> (java.time.LocalDateTime/now)
+                        (.format (java.time.format.DateTimeFormatter/ofPattern "yyyyMMdd-HHmmss")))
+          log-file (str (fs/path log-dir (str "orchestrator-" timestamp ".log")))
+
+          ;; Build command args (parallel is default, use --sequential to disable)
+          cmd-args (cond-> ["bb" "-cp" (System/getProperty "java.class.path")
+                            "-m" "forj.lisa.orchestrator" (str project-path)
+                            "--max-iterations" (str max_iterations)]
+                     (not parallel) (into ["--sequential"])
+                     (and parallel max_parallel) (into ["--max-parallel" (str max_parallel)])
+                     verbose (into ["--verbose"])
+                     no_timeout (into ["--no-timeout"])
+                     (and (not no_timeout) iteration_timeout) (into ["--iteration-timeout" (str iteration_timeout)])
+                     (and (not no_timeout) idle_timeout) (into ["--idle-timeout" (str idle_timeout)]))
+
+          ;; Spawn detached process with output redirected to log file
+          proc (apply p/process {:dir (str project-path)
+                                 :out (java.io.File. log-file)
+                                 :err :out}  ;; stderr to same file
+                      cmd-args)
+          pid (-> proc :proc .pid)]
+
+      {:success true
+       :message (cond
+                  (and parallel verbose) (str "Lisa Loop orchestrator started (parallel mode, max " max_parallel " concurrent, verbose)")
+                  parallel (str "Lisa Loop orchestrator started (parallel mode, max " max_parallel " concurrent)")
+                  verbose "Lisa Loop orchestrator started (sequential mode, verbose)"
+                  :else "Lisa Loop orchestrator started (sequential mode)")
+       :pid pid
+       :log-file log-file
+       :parallel parallel
+       :verbose verbose
+       :timeouts (if no_timeout
+                   :disabled
+                   {:iteration-sec iteration_timeout :idle-sec idle_timeout})
+       :monitor-hint (str "tail -f " log-file)})
+    (catch Exception e
+      {:success false
+       :error (str "Failed to start orchestrator: " (.getMessage e))})))
 
 (defn repl-snapshot
   "Take a snapshot of REPL state."
@@ -1693,7 +1734,7 @@
 
 (defn lisa-run-validation
   "Run validation checks."
-  [{:keys [validation port _path] :or {_path "."}}]
+  [{:keys [validation port]}]
   (try
     (let [opts {:port port}
           result (lisa-validation/run-validations validation opts)]
@@ -1707,7 +1748,7 @@
 
 (defn lisa-check-gates
   "Check if all gates have passed."
-  [{:keys [gates port _path] :or {_path "."}}]
+  [{:keys [gates port]}]
   (try
     (let [opts {:port port}
           result (lisa-validation/checkpoint-gates-passed? gates opts)]
@@ -1717,6 +1758,126 @@
     (catch Exception e
       {:success false
        :error (str "Failed to check gates: " (.getMessage e))})))
+
+(defn- last-src-modification
+  "Get the most recent modification time of source files."
+  [project-path]
+  (try
+    (let [src-files (concat
+                     (fs/glob (str project-path "/src") "**/*.{clj,cljs,cljc}")
+                     (fs/glob (str project-path "/test") "**/*.{clj,cljs,cljc}"))]
+      (if (seq src-files)
+        (->> src-files
+             (map #(.toMillis (fs/last-modified-time %)))
+             (apply max))
+        0))
+    (catch Exception _ 0)))
+
+(defn- format-elapsed [ms]
+  (when ms
+    (let [seconds (quot ms 1000)
+          minutes (quot seconds 60)
+          hours (quot minutes 60)]
+      (cond
+        (>= hours 1) (format "%dh %dm" hours (mod minutes 60))
+        (>= minutes 1) (format "%dm %ds" minutes (mod seconds 60))
+        :else (format "%ds" seconds)))))
+
+(defn lisa-watch
+  "Get Lisa Loop status for monitoring."
+  [{:keys [path] :or {path "."}}]
+  (try
+    (let [project-path (str (fs/absolutize path))
+          ;; Check for plan file
+          edn-exists? (fs/exists? (str project-path "/LISA_PLAN.edn"))
+          md-exists? (fs/exists? (str project-path "/LISA_PLAN.md"))
+          now (System/currentTimeMillis)]
+      (cond
+        ;; No plan found
+        (not (or edn-exists? md-exists?))
+        {:success true
+         :status :no-plan
+         :message "No LISA_PLAN.edn or LISA_PLAN.md found"}
+
+        ;; EDN format - full structured data
+        edn-exists?
+        (let [plan (plan-edn/read-plan project-path)
+              checkpoints (:checkpoints plan)
+              current (plan-edn/current-checkpoint plan)
+              done-count (count (filter #(= :done (:status %)) checkpoints))
+              total-count (count checkpoints)
+              last-file-mod (last-src-modification project-path)
+              idle-ms (when (pos? last-file-mod) (- now last-file-mod))
+              ;; Check log dir for iteration info
+              log-dir (str project-path "/.forj/logs/lisa")
+              iter-files (when (fs/exists? log-dir)
+                           (fs/glob log-dir "iter-*.json"))
+              iteration-count (count iter-files)
+              ;; Get cost from latest iteration log
+              latest-log (when (seq iter-files)
+                           (last (sort iter-files)))
+              latest-result (when latest-log
+                              (try
+                                (json/parse-string (slurp (str latest-log)) true)
+                                (catch Exception _ nil)))]
+          {:success true
+           :status (:status plan)
+           :title (:title plan)
+           :progress {:done done-count
+                      :total total-count
+                      :percent (when (pos? total-count)
+                                 (int (* 100 (/ done-count total-count))))}
+           :current-checkpoint (when current
+                                 {:id (:id current)
+                                  :description (:description current)
+                                  :file (:file current)
+                                  :started (:started current)})
+           :checkpoints (mapv (fn [cp]
+                                {:id (:id cp)
+                                 :status (:status cp)
+                                 :description (:description cp)})
+                              checkpoints)
+           :iterations iteration-count
+           :last-cost (when latest-result (:total_cost_usd latest-result))
+           :file-activity {:last-modified-ms idle-ms
+                           :last-modified-ago (format-elapsed idle-ms)
+                           :possibly-stuck (when idle-ms (> idle-ms (* 5 60 1000)))}
+           :signs (take 3 (reverse (:signs plan)))})
+
+        ;; Markdown format - basic info
+        :else
+        (let [plan (lisa-plan/parse-plan (slurp (str project-path "/LISA_PLAN.md")))
+              checkpoints (:checkpoints plan)
+              current (first (filter #(= :in-progress (:status %)) checkpoints))
+              done-count (count (filter #(= :done (:status %)) checkpoints))
+              total-count (count checkpoints)
+              last-file-mod (last-src-modification project-path)
+              idle-ms (when (pos? last-file-mod) (- now last-file-mod))]
+          {:success true
+           :status (cond
+                     (every? #(= :done (:status %)) checkpoints) :complete
+                     (some #(= :in-progress (:status %)) checkpoints) :in-progress
+                     :else :pending)
+           :title (:title plan)
+           :progress {:done done-count
+                      :total total-count
+                      :percent (when (pos? total-count)
+                                 (int (* 100 (/ done-count total-count))))}
+           :current-checkpoint (when current
+                                 {:number (:number current)
+                                  :description (:description current)
+                                  :file (:file current)})
+           :checkpoints (mapv (fn [cp]
+                                {:number (:number cp)
+                                 :status (:status cp)
+                                 :description (:description cp)})
+                              checkpoints)
+           :file-activity {:last-modified-ms idle-ms
+                           :last-modified-ago (format-elapsed idle-ms)
+                           :possibly-stuck (when idle-ms (> idle-ms (* 5 60 1000)))}})))
+    (catch Exception e
+      {:success false
+       :error (str "Failed to get loop status: " (.getMessage e))})))
 
 (defn call-tool
   "Dispatch tool call to appropriate handler."
@@ -1756,4 +1917,6 @@
     ;; Validation tools
     "lisa_run_validation" (lisa-run-validation arguments)
     "lisa_check_gates" (lisa-check-gates arguments)
+    ;; Monitoring
+    "lisa_watch" (lisa-watch arguments)
     {:success false :error (str "Unknown tool: " name)}))

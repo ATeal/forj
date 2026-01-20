@@ -17,9 +17,15 @@
 (def default-config
   {:max-iterations 20
    :max-parallel 3  ;; Max concurrent checkpoints (EDN format only)
+   :verbose false   ;; Use stream-json for full tool call logs
    :allowed-tools "Bash,Edit,Read,Write,Glob,Grep,mcp__forj__*,mcp__claude-in-chrome__*"
    :log-dir ".forj/logs/lisa"
    :poll-interval-ms 5000
+   ;; Timeout settings (in milliseconds)
+   ;; nil = disabled, idle timeout is the primary stuck detector
+   :iteration-timeout-ms nil             ;; Disabled by default (use --iteration-timeout to enable)
+   :idle-timeout-ms (* 5 60 1000)        ;; 5 minutes with no file activity
+   :max-checkpoint-failures 3            ;; Skip checkpoint after N consecutive failures
    ;; Pass user's MCP config so Chrome MCP is available for visual validation
    :mcp-config (str (fs/home) "/.claude.json")})
 
@@ -155,22 +161,92 @@
 
 (defn- spawn-claude-iteration!
   "Spawn a Claude instance for one iteration. Returns the process.
-   Uses stdin to pass prompt, avoiding shell quoting issues."
+   Uses stdin to pass prompt, avoiding shell quoting issues.
+
+   When :verbose true in config, uses stream-json format for detailed tool call logs."
   [project-path prompt config log-file]
   ;; Pass prompt via stdin to avoid shell escaping issues
   ;; --dangerously-skip-permissions is REQUIRED for non-interactive mode
   ;; --mcp-config passes user config so Chrome MCP is available for visual validation
-  (p/process {:dir project-path
-              :in prompt
-              :out (java.io.File. log-file)
-              :err :stdout}
-             "claude" "-p" "--output-format" "json"
-             "--dangerously-skip-permissions"
-             "--allowedTools" (:allowed-tools config)
-             "--mcp-config" (:mcp-config config)))
+  (let [output-format (if (:verbose config) "stream-json" "json")]
+    (p/process {:dir project-path
+                :in prompt
+                :out (java.io.File. log-file)
+                :err :stdout}
+               "claude" "-p" "--output-format" output-format
+               "--dangerously-skip-permissions"
+               "--allowedTools" (:allowed-tools config)
+               "--mcp-config" (:mcp-config config))))
+
+(defn- last-src-modification
+  "Get the most recent modification time of source files in the project."
+  [project-path]
+  (try
+    (let [src-files (concat
+                     (fs/glob (str project-path "/src") "**/*.{clj,cljs,cljc}")
+                     (fs/glob (str project-path "/test") "**/*.{clj,cljs,cljc}"))]
+      (if (seq src-files)
+        (->> src-files
+             (map #(.toMillis (fs/last-modified-time %)))
+             (apply max))
+        0))
+    (catch Exception _ 0)))
+
+(defn- wait-for-process-with-timeout
+  "Wait for process to complete with timeout and idle detection.
+   Returns {:status :completed|:timeout|:idle, :exit-code N, :reason string}"
+  [proc project-path config]
+  (let [start-time (System/currentTimeMillis)
+        iteration-timeout (:iteration-timeout-ms config)
+        idle-timeout (:idle-timeout-ms config)
+        poll-interval (:poll-interval-ms config)
+        initial-file-time (last-src-modification project-path)]
+    (loop [last-activity-time start-time
+           last-file-time initial-file-time]
+      (let [now (System/currentTimeMillis)
+            elapsed (- now start-time)
+            idle-elapsed (- now last-activity-time)
+            current-file-time (last-src-modification project-path)
+            file-changed? (> current-file-time last-file-time)]
+        (cond
+          ;; Process completed normally
+          (not (p/alive? proc))
+          {:status :completed
+           :exit-code (:exit @proc)
+           :elapsed-ms elapsed}
+
+          ;; Iteration timeout exceeded
+          (and iteration-timeout (> elapsed iteration-timeout))
+          (do
+            (println (str "[Lisa] ⚠ Iteration timed out after " (/ elapsed 60000) " minutes"))
+            (p/destroy-tree proc)
+            {:status :timeout
+             :exit-code -1
+             :elapsed-ms elapsed
+             :reason (str "Iteration exceeded " (/ iteration-timeout 60000) " minute timeout")})
+
+          ;; Idle timeout - no file activity
+          (and idle-timeout
+               (> idle-elapsed idle-timeout)
+               (not file-changed?))
+          (do
+            (println (str "[Lisa] ⚠ No file activity for " (/ idle-elapsed 60000) " minutes, killing iteration"))
+            (p/destroy-tree proc)
+            {:status :idle
+             :exit-code -1
+             :elapsed-ms elapsed
+             :reason (str "No file activity for " (/ idle-timeout 60000) " minutes")})
+
+          ;; Continue waiting
+          :else
+          (do
+            (Thread/sleep poll-interval)
+            (recur (if file-changed? now last-activity-time)
+                   (if file-changed? current-file-time last-file-time))))))))
 
 (defn- wait-for-process
-  "Wait for process to complete, polling at intervals. Returns exit code."
+  "Wait for process to complete, polling at intervals. Returns exit code.
+   Legacy wrapper for backward compatibility."
   [proc poll-interval-ms]
   (loop []
     (if (p/alive? proc)
@@ -180,11 +256,37 @@
       (:exit @proc))))
 
 (defn- parse-iteration-result
-  "Parse the JSON output from a Claude iteration."
+  "Parse the JSON output from a Claude iteration.
+   Handles both json (single object) and stream-json (JSONL) formats.
+
+   For stream-json, finds the result message and extracts cost/token info."
   [log-file]
   (try
     (let [content (slurp log-file)]
-      (json/parse-string content true))
+      ;; Check if it's JSONL (stream-json) by looking for newlines between JSON objects
+      (if (and (str/includes? content "\n{")
+               (str/starts-with? (str/trim content) "{"))
+        ;; stream-json format: parse each line, find result message
+        (let [lines (str/split-lines content)
+              parsed (keep (fn [line]
+                             (when (not (str/blank? line))
+                               (try
+                                 (json/parse-string line true)
+                                 (catch Exception _ nil))))
+                           lines)
+              ;; Find the result message (type: result)
+              result-msg (first (filter #(= "result" (:type %)) parsed))
+              ;; Also look for any message with cost info
+              cost-msg (first (filter :total_cost_usd parsed))]
+          (if result-msg
+            (merge result-msg
+                   (when cost-msg
+                     (select-keys cost-msg [:total_cost_usd :usage])))
+            ;; Fallback: return last parsed message
+            (or (last parsed)
+                {:is_error true :error "No result message found in stream"})))
+        ;; Standard json format: single object
+        (json/parse-string content true)))
     (catch Exception e
       {:is_error true
        :error (str "Failed to parse output: " (.getMessage e))})))
@@ -207,6 +309,23 @@
   (when-let [text (:result result)]
     (when-let [[_ reason] (re-find #"CHECKPOINT_BLOCKED:\s*(.*)" text)]
       reason)))
+
+(defn- count-checkpoint-failures
+  "Count consecutive failures for a checkpoint from signs."
+  [project-path checkpoint-id]
+  (if (plan-edn/plan-exists? project-path)
+    (let [plan (plan-edn/read-plan project-path)
+          signs (:signs plan [])]
+      (->> signs
+           (filter #(= (:checkpoint %) checkpoint-id))
+           (filter #(= (:severity %) :error))
+           count))
+    0))
+
+(defn- should-skip-checkpoint?
+  "Check if a checkpoint should be skipped due to repeated failures."
+  [project-path checkpoint-id max-failures]
+  (>= (count-checkpoint-failures project-path checkpoint-id) max-failures))
 
 (defn- auto-commit-checkpoint!
   "Create a git commit as a rollback point after successful checkpoint.
@@ -267,17 +386,6 @@
 ;;; Parallel Execution (EDN format only)
 ;;; =============================================================================
 
-(defn- get-ready-checkpoints
-  "Get all checkpoints ready to run (dependencies satisfied, not in-progress)."
-  [project-path]
-  (when (use-edn-format? project-path)
-    (let [plan (plan-edn/read-plan project-path)]
-      ;; ready-checkpoints returns pending checkpoints with deps met
-      ;; Also include current in-progress checkpoint
-      (concat
-       (filter #(= :in-progress (:status %)) (:checkpoints plan))
-       (plan-edn/ready-checkpoints plan)))))
-
 (defn- spawn-checkpoint-process!
   "Spawn a Claude process for a specific checkpoint. Returns process info map."
   [project-path checkpoint config log-dir iteration-base]
@@ -295,23 +403,69 @@
      :started-at (System/currentTimeMillis)}))
 
 (defn- check-process-complete
-  "Check if a process has completed. Returns updated info with result if done."
-  [proc-info]
-  (if (p/alive? (:process proc-info))
-    proc-info
-    (let [result (parse-iteration-result (:log-file proc-info))]
+  "Check if a process has completed or should be killed due to idle timeout.
+   Returns updated info with :completed true if done or killed."
+  [proc-info project-path config]
+  (let [proc (:process proc-info)
+        idle-timeout (:idle-timeout-ms config)
+        now (System/currentTimeMillis)
+        started-at (:started-at proc-info)
+        last-activity (or (:last-activity proc-info) started-at)
+        current-file-time (last-src-modification project-path)
+        prev-file-time (or (:last-file-time proc-info) current-file-time)
+        file-changed? (> current-file-time prev-file-time)
+        new-last-activity (if file-changed? now last-activity)
+        idle-elapsed (- now new-last-activity)]
+    (cond
+      ;; Process completed normally
+      (not (p/alive? proc))
+      (let [result (parse-iteration-result (:log-file proc-info))]
+        (assoc proc-info
+               :completed true
+               :result result
+               :succeeded (iteration-succeeded? result)
+               :checkpoint-complete (checkpoint-completed? result)))
+
+      ;; Idle timeout - no file activity for too long
+      (and idle-timeout (> idle-elapsed idle-timeout))
+      (do
+        (println (str "[Lisa] ⚠ Checkpoint " (name (:checkpoint-id proc-info))
+                      " idle for " (int (/ idle-elapsed 60000)) " minutes, killing"))
+        (p/destroy-tree proc)
+        (assoc proc-info
+               :completed true
+               :result {:result "Idle timeout - no file activity"}
+               :succeeded false
+               :checkpoint-complete false
+               :idle-killed true))
+
+      ;; Still running, update activity tracking
+      :else
       (assoc proc-info
-             :completed true
-             :result result
-             :succeeded (iteration-succeeded? result)
-             :checkpoint-complete (checkpoint-completed? result)))))
+             :last-activity new-last-activity
+             :last-file-time current-file-time))))
 
 (defn- process-completed-checkpoints!
   "Handle completed processes - mark checkpoints done, auto-commit, log."
   [project-path completed-procs]
-  (doseq [{:keys [checkpoint-id checkpoint checkpoint-complete succeeded result]} completed-procs]
+  (doseq [{:keys [checkpoint-id checkpoint checkpoint-complete succeeded result idle-killed]} completed-procs]
     (let [cp-display (or (:number checkpoint) checkpoint-id)]
       (cond
+        ;; Idle-killed - reset to pending for retry
+        idle-killed
+        (do
+          (println (str "[Lisa] ↻ Checkpoint " cp-display " reset to pending after idle timeout"))
+          ;; Reset checkpoint status to pending so it can be retried
+          (plan-edn/update-checkpoint (plan-edn/read-plan project-path) checkpoint-id
+                                      {:status :pending})
+          (-> (plan-edn/read-plan project-path)
+              (plan-edn/update-checkpoint checkpoint-id {:status :pending})
+              (->> (plan-edn/write-plan! project-path)))
+          ;; Record sign so future iterations know this checkpoint tends to get stuck
+          (append-sign! project-path 0
+                        (str "Checkpoint " cp-display " timed out - may need smaller scope or different approach")
+                        "Consider breaking into smaller tasks"))
+
         ;; Checkpoint completed successfully
         (and succeeded checkpoint-complete)
         (do
@@ -398,8 +552,8 @@
 
           :else
           ;; Main parallel loop logic
-          (let [;; Check which active processes have completed
-                checked-procs (mapv check-process-complete active-procs)
+          (let [;; Check which active processes have completed (or idle-killed)
+                checked-procs (mapv #(check-process-complete % project-path config) active-procs)
                 completed (filter :completed checked-procs)
                 still-active (remove :completed checked-procs)
 
@@ -466,7 +620,7 @@
    - :on-iteration - Callback (fn [iteration result]) for each iteration
    - :on-checkpoint-complete - Callback (fn [checkpoint]) for parallel mode
    - :on-complete - Callback (fn [final-plan total-cost]) when done"
-  [project-path & [{:keys [on-iteration on-complete on-checkpoint-complete parallel]
+  [project-path & [{:keys [on-iteration on-complete _on-checkpoint-complete parallel]
                     :as opts}]]
   ;; Dispatch to parallel mode if requested and using EDN format
   (if (and parallel (use-edn-format? project-path))
@@ -476,11 +630,11 @@
           log-dir (ensure-log-dir! project-path config)
           _ (cleanup-previous-run! project-path config)]
 
-      (loop [iteration 1]
-        total-cost 0.0
-        total-input-tokens 0
-        total-output-tokens 0)
-      (let [plan-data (read-plan project-path)
+      (loop [iteration 1
+             total-cost 0.0
+             total-input-tokens 0
+             total-output-tokens 0]
+        (let [plan-data (read-plan project-path)
             current-plan (:plan plan-data)]
 
         (cond
@@ -515,60 +669,87 @@
           :else
           (let [checkpoint (plan-current-checkpoint plan-data)
                 ;; For EDN, use :id if no :number; add number for display
-                cp-display (or (:number checkpoint) (:id checkpoint))
-                signs (read-signs project-path)
-                prompt (build-iteration-prompt current-plan checkpoint signs)
-                log-file (str (fs/path log-dir (str "iter-" iteration ".json")))
+                cp-id (:id checkpoint)
+                cp-display (or (:number checkpoint) cp-id)
+                max-failures (:max-checkpoint-failures config)]
 
-                _ (println (str "[Lisa] Iteration " iteration ": Checkpoint " cp-display
-                                " - " (:description checkpoint)))
-
-                proc (spawn-claude-iteration! project-path prompt config log-file)
-                _exit-code (wait-for-process proc (:poll-interval-ms config))
-                result (parse-iteration-result log-file)
-                iteration-cost (or (:total_cost_usd result) 0.0)
-                usage (:usage result)
-                iter-input (+ (or (:input_tokens usage) 0)
-                              (or (:cache_read_input_tokens usage) 0)
-                              (or (:cache_creation_input_tokens usage) 0))
-                iter-output (or (:output_tokens usage) 0)
-                _ (println (str "[Lisa] Tokens: " iter-input " in / " iter-output " out, Cost: $" (format "%.2f" iteration-cost)))]
-
-            ;; Call iteration callback if provided
-            (when on-iteration
-              (on-iteration iteration result))
-
-            (cond
-              ;; Iteration failed
-              (not (iteration-succeeded? result))
+            ;; Check if checkpoint should be skipped due to repeated failures
+            (if (and cp-id max-failures (should-skip-checkpoint? project-path cp-id max-failures))
               (do
-                (println (str "[Lisa] Iteration " iteration " failed"))
-                (when-let [blocked (extract-blocked-reason result)]
-                  (append-sign! project-path iteration blocked "Needs resolution"))
-                (recur (inc iteration)
-                       (+ total-cost iteration-cost)
-                       (+ total-input-tokens iter-input)
-                       (+ total-output-tokens iter-output)))
+                (println (str "[Lisa] ⚠ Skipping checkpoint " cp-display " after " max-failures " consecutive failures"))
+                (append-sign! project-path iteration
+                              (str "Checkpoint " cp-display " skipped after " max-failures " failures")
+                              "Consider breaking into smaller tasks or manual intervention")
+                ;; Mark as failed and continue to next
+                (when (plan-edn/plan-exists? project-path)
+                  (plan-edn/mark-checkpoint-failed! project-path cp-id "Too many failures"))
+                (recur (inc iteration) total-cost total-input-tokens total-output-tokens))
 
-              ;; Checkpoint completed
-              (checkpoint-completed? result)
-              (do
-                (println (str "[Lisa] Checkpoint " cp-display " complete"))
-                ;; Auto-commit as rollback point
-                (auto-commit-checkpoint! project-path cp-display (:description checkpoint))
-                (recur (inc iteration)
-                       (+ total-cost iteration-cost)
-                       (+ total-input-tokens iter-input)
-                       (+ total-output-tokens iter-output)))
+              ;; Normal iteration
+              (let [signs (read-signs project-path)
+                    prompt (build-iteration-prompt current-plan checkpoint signs)
+                    log-file (str (fs/path log-dir (str "iter-" iteration ".json")))
 
-              ;; Iteration ran but checkpoint not marked complete
-              :else
-              (do
-                (println (str "[Lisa] Iteration " iteration " completed, continuing..."))
-                (recur (inc iteration)
-                       (+ total-cost iteration-cost)
-                       (+ total-input-tokens iter-input)
-                       (+ total-output-tokens iter-output))))))))))
+                    _ (println (str "[Lisa] Iteration " iteration ": Checkpoint " cp-display
+                                    " - " (:description checkpoint)))
+
+                    proc (spawn-claude-iteration! project-path prompt config log-file)
+                    wait-result (wait-for-process-with-timeout proc project-path config)
+                    wait-status (:status wait-result)]
+
+                ;; Handle timeout/idle cases
+                (if (#{:timeout :idle} wait-status)
+                  (do
+                    (append-sign! project-path iteration
+                                  (:reason wait-result)
+                                  "Consider breaking checkpoint into smaller tasks")
+                    (recur (inc iteration) total-cost total-input-tokens total-output-tokens))
+
+                  ;; Normal completion - parse result
+                  (let [result (parse-iteration-result log-file)
+                        iteration-cost (or (:total_cost_usd result) 0.0)
+                        usage (:usage result)
+                        iter-input (+ (or (:input_tokens usage) 0)
+                                      (or (:cache_read_input_tokens usage) 0)
+                                      (or (:cache_creation_input_tokens usage) 0))
+                        iter-output (or (:output_tokens usage) 0)
+                        _ (println (str "[Lisa] Tokens: " iter-input " in / " iter-output " out, Cost: $" (format "%.2f" iteration-cost)))]
+
+                    ;; Call iteration callback if provided
+                    (when on-iteration
+                      (on-iteration iteration result))
+
+                    (cond
+                      ;; Iteration failed
+                      (not (iteration-succeeded? result))
+                      (do
+                        (println (str "[Lisa] Iteration " iteration " failed"))
+                        (when-let [blocked (extract-blocked-reason result)]
+                          (append-sign! project-path iteration blocked "Needs resolution"))
+                        (recur (inc iteration)
+                               (+ total-cost iteration-cost)
+                               (+ total-input-tokens iter-input)
+                               (+ total-output-tokens iter-output)))
+
+                      ;; Checkpoint completed
+                      (checkpoint-completed? result)
+                      (do
+                        (println (str "[Lisa] Checkpoint " cp-display " complete"))
+                        ;; Auto-commit as rollback point
+                        (auto-commit-checkpoint! project-path cp-display (:description checkpoint))
+                        (recur (inc iteration)
+                               (+ total-cost iteration-cost)
+                               (+ total-input-tokens iter-input)
+                               (+ total-output-tokens iter-output)))
+
+                      ;; Iteration ran but checkpoint not marked complete
+                      :else
+                      (do
+                        (println (str "[Lisa] Iteration " iteration " completed, continuing..."))
+                        (recur (inc iteration)
+                               (+ total-cost iteration-cost)
+                               (+ total-input-tokens iter-input)
+                               (+ total-output-tokens iter-output)))))))))))))))
 
 (defn generate-plan!
   "Generate a LISA_PLAN.md by asking Claude to analyze the task and create checkpoints."
@@ -607,43 +788,72 @@
   "Entry point for running the orchestrator from command line.
    Usage: bb -m forj.lisa.orchestrator <project-path> [options]
    Options:
-     --max-iterations N  Maximum iterations (default: 20)
-     --parallel          Enable parallel execution (EDN plans only)
-     --max-parallel N    Max concurrent checkpoints (default: 3)"
+     --max-iterations N     Maximum iterations (default: 20)
+     --sequential           Disable parallel execution (parallel is default for EDN plans)
+     --max-parallel N       Max concurrent checkpoints (default: 3)
+     --verbose              Use stream-json for detailed tool call logs
+     --iteration-timeout N  Timeout per iteration in seconds (disabled by default)
+     --idle-timeout N       Kill if no file activity for N seconds (default: 300 = 5 min)
+     --no-timeout           Disable all timeouts"
   [& args]
   (let [;; Parse args
-        {:keys [project-path max-iterations parallel max-parallel]}
+        {:keys [project-path max-iterations parallel max-parallel verbose
+                iteration-timeout idle-timeout no-timeout]}
         (loop [args args
-               opts {:project-path "." :max-iterations 20 :parallel false :max-parallel 3}]
+               opts {:project-path "." :max-iterations 20 :parallel true :max-parallel 3
+                     :verbose false :iteration-timeout nil :idle-timeout 300 :no-timeout false}]
           (if (empty? args)
             opts
-            (let [[arg & rest] args]
+            (let [[arg & more] args]
               (cond
-                (= "--parallel" arg)
-                (recur rest (assoc opts :parallel true))
+                (= "--sequential" arg)
+                (recur more (assoc opts :parallel false))
+
+                (= "--verbose" arg)
+                (recur more (assoc opts :verbose true))
+
+                (= "--no-timeout" arg)
+                (recur more (assoc opts :no-timeout true))
 
                 (= "--max-iterations" arg)
-                (recur (rest rest) (assoc opts :max-iterations (parse-long (first rest))))
+                (recur (rest more) (assoc opts :max-iterations (parse-long (first more))))
 
                 (= "--max-parallel" arg)
-                (recur (rest rest) (assoc opts :max-parallel (parse-long (first rest))))
+                (recur (rest more) (assoc opts :max-parallel (parse-long (first more))))
+
+                (= "--iteration-timeout" arg)
+                (recur (rest more) (assoc opts :iteration-timeout (parse-long (first more))))
+
+                (= "--idle-timeout" arg)
+                (recur (rest more) (assoc opts :idle-timeout (parse-long (first more))))
 
                 (not (str/starts-with? arg "--"))
-                (recur rest (assoc opts :project-path arg))
+                (recur more (assoc opts :project-path arg))
 
                 :else
-                (recur rest opts)))))]
+                (recur more opts)))))]
 
     (println "[Lisa] Starting orchestrator")
     (println "[Lisa] Project:" project-path)
     (println "[Lisa] Max iterations:" max-iterations)
     (when parallel
       (println "[Lisa] Parallel mode enabled (max" max-parallel "concurrent)"))
+    (when verbose
+      (println "[Lisa] Verbose mode enabled (stream-json output)"))
+    (if no-timeout
+      (println "[Lisa] Timeouts disabled")
+      (println "[Lisa] Timeouts: idle=" idle-timeout "s"
+               (if iteration-timeout (str ", iteration=" iteration-timeout "s") ", iteration=disabled")))
 
     (let [result (run-loop! project-path
                             {:max-iterations max-iterations
                              :parallel parallel
                              :max-parallel max-parallel
+                             :verbose verbose
+                             ;; Convert seconds to milliseconds, nil disables timeout
+                             :iteration-timeout-ms (when (and (not no-timeout) iteration-timeout)
+                                                     (* iteration-timeout 1000))
+                             :idle-timeout-ms (when-not no-timeout (* idle-timeout 1000))
                              :on-iteration (fn [i _r]
                                              (println (str "[Lisa] Iteration " i " complete")))
                              :on-checkpoint-complete (fn [cp]

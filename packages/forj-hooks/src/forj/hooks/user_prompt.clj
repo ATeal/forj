@@ -39,9 +39,14 @@
     :else nil))
 
 (def ^:private standard-reminder
-  (str "Reminder: This is a Clojure project. "
-       "Prefer REPL evaluation for rapid feedback. "
-       "Use forj MCP tools: repl_eval, discover_repls."))
+  (str "IMPORTANT: This is a Clojure project. "
+       "DO NOT use `bb -e`, `bb -cp`, or `clj -e` for code evaluation. "
+       "ALWAYS use forj MCP tools instead:\n"
+       "- reload_namespace: Load changed files into REPL\n"
+       "- repl_eval: Evaluate expressions in REPL\n"
+       "- eval_comment_block: Run all forms in a (comment ...) block\n"
+       "- discover_repls: Find running nREPL servers\n"
+       "If no REPL is running, start one with `bb nrepl` and track it with track_process."))
 
 (def ^:private lisa-loop-guidance
   (str "LISA LOOP ACTIVE: Use REPL-driven validation:\n"
