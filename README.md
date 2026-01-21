@@ -1,6 +1,12 @@
-# forj
+<p align="center">
+  <img src="forj-logo.png" alt="forj logo" width="200">
+</p>
 
-*Forge your code in the REPL fire. Iterate, shape, refine.*
+<h1 align="center">forj</h1>
+
+<p align="center">
+  <em>Forge your code in the REPL fire. Iterate, shape, refine.</em>
+</p>
 
 REPL-driven LLM development for Clojure. Provides seamless Claude Code integration with automatic project detection, REPL connectivity, and context injection.
 
