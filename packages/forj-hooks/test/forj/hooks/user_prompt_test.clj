@@ -2,6 +2,7 @@
   "Tests for forj.hooks.user-prompt"
   (:require [clojure.test :refer [deftest testing is]]
             [forj.hooks.user-prompt :as user-prompt]
+            [forj.hooks.util :as util]
             [cheshire.core :as json]))
 
 ;; =============================================================================
@@ -10,8 +11,8 @@
 
 (deftest is-clojure-project?-test
   (testing "Detects Clojure project"
-    (is (user-prompt/is-clojure-project? "."))
-    (is (not (user-prompt/is-clojure-project? "/tmp")))))
+    (is (util/is-clojure-project? "."))
+    (is (not (util/is-clojure-project? "/tmp")))))
 
 ;; =============================================================================
 ;; Hook output format tests
