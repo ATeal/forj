@@ -1,0 +1,24 @@
+{:name "flutter"
+ :description "ClojureDart Flutter mobile app"
+ :requires ["base"]
+
+ ;; Merge configs
+ :merge {:deps.edn "deps.edn"
+         :bb.edn "bb.edn"}
+
+ ;; Files to copy (README overrides base module's README)
+ :files ["README.md"]
+
+ ;; Source files to copy
+ :sources [{:from "src/main.cljd"
+            :to "src/{{namespace}}/main.cljd"}]
+
+ ;; Additional gitignore entries
+ :gitignore-append [".clojuredart/"
+                    ".cpcache/"
+                    "build/"
+                    "android/.gradle/"
+                    "android/local.properties"
+                    "ios/Pods/"
+                    "*.iml"
+                    ".idea/"]}

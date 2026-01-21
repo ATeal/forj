@@ -4,7 +4,29 @@
    If the underlying tool fails (bad deps, missing tool, etc.), we log a
    friendly message instead of spewing stack traces. The edit still proceeds."
   (:require [babashka.process :as p]
+            [cheshire.core :as json]
             [clojure.string :as str]))
+
+(def ^:private clojure-extensions
+  "File extensions that should be processed by paren repair.
+   Note: .cljd (ClojureDart) not included - underlying tool doesn't support it."
+  #{".clj" ".cljs" ".cljc" ".edn" ".bb"})
+
+(defn- clojure-file?
+  "Check if the file path has a Clojure-family extension."
+  [file-path]
+  (when file-path
+    (some #(str/ends-with? (str/lower-case file-path) %) clojure-extensions)))
+
+(defn- extract-file-path
+  "Extract file_path from hook input JSON."
+  [input]
+  (try
+    (let [data (json/parse-string input true)]
+      (get-in data [:tool_input :file_path]))
+    (catch Exception _
+      ;; If we can't parse, assume it's a Clojure file to be safe
+      nil)))
 
 (defn- tool-available?
   "Check if clj-paren-repair-claude-hook is on PATH."
@@ -54,24 +76,30 @@
 (defn -main
   "Hook entry point. Reads JSON from stdin, runs paren repair, outputs result."
   [& _args]
-  (let [input (slurp *in*)]
-    (if (tool-available?)
+  (let [input (slurp *in*)
+        file-path (extract-file-path input)]
+    (cond
+      ;; Not a Clojure file - skip silently
+      (and file-path (not (clojure-file? file-path)))
+      (print input)
+
+      ;; Tool not installed
+      (not (tool-available?))
+      (do
+        (binding [*out* *err*]
+          (println "[forj] clj-paren-repair-claude-hook not found, skipping paren repair"))
+        (print input))
+
+      ;; Run paren repair
+      :else
       (let [result (run-paren-repair input)]
         (if (:success result)
-          ;; Success - output the repaired result
           (print (:output result))
-          ;; Failure - log friendly message, pass through original
           (do
             (when-let [msg (friendly-error-message (:error result))]
               (binding [*out* *err*]
                 (println (str "[forj] " msg))))
-            ;; Pass through the original input unchanged
-            (print input))))
-      ;; Tool not installed - just pass through
-      (do
-        (binding [*out* *err*]
-          (println "[forj] clj-paren-repair-claude-hook not found, skipping paren repair"))
-        (print input)))
+            (print input)))))
     (flush)))
 
 (comment

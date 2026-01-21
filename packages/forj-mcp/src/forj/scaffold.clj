@@ -181,10 +181,12 @@
   [& contents]
   (let [parsed (map edn/read-string contents)]
     (reduce (fn [acc deps]
-              (-> acc
-                  (update :paths #(vec (distinct (concat % (:paths deps)))))
-                  (update :deps merge (:deps deps))
-                  (update :aliases deep-merge (:aliases deps))))
+              (cond-> acc
+                true (update :paths #(vec (distinct (concat % (:paths deps)))))
+                true (update :deps merge (:deps deps))
+                true (update :aliases deep-merge (:aliases deps))
+                ;; ClojureDart support - preserve :cljd/opts if present
+                (:cljd/opts deps) (assoc :cljd/opts (:cljd/opts deps))))
             {:paths [] :deps {} :aliases {}}
             parsed)))
 
@@ -242,22 +244,23 @@
              :dir module-dir))))
 
 (defn- resolve-module-deps
-  "Resolve module dependencies recursively."
+  "Resolve module dependencies recursively.
+   Returns modules in dependency order (deps first, then dependents)."
   [module-names]
-  (loop [to-process (vec module-names)
-         resolved []
-         seen #{}]
-    (if (empty? to-process)
-      (distinct resolved)
-      (let [mod-name (first to-process)
-            remaining (rest to-process)]
-        (if (seen mod-name)
-          (recur remaining resolved seen)
-          (let [mod (load-module mod-name)
-                deps (:requires mod [])]
-            (recur (concat deps remaining [mod-name])
-                   (conj resolved mod-name)
-                   (conj seen mod-name))))))))
+  (let [visited (atom #{})
+        result (atom [])]
+    (letfn [(visit [mod-name]
+              (when-not (@visited mod-name)
+                (swap! visited conj mod-name)
+                (when-let [mod (load-module mod-name)]
+                  ;; Visit deps first
+                  (doseq [dep (:requires mod [])]
+                    (visit dep))
+                  ;; Then add this module
+                  (swap! result conj mod-name))))]
+      (doseq [m module-names]
+        (visit m))
+      @result)))
 
 ;; =============================================================================
 ;; CLAUDE.md Generation
@@ -266,27 +269,31 @@
 (defn- generate-claude-md
   "Generate CLAUDE.md content based on selected modules."
   [project-name modules]
-  (let [has-backend? (some #{"backend"} modules)
+  (let [has-api? (some #{"api"} modules)
         has-web? (some #{"web"} modules)
         has-mobile? (some #{"mobile"} modules)
+        has-flutter? (some #{"flutter"} modules)
         has-db? (some #{"db-postgres" "db-sqlite"} modules)
         has-shadow? (or has-web? has-mobile?)
 
         ;; Build commands section
         commands (cond-> []
                    true (conj "bb tasks          # List available tasks")
-                   has-backend? (conj "bb dev            # Start backend REPL")
+                   has-api? (conj "bb dev            # Start backend REPL")
                    has-shadow? (conj "bb shadow         # Start shadow-cljs watch")
                    has-mobile? (conj "bb expo           # Start Expo dev server")
-                   true (conj "bb test           # Run tests"))
+                   has-flutter? (conj "bb flutter        # Run app with hot reload + REPL")
+                   (not has-flutter?) (conj "bb test           # Run tests"))
 
         ;; Build project type description
         project-type (cond
-                       (and has-backend? has-mobile?) "Full-stack mobile (Clojure + ClojureScript + Expo)"
-                       (and has-backend? has-web?) "Full-stack web (Clojure + ClojureScript)"
+                       (and has-api? has-flutter?) "Full-stack (Clojure API + ClojureDart Flutter)"
+                       has-flutter? "Mobile (ClojureDart + Flutter)"
+                       (and has-api? has-mobile?) "Full-stack mobile (Clojure + ClojureScript + Expo)"
+                       (and has-api? has-web?) "Full-stack web (Clojure + ClojureScript)"
                        has-mobile? "Mobile (ClojureScript + Expo)"
                        has-web? "Frontend (ClojureScript + shadow-cljs)"
-                       has-backend? "Backend (Clojure)"
+                       has-api? "Backend (Clojure)"
                        :else "Script (Babashka)")]
 
     (str "# " project-name "\n\n"
@@ -296,13 +303,54 @@
          (str/join "\n" commands)
          "\n```\n\n"
          "## Development\n\n"
-         "This project uses REPL-driven development with forj.\n\n"
-         "### Starting the REPL\n\n"
-         "```bash\n"
-         "/clj-repl         # Auto-detect and start appropriate REPLs\n"
-         "/clj-repl status  # Check what's running\n"
-         "/clj-repl stop    # Stop all REPLs\n"
-         "```\n\n"
+         ;; Backend section (when API present)
+         (when has-api?
+           (str "### Backend (Clojure)\n\n"
+                "REPL-driven development with forj:\n\n"
+                "```bash\n"
+                "/clj-repl         # Start backend REPL\n"
+                "/clj-repl status  # Check what's running\n"
+                "/clj-repl stop    # Stop all REPLs\n"
+                "```\n\n"
+                "| Tool | Purpose |\n"
+                "|------|--------|\n"
+                "| `repl_eval` | Evaluate Clojure code |\n"
+                "| `reload_namespace` | Reload a namespace after changes |\n"
+                "| `run_tests` | Run project tests |\n\n"))
+         ;; Flutter section (when Flutter present)
+         (when has-flutter?
+           (str "### Frontend (ClojureDart + Flutter)\n\n"
+                "ClojureDart is initialized automatically during scaffolding.\n\n"
+                "**Development:**\n"
+                "```bash\n"
+                "bb flutter        # Run app with hot reload + REPL\n"
+                "```\n\n"
+                "**⚠️ IMPORTANT - Claude/forj workflow:**\n"
+                "Do NOT use forj REPL tools (`repl_eval`, `reload_namespace`) with ClojureDart projects. "
+                "The ClojureDart socket REPL is fragile and crashes on connect/disconnect cycles. "
+                "Instead:\n"
+                "- Edit `.cljd` files directly - hot reload picks up changes automatically\n"
+                "- For manual REPL exploration, user connects via `nc localhost PORT` (persistent connection)\n\n"
+                "**REPL (Beta - Manual Use Only):** Look for `🤫 ClojureDart REPL listening on port XXXXX` "
+                "in `bb flutter` output, then connect with `nc localhost XXXXX`. "
+                "Keep the connection open - disconnecting crashes the REPL.\n\n"
+                "**Upgrade:** `bb upgrade`\n\n"))
+         ;; Standard forj section (when no API and no Flutter - just cljs or script)
+         (when (and (not has-api?) (not has-flutter?))
+           (str "This project uses REPL-driven development with forj.\n\n"
+                "### Starting the REPL\n\n"
+                "```bash\n"
+                "/clj-repl         # Auto-detect and start appropriate REPLs\n"
+                "/clj-repl status  # Check what's running\n"
+                "/clj-repl stop    # Stop all REPLs\n"
+                "```\n\n"
+                "### forj MCP Tools\n\n"
+                "| Tool | Purpose |\n"
+                "|------|--------|\n"
+                "| `repl_eval` | Evaluate Clojure code |\n"
+                "| `reload_namespace` | Reload a namespace after changes |\n"
+                "| `eval_comment_block` | Evaluate test expressions in comment blocks |\n"
+                "| `run_tests` | Run project tests |\n\n"))
          ;; Shadow builds section when multiple builds exist
          (when (and has-web? has-mobile?)
            (str "### Shadow Builds\n\n"
@@ -318,13 +366,6 @@
                 "bb shadow:mobile # Mobile frontend\n"
                 "bb expo:web      # Expo dev server\n"
                 "```\n\n"))
-         "### forj MCP Tools\n\n"
-         "| Tool | Purpose |\n"
-         "|------|--------|\n"
-         "| `repl_eval` | Evaluate Clojure code |\n"
-         "| `reload_namespace` | Reload a namespace after changes |\n"
-         "| `eval_comment_block` | Evaluate test expressions in comment blocks |\n"
-         "| `run_tests` | Run project tests |\n\n"
          (when has-db?
            (str "## Database\n\n"
                 (if (some #{"db-postgres"} modules)
@@ -333,11 +374,14 @@
          "## Project Structure\n\n"
          "```\n"
          (cond-> "src/\n"
-           has-backend? (str "  " (str/replace project-name "-" "_") "/core.clj    # Backend entry\n")
+           has-api? (str "  " (str/replace project-name "-" "_") "/core.clj    # Backend entry\n")
+           has-flutter? (str "  " (str/replace project-name "-" "_") "/main.cljd   # Flutter app entry\n")
            (and has-web? has-mobile?) (str "  " (str/replace project-name "-" "_") "/app.cljs    # Web + Mobile frontend\n")
            (and has-web? (not has-mobile?)) (str "  " (str/replace project-name "-" "_") "/app.cljs    # Web frontend\n")
-           (and has-mobile? (not has-web?)) (str "  " (str/replace project-name "-" "_") "/app.cljs    # Mobile app\n"))
-         "test/                    # Tests\n"
+           (and has-mobile? (not has-web?) (not has-flutter?)) (str "  " (str/replace project-name "-" "_") "/app.cljs    # Mobile app\n"))
+         (if has-flutter?
+           "build/                   # Flutter build output\n"
+           "test/                    # Tests\n")
          "```\n")))
 
 ;; =============================================================================

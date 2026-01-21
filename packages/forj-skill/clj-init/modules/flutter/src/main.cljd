@@ -1,0 +1,52 @@
+(ns {{project-name}}.main
+  "Main entry point for {{project-name}} Flutter app."
+  (:require ["package:flutter/material.dart" :as m]
+            [cljd.flutter :as f]))
+
+;; -- App State --
+
+(def counter (atom 0))
+
+;; -- UI Components --
+
+(defn counter-text []
+  (f/widget
+    :watch [count counter]
+    (m/Text (str "Count: " count)
+            .style (m/TextStyle .fontSize 24))))
+
+(defn increment-button []
+  (m/FloatingActionButton
+    .onPressed #(swap! counter inc)
+    .tooltip "Increment"
+    .child (m/Icon m/Icons.add)))
+
+(defn app-bar []
+  (m/AppBar
+    .title (m/Text "{{project-name}}")))
+
+(defn home-page []
+  (m/Scaffold
+    .appBar (app-bar)
+    .body (m/Center
+            .child (counter-text))
+    .floatingActionButton (increment-button)))
+
+;; -- App Entry Point --
+
+(defn main []
+  (f/run
+    (m/MaterialApp
+      .title "{{project-name}}"
+      .theme (m/ThemeData .primarySwatch m/Colors.blue)
+      .home (home-page))))
+
+(comment
+  ;; REPL exploration (connect via socket REPL on port 1234)
+  ;; bb repl  ; starts socket REPL
+  ;;
+  ;; Test state changes:
+  @counter
+  (swap! counter inc)
+  (reset! counter 0)
+  )

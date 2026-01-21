@@ -1095,6 +1095,39 @@
        :message "package.json exists but node_modules missing - run 'npm install'"
        :fix-available true})))
 
+(defn- is-clojuredart-project?
+  "Check if project has :cljd/opts in deps.edn."
+  [path]
+  (let [deps-file (java.io.File. path "deps.edn")]
+    (when (.exists deps-file)
+      (try
+        (let [deps (edn/read-string (slurp deps-file))]
+          (contains? deps :cljd/opts))
+        (catch Exception _ false)))))
+
+(defn- check-cljd-init
+  "Check if ClojureDart project needs initialization."
+  [path]
+  (when (is-clojuredart-project? path)
+    (let [pubspec (java.io.File. path "pubspec.yaml")]
+      (when-not (.exists pubspec)
+        {:issue :cljd-not-initialized
+         :message "ClojureDart project not initialized - running 'clojure -M:cljd init'"
+         :fix-available true}))))
+
+(defn- run-cljd-init
+  "Run ClojureDart initialization."
+  [path]
+  (try
+    (println "Initializing ClojureDart project...")
+    (let [result (p/shell {:dir path :out :string :err :string :continue true}
+                          "clojure" "-M:cljd" "init")]
+      (if (zero? (:exit result))
+        {:fixed true :message "ClojureDart initialized successfully"}
+        {:fixed false :message (str "ClojureDart init failed: " (:err result))}))
+    (catch Exception e
+      {:fixed false :message (str "ClojureDart init failed: " (.getMessage e))})))
+
 (defn- mise-available?
   "Check if mise is installed."
   []
@@ -1215,6 +1248,7 @@
                   (check-bb-tasks-use-clj path)
                   (check-deps-resolve path)
                   (check-npm-install path)
+                  (check-cljd-init path)
                   (check-java-version path)
                   (check-shadow-cljs-upgrade path)]
           issues (remove nil? checks)
@@ -1227,7 +1261,9 @@
                            (when (some #(= (:issue %) :bb-tasks-use-clj) issues)
                              (fix-bb-tasks-clj-to-clojure path))
                            (when (some #(= (:issue %) :npm-not-installed) issues)
-                             (run-npm-install path))]))
+                             (run-npm-install path))
+                           (when (some #(= (:issue %) :cljd-not-initialized) issues)
+                             (run-cljd-init path))]))
 
           ;; Re-check issues after fixes to update status
           ;; Java version is informational only (doesn't block success)
@@ -1236,7 +1272,8 @@
                                      [(check-bb-override-builtin path)
                                       (check-bb-tasks-use-clj path)
                                       (check-deps-resolve path)
-                                      (check-npm-install path)])
+                                      (check-npm-install path)
+                                      (check-cljd-init path)])
                              ;; Filter out informational issues for success check
                              (remove #(= (:issue %) :java-version-low) issues))
           ;; Keep java version in issues for info, but don't let it block success
@@ -1897,10 +1934,20 @@
     "loop_status" (loop-status arguments)
     "validate_project" (validate-project arguments)
     "view_repl_logs" (view-repl-logs arguments)
-    "scaffold_project" (scaffold/scaffold-project
-                        {:project-name (:project_name arguments)
-                         :modules (:modules arguments)
-                         :output-path (or (:output_path arguments) ".")})
+    "scaffold_project" (let [output-path (or (:output_path arguments) ".")
+                             project-name (:project_name arguments)
+                             project-path (str output-path "/" project-name)
+                             scaffold-result (scaffold/scaffold-project
+                                               {:project-name project-name
+                                                :modules (:modules arguments)
+                                                :output-path output-path})]
+                         ;; Auto-run validation if scaffolding succeeded
+                         (if (:success scaffold-result)
+                           (let [validation-result (validate-project {:path project-path :fix true})]
+                             (assoc scaffold-result
+                                    :validation validation-result
+                                    :auto_validated true))
+                           scaffold-result))
     "track_process" (track-process arguments)
     "stop_project" (stop-project arguments)
     "list_tracked_processes" (list-tracked-processes arguments)
