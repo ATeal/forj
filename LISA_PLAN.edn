@@ -15,15 +15,16 @@
    :completed "2026-01-21T20:47:23.468686308Z"}
   {:description
    "Create safe-execute helper for try-catch error handling pattern",
-   :id :error-wrapper,
+   :started "2026-01-21T20:47:28.503605438Z",
+   :completed "2026-01-21T20:48:43.529977756Z",
+   :gates
+   ["repl:(fn? (resolve 'forj.mcp.tools/safe-execute)) => true"],
    :file "packages/forj-mcp/src/forj/mcp/tools.clj",
    :acceptance
    "New safe-execute function wraps operations and returns {:success false :error msg} on exception",
-   :gates
-   ["repl:(fn? (resolve 'forj.mcp.tools/safe-execute)) => true"],
-   :depends-on [:shell-helper],
-   :status :in-progress,
-   :started "2026-01-21T20:47:12.077128181Z"}
+   :status :done,
+   :id :error-wrapper,
+   :depends-on [:shell-helper]}
   {:description "Convert call-tool giant cond to dispatch map",
    :id :tool-dispatch,
    :file "packages/forj-mcp/src/forj/mcp/tools.clj",
@@ -32,7 +33,8 @@
    :gates
    ["repl:(map? (resolve 'forj.mcp.tools/tool-handlers)) => true"],
    :depends-on [:error-wrapper],
-   :status :pending}
+   :status :in-progress,
+   :started "2026-01-21T20:48:34.866015623Z"}
   {:description "Add test coverage for forj.lisa.validation namespace",
    :started "2026-01-21T20:44:03.413560450Z",
    :completed "2026-01-21T20:45:58.439961342Z",
@@ -51,6 +53,6 @@
    :gates ["repl:(require '[forj.scaffold-test]) => nil"],
    :depends-on [],
    :status :in-progress,
-   :started "2026-01-21T20:45:51.346543088Z"}],
+   :started "2026-01-21T20:47:28.513230152Z"}],
  :signs [],
  :created "2026-01-21T20:40:02.081955227Z"}
