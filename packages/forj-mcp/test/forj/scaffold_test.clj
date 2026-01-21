@@ -197,13 +197,18 @@
 ;; =============================================================================
 
 (deftest scaffold-project-basic-test
-  (testing "Returns error when modules dir not found with invalid env"
-    ;; This tests the error path when modules can't be loaded
-    ;; The function returns success false when scaffolding fails
-    (let [original-env (System/getenv "FORJ_ROOT")]
-      ;; Can't easily set env vars in JVM, but we can test that scaffolding
-      ;; works in the repo context
-      (is (some? original-env) "Running in repo context"))))
+  (testing "modules-dir returns path when running in repo"
+    ;; When running tests from the forj repo, modules-dir should find the modules
+    (is (some? (scaffold/modules-dir)) "modules-dir should find modules in repo context"))
+
+  (testing "versions-file returns path when running in repo"
+    (is (some? (scaffold/versions-file)) "versions-file should find versions.edn in repo context"))
+
+  (testing "load-versions returns version data"
+    (let [versions (scaffold/load-versions)]
+      (is (map? versions))
+      (is (contains? versions :npm))
+      (is (contains? versions :clj)))))
 
 (deftest scaffold-project-in-repo-test
   (testing "Scaffolds project with script module"
