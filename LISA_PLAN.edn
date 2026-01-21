@@ -10,8 +10,9 @@
    :gates
    ["repl:(require '[forj.mcp.tools :as tools] :reload) => nil"
     "repl:(fn? (resolve 'forj.mcp.tools/shell-execute)) => true"],
-   :status :in-progress,
-   :started "2026-01-21T20:44:03.399015661Z"}
+   :status :done,
+   :started "2026-01-21T20:44:03.399015661Z",
+   :completed "2026-01-21T20:47:23.468686308Z"}
   {:description
    "Create safe-execute helper for try-catch error handling pattern",
    :id :error-wrapper,
@@ -21,7 +22,8 @@
    :gates
    ["repl:(fn? (resolve 'forj.mcp.tools/safe-execute)) => true"],
    :depends-on [:shell-helper],
-   :status :pending}
+   :status :in-progress,
+   :started "2026-01-21T20:47:12.077128181Z"}
   {:description "Convert call-tool giant cond to dispatch map",
    :id :tool-dispatch,
    :file "packages/forj-mcp/src/forj/mcp/tools.clj",

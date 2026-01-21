@@ -1189,8 +1189,7 @@
   [path]
   (try
     (println "Initializing ClojureDart project...")
-    (let [result (p/shell {:dir path :out :string :err :string :continue true}
-                          "clojure" "-M:cljd" "init")]
+    (let [result (shell-execute {:dir path} "clojure" "-M:cljd" "init")]
       (if (zero? (:exit result))
         {:fixed true :message "ClojureDart initialized successfully"}
         {:fixed false :message (str "ClojureDart init failed: " (:err result))}))
@@ -1201,7 +1200,7 @@
   "Check if mise is installed."
   []
   (try
-    (let [result (p/shell {:out :string :err :string :continue true} "which" "mise")]
+    (let [result (shell-execute "which" "mise")]
       (zero? (:exit result)))
     (catch Exception _ false)))
 
@@ -1209,8 +1208,7 @@
   "Get the current Java major version."
   [path]
   (try
-    (let [result (p/shell {:out :string :err :string :continue true :dir path}
-                          "java" "-version")
+    (let [result (shell-execute {:dir path} "java" "-version")
           version-str (or (:err result) (:out result))
           version-match (re-find #"version \"(\d+)" version-str)]
       (when version-match (parse-long (second version-match))))
@@ -1297,8 +1295,7 @@
   "Run npm install in the project directory."
   [path]
   (try
-    (let [result (p/shell {:out :string :err :string :continue true :dir path}
-                          "npm" "install")]
+    (let [result (shell-execute {:dir path} "npm" "install")]
       (if (zero? (:exit result))
         {:fixed :npm-install
          :message "Ran npm install successfully"}
@@ -1449,8 +1446,7 @@
   "Check if a process with given PID is still running."
   [pid]
   (try
-    (let [result (p/shell {:out :string :err :string :continue true}
-                          "kill" "-0" (str pid))]
+    (let [result (shell-execute "kill" "-0" (str pid))]
       (zero? (:exit result)))
     (catch Exception _ false)))
 
@@ -1525,8 +1521,7 @@
                               (process-alive? pid)
                               (try
                                 ;; Kill the process and its children
-                                (let [result (p/shell {:out :string :err :string :continue true}
-                                                      "kill" "-TERM" (str pid))]
+                                (let [result (shell-execute "kill" "-TERM" (str pid))]
                                   (if (zero? (:exit result))
                                     {:name name :pid pid :stopped true}
                                     {:name name :pid pid :stopped false :error (:err result)}))
