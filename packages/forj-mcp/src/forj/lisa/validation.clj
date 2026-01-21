@@ -103,19 +103,129 @@
        :type :repl})))
 
 ;; =============================================================================
-;; Chrome/Playwright Validation (Stub)
+;; Chrome/Playwright Validation
 ;; =============================================================================
 
+(defn- build-chrome-prompt
+  "Build the prompt for Chrome/Playwright validation.
+
+   Args format for screenshot: 'path' or 'url path' (e.g., 'http://localhost:3000 /tmp/shot.png')"
+  [action args]
+  (case action
+    :screenshot
+    (let [;; Parse args: either 'path' or 'url path'
+          parts (when args (str/split (str/trim args) #"\s+" 2))
+          [url-or-path path] (if (= 1 (count parts))
+                               [nil (first parts)]
+                               parts)
+          has-url? (and url-or-path (str/starts-with? url-or-path "http"))]
+      (str "Take a screenshot using Playwright MCP.\n\n"
+           (when has-url?
+             (str "First navigate to: " url-or-path "\n"))
+           "Save screenshot to: " (or path url-or-path) "\n\n"
+           "Steps:\n"
+           (if has-url?
+             (str "1. Use mcp__playwright__browser_navigate with url=\"" url-or-path "\"\n"
+                  "2. Use mcp__playwright__browser_wait_for with time=2\n"
+                  "3. Use mcp__playwright__browser_take_screenshot with filename=\"" path "\"\n"
+                  "4. Respond with ONLY: SUCCESS or FAILED: <reason>")
+             (str "1. Use mcp__playwright__browser_take_screenshot with filename=\"" (or path args) "\"\n"
+                  "2. Respond with ONLY: SUCCESS or FAILED: <reason>\n"
+                  "If the browser is not open, navigate to about:blank first, then take screenshot."))))
+
+    :navigate
+    (str "Navigate to URL: " args "\n\n"
+         "Steps:\n"
+         "1. Use mcp__playwright__browser_navigate with url=\"" args "\"\n"
+         "2. Wait briefly for page load with mcp__playwright__browser_wait_for time=2\n"
+         "3. Respond with ONLY: SUCCESS or FAILED: <reason>")
+
+    :snapshot
+    (let [url args]
+      (str "Get accessibility snapshot"
+           (when url (str " of " url))
+           ".\n\n"
+           "Steps:\n"
+           (when url
+             (str "1. Use mcp__playwright__browser_navigate with url=\"" url "\"\n"
+                  "2. Use mcp__playwright__browser_wait_for with time=2\n"))
+           (if url "3" "1") ". Use mcp__playwright__browser_snapshot\n"
+           (if url "4" "2") ". If snapshot contains content, respond with: SUCCESS\n"
+           (if url "5" "3") ". If empty or error, respond with: FAILED: <reason>"))
+
+    :click
+    (str "Click on element: " args "\n\n"
+         "Steps:\n"
+         "1. Use mcp__playwright__browser_snapshot to find the element\n"
+         "2. Use mcp__playwright__browser_click with element and ref\n"
+         "3. Respond with ONLY: SUCCESS or FAILED: <reason>")
+
+    :wait
+    (str "Wait for condition: " args "\n\n"
+         "Steps:\n"
+         "1. Use mcp__playwright__browser_wait_for with appropriate parameters\n"
+         "2. Respond with ONLY: SUCCESS or FAILED: <reason>")
+
+    ;; Default for unknown actions
+    (str "Perform Chrome action: " (name action) " " args "\n"
+         "Respond with ONLY: SUCCESS or FAILED: <reason>")))
+
+(defn- parse-chrome-response
+  "Parse the response from Chrome validation."
+  [response]
+  (let [trimmed (str/trim response)]
+    (cond
+      (str/starts-with? (str/upper-case trimmed) "SUCCESS")
+      {:passed true
+       :message (str/trim (subs trimmed (min 7 (count trimmed))))}
+
+      (str/starts-with? (str/upper-case trimmed) "FAILED")
+      {:passed false
+       :reason (str/trim (subs trimmed (min 7 (count trimmed))))}
+
+      :else
+      {:passed false
+       :reason (str "Unexpected response: " trimmed)})))
+
 (defn- eval-chrome-validation
-  "Run a Chrome MCP validation.
-   Note: This is a stub - actual implementation would use Chrome MCP tools."
+  "Run a Chrome/Playwright MCP validation by shelling out to Claude.
+
+   Supported actions:
+   - :screenshot <path> - Take screenshot and save to path
+   - :navigate <url> - Navigate to URL
+   - :snapshot - Get accessibility snapshot
+   - :click <selector> - Click an element
+   - :wait <condition> - Wait for condition"
   [{:keys [action args]}]
-  ;; Stub implementation - returns instructions for manual/MCP execution
-  {:passed :pending
-   :type :chrome
-   :action action
-   :args args
-   :note (str "Chrome validation requires MCP: " (name action) " " args)})
+  (try
+    (let [prompt (build-chrome-prompt action args)
+          ;; Shell out to Claude with Playwright MCP
+          result (p/shell {:out :string :err :string :continue true
+                           :in prompt}
+                          "claude" "-p"
+                          "--model" "claude-3-5-haiku-latest"
+                          "--output-format" "text"
+                          "--max-turns" "5"
+                          "--allowedTools" "mcp__playwright__*"
+                          "--dangerously-skip-permissions")]
+      (if (zero? (:exit result))
+        (let [{:keys [passed reason message]} (parse-chrome-response (:out result))]
+          {:passed passed
+           :type :chrome
+           :action action
+           :args args
+           :message (or message reason)})
+        {:passed false
+         :type :chrome
+         :action action
+         :args args
+         :error (or (not-empty (:err result)) "Chrome validation failed")}))
+    (catch Exception e
+      {:passed false
+       :type :chrome
+       :action action
+       :args args
+       :error (.getMessage e)})))
 
 ;; =============================================================================
 ;; LLM-as-Judge Validation
@@ -271,8 +381,21 @@
   ;; => [{:type :repl :expression "(+ 1 2) => 3"}
   ;;     {:type :judge :criteria "Looks good"}]
 
+  (parse-validation-string "chrome:screenshot /tmp/test.png")
+  ;; => [{:type :chrome :action :screenshot :args "/tmp/test.png"}]
+
   ;; Run REPL validation (requires running nREPL)
-  (run-validation {:type :repl :expression "(+ 1 2) => 3"} {:port 1667})
+  (run-validation {:type :repl :expression "(+ 1 2) => 3"} {:port 1669})
+
+  ;; Run Chrome/Playwright validation (requires Playwright MCP)
+  ;; Takes a screenshot and saves to specified path
+  (run-validation {:type :chrome :action :screenshot :args "/tmp/lisa-screenshot.png"} {})
+
+  ;; Navigate to URL
+  (run-validation {:type :chrome :action :navigate :args "http://localhost:3000"} {})
+
+  ;; Get accessibility snapshot
+  (run-validation {:type :chrome :action :snapshot :args nil} {})
 
   ;; Run judge validation (calls Claude haiku)
   (run-validation {:type :judge :criteria "The UI has a clean, modern layout"}
@@ -280,5 +403,8 @@
 
   ;; Run all validations
   (run-validations "repl:(+ 1 2) => 3 | judge:UI looks professional"
-                   {:port 1667 :project-path "/tmp/test-project"})
+                   {:port 1669 :project-path "/tmp/test-project"})
+
+  ;; Run Chrome screenshot validation via validation string
+  (run-validations "chrome:screenshot /tmp/test.png" {})
   )

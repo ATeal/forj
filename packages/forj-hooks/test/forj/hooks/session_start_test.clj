@@ -2,6 +2,7 @@
   "Tests for forj.hooks.session-start"
   (:require [clojure.test :refer [deftest testing is]]
             [forj.hooks.session-start :as session-start]
+            [forj.hooks.util :as util]
             [cheshire.core :as json]))
 
 ;; =============================================================================
@@ -11,11 +12,11 @@
 (deftest is-clojure-project?-test
   (testing "Detects Clojure project by marker files"
     ;; Current directory (forj) has bb.edn
-    (is (session-start/is-clojure-project? "."))
-    (is (session-start/is-clojure-project? (System/getProperty "user.dir"))))
+    (is (util/is-clojure-project? "."))
+    (is (util/is-clojure-project? (System/getProperty "user.dir"))))
 
   (testing "Non-Clojure directories"
-    (is (not (session-start/is-clojure-project? "/tmp")))))
+    (is (not (util/is-clojure-project? "/tmp")))))
 
 ;; =============================================================================
 ;; analyze-project tests
@@ -58,7 +59,7 @@
   (testing "Hook produces valid JSON"
     ;; Simulate what -main would output
     (let [analysis (session-start/analyze-project ".")
-          repls (session-start/discover-repls)
+          repls (util/discover-repls)
           context (session-start/format-context analysis repls true)
           output {:hookSpecificOutput
                   {:hookEventName "SessionStart"

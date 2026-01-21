@@ -1,5 +1,5 @@
 {:title "Forj Code Quality Improvements",
- :status :in-progress,
+ :status :complete,
  :checkpoints
  [{:description "Extract shared utilities to forj.hooks.util",
    :id :shared-utils,
@@ -9,16 +9,18 @@
    :gates
    ["repl:(require '[forj.hooks.util :as util]) => nil"
     "repl:(fn? util/is-clojure-project?) => true"],
-   :status :in-progress,
-   :started "2026-01-21T20:21:59.548986251Z"}
+   :status :done,
+   :started "2026-01-21T20:21:59.548986251Z",
+   :completed "2026-01-21T20:24:04.967650459Z"}
   {:description "Add input validation to MCP tools",
    :id :input-validation,
    :file "packages/forj-mcp/src/forj/mcp/tools.clj",
    :acceptance
    "run-tests validates :runner enum, eval_at checks file exists, invalid inputs return helpful errors",
    :depends-on [],
-   :status :in-progress,
-   :started "2026-01-21T20:21:59.557440476Z"}
+   :status :done,
+   :started "2026-01-21T20:21:59.557440476Z",
+   :completed "2026-01-21T20:24:31.647403570Z"}
   {:description "Add bb cleanup:sessions task",
    :id :session-cleanup,
    :file "bb.edn",
@@ -34,7 +36,8 @@
    :acceptance
    "eval-chrome-validation uses Chrome MCP tools, lisa_run_validation with chrome:screenshot actually captures screenshot",
    :depends-on [],
-   :status :in-progress,
-   :started "2026-01-21T20:22:56.158243361Z"}],
+   :status :done,
+   :started "2026-01-21T20:24:39.317114759Z",
+   :completed "2026-01-21T20:29:16.653053516Z"}],
  :signs [],
  :created "2026-01-21T20:04:29.826083441Z"}

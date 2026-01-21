@@ -629,47 +629,49 @@
   "Evaluate a form at a specific line in a file. Like ,er (root) or ,ee (inner) in Conjure.
    Uses path-based REPL routing when port is not explicitly provided."
   [{:keys [file line scope port] :or {scope "root"}}]
-  (try
-    (let [;; Detect file type and find appropriate REPL
-          detected-type (detect-repl-type file)
-          effective-port (or port
-                             (let [{:keys [success ports]} (discover-repls)]
-                               (when success
-                                 (select-repl-for-file ports file))))
-          content (slurp file)
-          ns-name (extract-ns-from-content content)
-          target-form (if (= scope "inner")
-                        (find-inner-form-at-line content line)
-                        (let [forms (find-top-level-forms content)]
-                          (find-form-at-line forms line)))]
-      (if target-form
-        (if effective-port
-          (let [;; Prepend ns switch if we found a namespace
-                code (if ns-name
-                       (str "(ns " ns-name ") " (:form target-form))
-                       (:form target-form))
-                result (eval-code {:code code :port effective-port})]
-            (if (:success result)
-              {:success true
-               :file file
-               :lines [(:start-line target-form) (:end-line target-form)]
-               :namespace ns-name
-               :repl-type (name detected-type)
-               :port effective-port
-               :value (:value result)}
-              result))
+  (if-let [validation-error (validate-file-exists file "file")]
+    validation-error
+    (try
+      (let [;; Detect file type and find appropriate REPL
+            detected-type (detect-repl-type file)
+            effective-port (or port
+                               (let [{:keys [success ports]} (discover-repls)]
+                                 (when success
+                                   (select-repl-for-file ports file))))
+            content (slurp file)
+            ns-name (extract-ns-from-content content)
+            target-form (if (= scope "inner")
+                          (find-inner-form-at-line content line)
+                          (let [forms (find-top-level-forms content)]
+                            (find-form-at-line forms line)))]
+        (if target-form
+          (if effective-port
+            (let [;; Prepend ns switch if we found a namespace
+                  code (if ns-name
+                         (str "(ns " ns-name ") " (:form target-form))
+                         (:form target-form))
+                  result (eval-code {:code code :port effective-port})]
+              (if (:success result)
+                {:success true
+                 :file file
+                 :lines [(:start-line target-form) (:end-line target-form)]
+                 :namespace ns-name
+                 :repl-type (name detected-type)
+                 :port effective-port
+                 :value (:value result)}
+                result))
+            {:success false
+             :error (str "No " (name detected-type) " REPL running. Start one with /clj-repl or in a terminal: "
+                         (case detected-type
+                           :clojure "clj -M:dev"
+                           :clojurescript "npx shadow-cljs watch app"
+                           :babashka "bb nrepl-server 1667"
+                           "bb nrepl-server 1667"))})
           {:success false
-           :error (str "No " (name detected-type) " REPL running. Start one with /clj-repl or in a terminal: "
-                       (case detected-type
-                         :clojure "clj -M:dev"
-                         :clojurescript "npx shadow-cljs watch app"
-                         :babashka "bb nrepl-server 1667"
-                         "bb nrepl-server 1667"))})
+           :error (str "No form found at line " line)}))
+      (catch Exception e
         {:success false
-         :error (str "No form found at line " line)}))
-    (catch Exception e
-      {:success false
-       :error (str "Failed to eval at line: " (.getMessage e))})))
+         :error (str "Failed to eval at line: " (.getMessage e))}))))
 
 (defn doc-symbol
   "Look up documentation for a symbol."
@@ -777,29 +779,31 @@
 (defn run-tests
   "Run tests for a Clojure project."
   [{:keys [path namespace runner] :or {path "." runner "auto"}}]
-  (try
-    (let [effective-runner (if (= runner "auto")
-                             (detect-test-runner path)
-                             (keyword runner))
-          cmd (build-test-command effective-runner namespace)]
-      (if cmd
-        (let [result (apply p/shell {:out :string :err :string :continue true :dir path} cmd)
-              output (str (:out result) (:err result))]
-          (if (zero? (:exit result))
-            {:success true
-             :runner (name effective-runner)
-             :output output
-             :passed true}
-            {:success true  ; Tool succeeded, tests failed
-             :runner (name effective-runner)
-             :output output
-             :passed false
-             :exit-code (:exit result)}))
+  (if-let [validation-error (validate-runner runner)]
+    validation-error
+    (try
+      (let [effective-runner (if (= runner "auto")
+                               (detect-test-runner path)
+                               (keyword runner))
+            cmd (build-test-command effective-runner namespace)]
+        (if cmd
+          (let [result (apply p/shell {:out :string :err :string :continue true :dir path} cmd)
+                output (str (:out result) (:err result))]
+            (if (zero? (:exit result))
+              {:success true
+               :runner (name effective-runner)
+               :output output
+               :passed true}
+              {:success true  ; Tool succeeded, tests failed
+               :runner (name effective-runner)
+               :output output
+               :passed false
+               :exit-code (:exit result)}))
+          {:success false
+           :error "Could not detect test runner. No bb.edn, deps.edn, or project.clj found."}))
+      (catch Exception e
         {:success false
-         :error "Could not detect test runner. No bb.edn, deps.edn, or project.clj found."}))
-    (catch Exception e
-      {:success false
-       :error (str "Failed to run tests: " (.getMessage e))})))
+         :error (str "Failed to run tests: " (.getMessage e))}))))
 
 (defn- find-comment-blocks
   "Find all (comment ...) blocks in file content with their line ranges."
@@ -844,59 +848,61 @@
 (defn eval-comment-block
   "Evaluate all forms inside a (comment ...) block."
   [{:keys [file line port]}]
-  (try
-    (let [;; Detect file type and find appropriate REPL
-          detected-type (detect-repl-type file)
-          effective-port (or port
-                             (let [{:keys [success ports]} (discover-repls)]
-                               (when success
-                                 (select-repl-for-file ports file))))
-          content (slurp file)
-          ns-name (extract-ns-from-content content)
-          comment-blocks (find-comment-blocks content)
-          ;; Find comment block containing or nearest to the given line
-          target-block (or (first (filter #(and (<= (:start-line %) line)
-                                                (>= (:end-line %) line))
-                                          comment-blocks))
-                           ;; Find nearest block if not inside one
-                           (first (sort-by #(Math/abs (- line (:start-line %)))
-                                           comment-blocks)))]
-      (if target-block
-        (if effective-port
-          (let [forms (extract-comment-forms target-block content)
-                ;; Switch to namespace first
-                _ (when ns-name
-                    (eval-code {:code (str "(ns " ns-name ")") :port effective-port}))
-                ;; Evaluate each form
-                results (mapv (fn [form-info]
-                                (let [result (eval-code {:code (:form form-info)
-                                                         :port effective-port})]
-                                  {:lines [(:start-line form-info) (:end-line form-info)]
-                                   :form (:form form-info)
-                                   :success (:success result)
-                                   :value (:value result)
-                                   :error (:error result)}))
-                              forms)]
-            {:success true
-             :file file
-             :block-lines [(:start-line target-block) (:end-line target-block)]
-             :namespace ns-name
-             :repl-type (name detected-type)
-             :port effective-port
-             :forms-evaluated (count results)
-             :results results})
+  (if-let [validation-error (validate-file-exists file "file")]
+    validation-error
+    (try
+      (let [;; Detect file type and find appropriate REPL
+            detected-type (detect-repl-type file)
+            effective-port (or port
+                               (let [{:keys [success ports]} (discover-repls)]
+                                 (when success
+                                   (select-repl-for-file ports file))))
+            content (slurp file)
+            ns-name (extract-ns-from-content content)
+            comment-blocks (find-comment-blocks content)
+            ;; Find comment block containing or nearest to the given line
+            target-block (or (first (filter #(and (<= (:start-line %) line)
+                                                  (>= (:end-line %) line))
+                                            comment-blocks))
+                             ;; Find nearest block if not inside one
+                             (first (sort-by #(Math/abs (- line (:start-line %)))
+                                             comment-blocks)))]
+        (if target-block
+          (if effective-port
+            (let [forms (extract-comment-forms target-block content)
+                  ;; Switch to namespace first
+                  _ (when ns-name
+                      (eval-code {:code (str "(ns " ns-name ")") :port effective-port}))
+                  ;; Evaluate each form
+                  results (mapv (fn [form-info]
+                                  (let [result (eval-code {:code (:form form-info)
+                                                           :port effective-port})]
+                                    {:lines [(:start-line form-info) (:end-line form-info)]
+                                     :form (:form form-info)
+                                     :success (:success result)
+                                     :value (:value result)
+                                     :error (:error result)}))
+                                forms)]
+              {:success true
+               :file file
+               :block-lines [(:start-line target-block) (:end-line target-block)]
+               :namespace ns-name
+               :repl-type (name detected-type)
+               :port effective-port
+               :forms-evaluated (count results)
+               :results results})
+            {:success false
+             :error (str "No " (name detected-type) " REPL running. Start one with /clj-repl or in a terminal: "
+                         (case detected-type
+                           :clojure "clj -M:dev"
+                           :clojurescript "npx shadow-cljs watch app"
+                           :babashka "bb nrepl-server 1667"
+                           "bb nrepl-server 1667"))})
           {:success false
-           :error (str "No " (name detected-type) " REPL running. Start one with /clj-repl or in a terminal: "
-                       (case detected-type
-                         :clojure "clj -M:dev"
-                         :clojurescript "npx shadow-cljs watch app"
-                         :babashka "bb nrepl-server 1667"
-                         "bb nrepl-server 1667"))})
+           :error (str "No comment block found at or near line " line)}))
+      (catch Exception e
         {:success false
-         :error (str "No comment block found at or near line " line)}))
-    (catch Exception e
-      {:success false
-       :error (str "Failed to eval comment block: " (.getMessage e))})))
+         :error (str "Failed to eval comment block: " (.getMessage e))}))))
 
 (defn- get-changed-clojure-files
   "Get list of changed Clojure files from git."
