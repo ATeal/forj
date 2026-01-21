@@ -2005,54 +2005,69 @@
       {:success false
        :error (str "Failed to get loop status: " (.getMessage e))})))
 
+;; =============================================================================
+;; Tool Dispatch
+;; =============================================================================
+
+(defn- scaffold-project-handler
+  "Handler for scaffold_project tool with auto-validation."
+  [arguments]
+  (let [output-path (or (:output_path arguments) ".")
+        project-name (:project_name arguments)
+        project-path (str output-path "/" project-name)
+        scaffold-result (scaffold/scaffold-project
+                          {:project-name project-name
+                           :modules (:modules arguments)
+                           :output-path output-path})]
+    ;; Auto-run validation if scaffolding succeeded
+    (if (:success scaffold-result)
+      (let [validation-result (validate-project {:path project-path :fix true})]
+        (assoc scaffold-result
+               :validation validation-result
+               :auto_validated true))
+      scaffold-result)))
+
+(def tool-handlers
+  "Map of tool names to handler functions.
+   Each handler takes an arguments map and returns the tool result.
+   Handlers that take no arguments should ignore the arguments parameter."
+  {"repl_eval"              eval-code
+   "discover_repls"         (fn [_] (discover-repls))
+   "analyze_project"        analyze-project
+   "reload_namespace"       reload-namespace
+   "doc_symbol"             doc-symbol
+   "eval_at"                eval-at
+   "run_tests"              run-tests
+   "eval_comment_block"     eval-comment-block
+   "validate_changed_files" validate-changed-files
+   "start_loop"             start-loop
+   "cancel_loop"            cancel-loop
+   "loop_status"            loop-status
+   "validate_project"       validate-project
+   "view_repl_logs"         view-repl-logs
+   "scaffold_project"       scaffold-project-handler
+   "track_process"          track-process
+   "stop_project"           stop-project
+   "list_tracked_processes" list-tracked-processes
+   ;; Lisa Loop v2 tools
+   "lisa_create_plan"           lisa-create-plan
+   "lisa_get_plan"              lisa-get-plan
+   "lisa_mark_checkpoint_done"  lisa-mark-checkpoint-done
+   "lisa_run_orchestrator"      lisa-run-orchestrator
+   "repl_snapshot"              repl-snapshot
+   ;; Signs (guardrails) tools
+   "lisa_append_sign"   lisa-append-sign
+   "lisa_get_signs"     lisa-get-signs
+   "lisa_clear_signs"   lisa-clear-signs
+   ;; Validation tools
+   "lisa_run_validation" lisa-run-validation
+   "lisa_check_gates"    lisa-check-gates
+   ;; Monitoring
+   "lisa_watch" lisa-watch})
+
 (defn call-tool
   "Dispatch tool call to appropriate handler."
   [{:keys [name arguments]}]
-  (case name
-    "repl_eval" (eval-code arguments)
-    "discover_repls" (discover-repls)
-    "analyze_project" (analyze-project arguments)
-    "reload_namespace" (reload-namespace arguments)
-    "doc_symbol" (doc-symbol arguments)
-    "eval_at" (eval-at arguments)
-    "run_tests" (run-tests arguments)
-    "eval_comment_block" (eval-comment-block arguments)
-    "validate_changed_files" (validate-changed-files arguments)
-    "start_loop" (start-loop arguments)
-    "cancel_loop" (cancel-loop arguments)
-    "loop_status" (loop-status arguments)
-    "validate_project" (validate-project arguments)
-    "view_repl_logs" (view-repl-logs arguments)
-    "scaffold_project" (let [output-path (or (:output_path arguments) ".")
-                             project-name (:project_name arguments)
-                             project-path (str output-path "/" project-name)
-                             scaffold-result (scaffold/scaffold-project
-                                               {:project-name project-name
-                                                :modules (:modules arguments)
-                                                :output-path output-path})]
-                         ;; Auto-run validation if scaffolding succeeded
-                         (if (:success scaffold-result)
-                           (let [validation-result (validate-project {:path project-path :fix true})]
-                             (assoc scaffold-result
-                                    :validation validation-result
-                                    :auto_validated true))
-                           scaffold-result))
-    "track_process" (track-process arguments)
-    "stop_project" (stop-project arguments)
-    "list_tracked_processes" (list-tracked-processes arguments)
-    ;; Lisa Loop v2 tools
-    "lisa_create_plan" (lisa-create-plan arguments)
-    "lisa_get_plan" (lisa-get-plan arguments)
-    "lisa_mark_checkpoint_done" (lisa-mark-checkpoint-done arguments)
-    "lisa_run_orchestrator" (lisa-run-orchestrator arguments)
-    "repl_snapshot" (repl-snapshot arguments)
-    ;; Signs (guardrails) tools
-    "lisa_append_sign" (lisa-append-sign arguments)
-    "lisa_get_signs" (lisa-get-signs arguments)
-    "lisa_clear_signs" (lisa-clear-signs arguments)
-    ;; Validation tools
-    "lisa_run_validation" (lisa-run-validation arguments)
-    "lisa_check_gates" (lisa-check-gates arguments)
-    ;; Monitoring
-    "lisa_watch" (lisa-watch arguments)
+  (if-let [handler (get tool-handlers name)]
+    (handler arguments)
     {:success false :error (str "Unknown tool: " name)}))

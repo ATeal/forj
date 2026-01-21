@@ -1,5 +1,5 @@
 {:title "Forj Code Quality: DRY Refactoring and Test Coverage",
- :status :in-progress,
+ :status :complete,
  :checkpoints
  [{:description
    "Extract shared shell-execute helper for p/shell pattern",
@@ -26,15 +26,16 @@
    :id :error-wrapper,
    :depends-on [:shell-helper]}
   {:description "Convert call-tool giant cond to dispatch map",
-   :id :tool-dispatch,
+   :started "2026-01-21T20:49:53.588006923Z",
+   :completed "2026-01-21T20:51:17.805775415Z",
+   :gates
+   ["repl:(map? (resolve 'forj.mcp.tools/tool-handlers)) => true"],
    :file "packages/forj-mcp/src/forj/mcp/tools.clj",
    :acceptance
    "tool-handlers map dispatches by tool name instead of 50+ cond branches",
-   :gates
-   ["repl:(map? (resolve 'forj.mcp.tools/tool-handlers)) => true"],
-   :depends-on [:error-wrapper],
-   :status :in-progress,
-   :started "2026-01-21T20:48:34.866015623Z"}
+   :status :done,
+   :id :tool-dispatch,
+   :depends-on [:error-wrapper]}
   {:description "Add test coverage for forj.lisa.validation namespace",
    :started "2026-01-21T20:44:03.413560450Z",
    :completed "2026-01-21T20:45:58.439961342Z",
