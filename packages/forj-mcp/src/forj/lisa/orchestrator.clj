@@ -386,12 +386,25 @@
 ;;; Parallel Execution (EDN format only)
 ;;; =============================================================================
 
+(defn- mark-checkpoint-in-progress!
+  "Mark a checkpoint as in-progress in the plan file."
+  [project-path checkpoint-id]
+  (when-let [plan (plan-edn/read-plan project-path)]
+    (-> plan
+        (plan-edn/update-checkpoint checkpoint-id
+                                    {:status :in-progress
+                                     :started (str (java.time.Instant/now))})
+        (->> (plan-edn/write-plan! project-path)))))
+
 (defn- spawn-checkpoint-process!
-  "Spawn a Claude process for a specific checkpoint. Returns process info map."
+  "Spawn a Claude process for a specific checkpoint. Returns process info map.
+   Also marks the checkpoint as in-progress in the plan file."
   [project-path checkpoint config log-dir iteration-base]
   (let [cp-id (or (:id checkpoint) (:number checkpoint))
         cp-name (name cp-id)
         log-file (str (fs/path log-dir (str "parallel-" cp-name "-" iteration-base ".json")))
+        ;; Mark as in-progress BEFORE spawning
+        _ (mark-checkpoint-in-progress! project-path cp-id)
         plan (plan-edn/read-plan project-path)
         signs (read-signs project-path)
         prompt (build-iteration-prompt plan checkpoint signs)
@@ -502,6 +515,21 @@
           {:cost 0.0 :input 0 :output 0}
           completed-procs))
 
+(defn- reset-orphaned-checkpoints!
+  "Reset any in-progress checkpoints that have no active process.
+   This handles cases where a previous run crashed or was killed."
+  [project-path active-proc-ids]
+  (when-let [plan (plan-edn/read-plan project-path)]
+    (let [in-progress (filter #(= :in-progress (:status %)) (:checkpoints plan))
+          orphaned (remove #(contains? active-proc-ids (:id %)) in-progress)]
+      (when (seq orphaned)
+        (println (str "[Lisa] Resetting " (count orphaned) " orphaned checkpoint(s): "
+                      (str/join ", " (map #(name (:id %)) orphaned))))
+        (doseq [cp orphaned]
+          (-> (plan-edn/read-plan project-path)
+              (plan-edn/update-checkpoint (:id cp) {:status :pending})
+              (->> (plan-edn/write-plan! project-path))))))))
+
 (defn run-loop-parallel!
   "Run Lisa Loop with parallel checkpoint execution (EDN format only).
 
@@ -518,6 +546,8 @@
   (let [config (merge default-config opts)
         log-dir (ensure-log-dir! project-path config)
         _ (cleanup-previous-run! project-path config)
+        ;; Reset any orphaned in-progress checkpoints from previous crashed runs
+        _ (reset-orphaned-checkpoints! project-path #{})
         max-parallel (:max-parallel config)]
 
     (println (str "[Lisa] Starting parallel execution (max " max-parallel " concurrent)"))
@@ -590,15 +620,29 @@
                 ;; Combine active processes
                 all-active (into (vec still-active) new-procs)]
 
-            ;; If nothing active and nothing to spawn, we might be stuck
+            ;; If nothing active and nothing to spawn, check for orphaned in-progress
             (if (and (empty? all-active) (empty? to-spawn))
-              (do
-                (println "[Lisa] No active processes and no ready checkpoints - may be stuck")
-                {:status :stuck
-                 :iterations iteration
-                 :total-cost (+ total-cost (:cost costs))
-                 :total-input-tokens (+ total-input (:input costs))
-                 :total-output-tokens (+ total-output (:output costs))})
+              (let [;; Check if there are orphaned in-progress checkpoints
+                    fresh-plan (plan-edn/read-plan project-path)
+                    in-progress (filter #(= :in-progress (:status %)) (:checkpoints fresh-plan))]
+                (if (seq in-progress)
+                  ;; Reset orphaned checkpoints and continue
+                  (do
+                    (println "[Lisa] Detected orphaned in-progress checkpoints, resetting...")
+                    (reset-orphaned-checkpoints! project-path #{})
+                    (Thread/sleep (:poll-interval-ms config))
+                    (recur iteration all-active
+                           (+ total-cost (:cost costs))
+                           (+ total-input (:input costs))
+                           (+ total-output (:output costs))))
+                  ;; Truly stuck - no pending or in-progress checkpoints
+                  (do
+                    (println "[Lisa] No active processes and no ready checkpoints - stuck")
+                    {:status :stuck
+                     :iterations iteration
+                     :total-cost (+ total-cost (:cost costs))
+                     :total-input-tokens (+ total-input (:input costs))
+                     :total-output-tokens (+ total-output (:output costs))})))
 
               ;; Continue loop - poll interval
               (do
