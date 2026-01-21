@@ -34,6 +34,7 @@ Skip questions with flags:
 /clj-init my-app --mobile
 /clj-init my-app --api --mobile
 /clj-init my-app --script
+/clj-init my-app --flutter
 ```
 
 **Flags:**
@@ -45,11 +46,13 @@ Skip questions with flags:
 | `--web` | web | ClojureScript web (Reagent/Re-frame) |
 | `--mobile` | mobile | Expo + ClojureScript |
 | `--script` | script | Babashka script only |
+| `--flutter` | flutter | ClojureDart Flutter (mobile/desktop/web) |
 
 **Examples:**
 - `/clj-init api-server --api --db postgres` → Backend + PostgreSQL
 - `/clj-init my-site --web` → Web frontend only
 - `/clj-init my-tool --script` → Babashka script
+- `/clj-init my-app --flutter` → ClojureDart Flutter app
 
 ### Guided Mode (Interactive)
 
@@ -72,7 +75,7 @@ If not provided, ask in plain text:
 
 ### Step 2: Backend
 
-**Question:** "Do you need a api?"
+**Question:** "Do you need an API?"
 **Options:**
 1. **Yes** - Clojure server with Ring/Reitit
 2. **No** - Frontend only or script
@@ -90,13 +93,22 @@ If not provided, ask in plain text:
 **Question:** "Do you need a frontend?"
 **Options:**
 1. **None** - Backend/script only
-2. **Web** - ClojureScript with Reagent/Re-frame
-3. **Mobile** - Expo + ClojureScript (React Native)
-4. **Both** - Web and Mobile
+2. **ClojureScript** - Web and/or mobile with Expo
+3. **Flutter** - ClojureDart (mobile/desktop/web)
+
+**If ClojureScript selected, ask:**
+
+**Question:** "Which platforms?"
+**Options:**
+1. **Web only** - Browser app with Reagent/Re-frame
+2. **Mobile only** - Expo/React Native
+3. **Both** - Web and mobile
+
+**Note:** Flutter uses ClojureDart (a different Clojure dialect). It cannot be combined with ClojureScript frontends, but works fine with a Clojure backend.
 
 ### Step 4: Script-Only
 
-If user selected No api AND No frontend → Script project (Babashka only)
+If user selected No API AND No frontend → Script project (Babashka only)
 
 ## Module Selection
 
@@ -109,11 +121,15 @@ Based on answers, determine modules for `scaffold_project`:
 | Backend + PostgreSQL | `["api", "db-postgres"]` |
 | Backend + SQLite | `["api", "db-sqlite"]` |
 | Web only | `["web"]` |
-| Mobile only | `["mobile"]` |
+| Mobile (Expo) only | `["mobile"]` |
+| Web + Mobile (Expo) | `["web", "mobile"]` |
+| Flutter only | `["flutter"]` |
 | Backend + Web | `["api", "web"]` |
-| Backend + Mobile | `["api", "mobile"]` |
-| Backend + Web + Mobile | `["api", "web", "mobile"]` |
+| Backend + Mobile (Expo) | `["api", "mobile"]` |
+| Backend + Web + Mobile (Expo) | `["api", "web", "mobile"]` |
+| Backend + Flutter | `["api", "flutter"]` |
 | Backend + PostgreSQL + Web | `["api", "db-postgres", "web"]` |
+| Backend + PostgreSQL + Flutter | `["api", "db-postgres", "flutter"]` |
 
 ## Creating the Project
 
@@ -200,10 +216,26 @@ Tell the user:
 1. Project created at `./my-app`
 2. Dependencies verified ✓
 3. Permissions configured (if they chose yes)
-4. **Next step: Start a new Claude Code session with REPL:**
-   ```
-   cd my-app && claude /clj-repl
-   ```
+4. **Next step:**
+
+**For Clojure/ClojureScript projects:**
+```
+cd my-app && claude /clj-repl
+```
+
+**For Flutter projects:**
+```
+cd my-app
+bb flutter   # Run app with hot reload + REPL
+```
+ClojureDart is initialized automatically during scaffolding. REPL starts automatically - watch for `🤫 ClojureDart REPL listening on port XXXXX` in output, then connect with `nc localhost XXXXX`.
+
+**If project has BOTH backend AND Flutter:**
+```
+cd my-app && claude /clj-repl   # For the Clojure backend
+# In another terminal:
+bb flutter                       # For Flutter frontend
+```
 
 **IMPORTANT:** Do NOT offer to start the REPL from the current session. The user should exit and restart Claude Code in the new project directory so that:
 - Hooks detect the correct project type
@@ -223,8 +255,11 @@ Tell the user:
 | db-sqlite | SQLite support | next.jdbc, honeysql, sqlite driver |
 | web | ClojureScript web | shadow-cljs.edn, package.json, reagent, re-frame |
 | mobile | Expo mobile | shadow-cljs.edn, package.json, app.json, expo config |
+| flutter | ClojureDart Flutter | deps.edn (git dep), bb.edn, main.cljd |
 
 Modules automatically include their dependencies (e.g., `api` includes `base`).
+
+**Note:** The `flutter` module uses ClojureDart (a different Clojure dialect). It can be combined with backend modules (`api`, `db-*`) but NOT with ClojureScript frontend modules (`web`, `mobile`).
 
 ## DevOps (Optional)
 
@@ -238,7 +273,6 @@ Do NOT add complex infrastructure. Keep it simple.
 
 ## Future Enhancements
 
-- **ClojureDart** - Flutter target for cross-platform mobile
 - **HTMX** - Server-side rendering option
 - **Electric** - Full-stack reactive apps
 - **GraphQL** - Lacinia integration module
