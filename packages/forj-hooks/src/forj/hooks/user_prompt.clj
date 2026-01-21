@@ -1,17 +1,9 @@
 (ns forj.hooks.user-prompt
   "UserPromptSubmit hook to ensure REPL-first workflow is followed."
-  (:require [babashka.fs :as fs]
-            [cheshire.core :as json]
+  (:require [cheshire.core :as json]
             [clojure.string :as str]
+            [forj.hooks.util :as util]
             [forj.logging :as log]))
-
-(defn is-clojure-project?
-  "Check if the current directory is a Clojure project."
-  [dir]
-  (or (fs/exists? (fs/path dir "deps.edn"))
-      (fs/exists? (fs/path dir "bb.edn"))
-      (fs/exists? (fs/path dir "shadow-cljs.edn"))
-      (fs/exists? (fs/path dir "project.clj"))))
 
 (defn- detect-iterative-context
   "Detect if the prompt suggests an iterative/Ralph loop context.
@@ -83,7 +75,7 @@
                  (catch Exception _ ""))
         prompt-lower (str/lower-case prompt)]
     (log/info "user-prompt" "Hook invoked" {:project-dir project-dir :cwd cwd})
-    (when (is-clojure-project? project-dir)
+    (when (util/is-clojure-project? project-dir)
       (let [context-type (detect-iterative-context prompt-lower)
             guidance (case context-type
                        :lisa-loop lisa-loop-guidance

@@ -5,6 +5,7 @@
             [clojure.edn :as edn]
             [cheshire.core :as json]
             [clojure.string :as str]
+            [forj.hooks.util :as util]
             [forj.logging :as log]))
 
 (defn safe-parse-edn
@@ -15,15 +16,6 @@
       (edn/read-string (slurp (str path)))
       (catch Exception _ nil))))
 
-(defn discover-repls
-  "Find running nREPL servers."
-  []
-  (try
-    (let [result (p/shell {:out :string :err :string :continue true}
-                          "clj-nrepl-eval" "--discover-ports")]
-      (when (zero? (:exit result))
-        (str/trim (:out result))))
-    (catch Exception _ nil)))
 
 (defn clojure-lsp-installed?
   "Check if clojure-lsp is available on PATH."
@@ -85,23 +77,16 @@
               "- Install it for go-to-definition, find-references, and more\n"
               "- See: https://clojure-lsp.io/installation/"))))
 
-(defn is-clojure-project?
-  "Check if the current directory is a Clojure project."
-  [dir]
-  (or (fs/exists? (fs/path dir "deps.edn"))
-      (fs/exists? (fs/path dir "bb.edn"))
-      (fs/exists? (fs/path dir "shadow-cljs.edn"))
-      (fs/exists? (fs/path dir "project.clj"))))
 
 (defn -main
   "Entry point for SessionStart hook."
   [& _args]
   (log/debug "session-start" "Hook triggered")
   (let [project-dir (or (System/getenv "CLAUDE_PROJECT_DIR") ".")]
-    (if (is-clojure-project? project-dir)
+    (if (util/is-clojure-project? project-dir)
       (try
         (let [analysis (analyze-project project-dir)
-              repls (discover-repls)
+              repls (util/discover-repls)
               has-lsp? (clojure-lsp-installed?)
               context (format-context analysis repls has-lsp?)]
           (log/info "session-start" "Clojure project detected"
