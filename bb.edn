@@ -93,6 +93,25 @@
                (fs/delete f))
              (println "Logs cleared.")))}
 
+  cleanup:sessions
+  {:doc "Remove session files older than 7 days from ~/.forj/sessions/"
+   :task (let [sessions-dir (fs/path (System/getProperty "user.home") ".forj" "sessions")
+               cutoff-ms (* 7 24 60 60 1000)
+               now (System/currentTimeMillis)]
+           (if (fs/exists? sessions-dir)
+             (let [old-files (->> (fs/list-dir sessions-dir)
+                                  (filter (fn [f]
+                                            (let [modified (-> f fs/last-modified-time .toMillis)]
+                                              (> (- now modified) cutoff-ms)))))]
+               (if (seq old-files)
+                 (do
+                   (doseq [f old-files]
+                     (fs/delete f)
+                     (println "Deleted:" (fs/file-name f)))
+                   (println (str "\n✓ Removed " (count old-files) " session file(s) older than 7 days.")))
+                 (println "No session files older than 7 days found.")))
+             (println "No sessions directory found at" (str sessions-dir))))}
+
   ;; Installation tasks
   install
   {:doc "Install forj (MCP server, hooks, and skill)"

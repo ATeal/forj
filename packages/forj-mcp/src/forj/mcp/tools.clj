@@ -315,6 +315,43 @@
                                       :description "Project path (defaults to current directory)"}}}}])
 
 ;; =============================================================================
+;; Input Validation
+;; =============================================================================
+
+(def ^:private valid-runners
+  "Valid runner values for run-tests."
+  #{"bb" "clj" "shadow" "lein" "auto"})
+
+(defn- validate-file-exists
+  "Validate that a file exists. Returns nil if valid, or an error map if not."
+  [file-path param-name]
+  (cond
+    (nil? file-path)
+    {:success false
+     :error (str "Missing required parameter: " param-name)}
+
+    (str/blank? file-path)
+    {:success false
+     :error (str "Parameter '" param-name "' cannot be empty")}
+
+    (not (fs/exists? file-path))
+    {:success false
+     :error (str "File not found: " file-path)}
+
+    (fs/directory? file-path)
+    {:success false
+     :error (str "Expected a file but got a directory: " file-path)}
+
+    :else nil))
+
+(defn- validate-runner
+  "Validate that runner is a valid enum value. Returns nil if valid, or an error map if not."
+  [runner]
+  (when (and runner (not (contains? valid-runners runner)))
+    {:success false
+     :error (str "Invalid runner: '" runner "'. Must be one of: " (str/join ", " (sort valid-runners)))}))
+
+;; =============================================================================
 ;; REPL Type Detection (Path-based routing)
 ;; =============================================================================
 
