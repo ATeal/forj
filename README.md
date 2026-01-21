@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="forj-logo.png" alt="forj logo" width="200">
+  <img src="forj-logo.png" alt="forj logo" width="400">
 </p>
 
 <h1 align="center">forj</h1>
