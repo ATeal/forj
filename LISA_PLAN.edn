@@ -46,13 +46,14 @@
    :id :validation-tests,
    :depends-on []}
   {:description "Add test coverage for forj.scaffold namespace",
-   :id :scaffold-tests,
+   :started "2026-01-21T20:47:28.513230152Z",
+   :completed "2026-01-21T20:49:48.557409727Z",
+   :gates ["repl:(require '[forj.scaffold-test]) => nil"],
    :file "packages/forj-mcp/test/forj/scaffold_test.clj",
    :acceptance
    "Tests cover substitute-placeholders, merge-configs, scaffold-project with mock modules",
-   :gates ["repl:(require '[forj.scaffold-test]) => nil"],
-   :depends-on [],
-   :status :in-progress,
-   :started "2026-01-21T20:47:28.513230152Z"}],
+   :status :done,
+   :id :scaffold-tests,
+   :depends-on []}],
  :signs [],
  :created "2026-01-21T20:40:02.081955227Z"}
