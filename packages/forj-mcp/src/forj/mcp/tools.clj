@@ -352,6 +352,34 @@
      :error (str "Invalid runner: '" runner "'. Must be one of: " (str/join ", " (sort valid-runners)))}))
 
 ;; =============================================================================
+;; Shell Execution Helper
+;; =============================================================================
+
+(defn shell-execute
+  "Execute a shell command with standard options for capturing output.
+   Returns {:exit <code> :out <string> :err <string>}.
+
+   Options:
+     :dir - Working directory for the command
+
+   Examples:
+     (shell-execute \"git\" \"status\")
+     (shell-execute {:dir \"/some/path\"} \"npm\" \"install\")
+     (shell-execute [\"clj\" \"-M:test\"])
+     (shell-execute {:dir path} cmd-vec)"
+  [& args]
+  (let [[opts cmd-args] (if (map? (first args))
+                          [(first args) (rest args)]
+                          [{} args])
+        cmd-seq (if (and (= 1 (count cmd-args))
+                         (sequential? (first cmd-args)))
+                  (first cmd-args)
+                  cmd-args)
+        shell-opts (merge {:out :string :err :string :continue true}
+                          (select-keys opts [:dir]))]
+    (apply p/shell shell-opts cmd-seq)))
+
+;; =============================================================================
 ;; REPL Type Detection (Path-based routing)
 ;; =============================================================================
 
@@ -443,8 +471,7 @@
   "Find running nREPL servers using clj-nrepl-eval --discover-ports."
   []
   (try
-    (let [result (p/shell {:out :string :err :string :continue true}
-                          "clj-nrepl-eval" "--discover-ports")]
+    (let [result (shell-execute "clj-nrepl-eval" "--discover-ports")]
       (if (zero? (:exit result))
         {:success true
          :ports (str/trim (:out result))}
@@ -503,7 +530,7 @@
       (let [args (cond-> ["clj-nrepl-eval" "-p" (str port)]
                    timeout (conj "-t" (str timeout))
                    true (conj code))
-            result (apply p/shell {:out :string :err :string :continue true} args)]
+            result (shell-execute args)]
         (if (zero? (:exit result))
           {:success true
            :value (str/trim (:out result))}
@@ -787,7 +814,7 @@
                                (keyword runner))
             cmd (build-test-command effective-runner namespace)]
         (if cmd
-          (let [result (apply p/shell {:out :string :err :string :continue true :dir path} cmd)
+          (let [result (shell-execute {:dir path} cmd)
                 output (str (:out result) (:err result))]
             (if (zero? (:exit result))
               {:success true
@@ -1118,8 +1145,7 @@
     (when (.exists deps-file)
       (try
         ;; Use 'clojure' not 'clj' since clj requires rlwrap
-        (let [result (p/shell {:out :string :err :string :continue true :dir path}
-                              "clojure" "-Spath")]
+        (let [result (shell-execute {:dir path} "clojure" "-Spath")]
           (when-not (zero? (:exit result))
             {:issue :deps-resolve-failed
              :message (str "deps.edn failed to resolve: " (str/trim (:err result)))

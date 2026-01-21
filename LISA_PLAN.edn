@@ -1,0 +1,54 @@
+{:title "Forj Code Quality: DRY Refactoring and Test Coverage",
+ :status :in-progress,
+ :checkpoints
+ [{:description
+   "Extract shared shell-execute helper for p/shell pattern",
+   :id :shell-helper,
+   :file "packages/forj-mcp/src/forj/mcp/tools.clj",
+   :acceptance
+   "New shell-execute function replaces repeated p/shell {:out :string :err :string :continue true} patterns",
+   :gates
+   ["repl:(require '[forj.mcp.tools :as tools] :reload) => nil"
+    "repl:(fn? (resolve 'forj.mcp.tools/shell-execute)) => true"],
+   :status :in-progress,
+   :started "2026-01-21T20:44:03.399015661Z"}
+  {:description
+   "Create safe-execute helper for try-catch error handling pattern",
+   :id :error-wrapper,
+   :file "packages/forj-mcp/src/forj/mcp/tools.clj",
+   :acceptance
+   "New safe-execute function wraps operations and returns {:success false :error msg} on exception",
+   :gates
+   ["repl:(fn? (resolve 'forj.mcp.tools/safe-execute)) => true"],
+   :depends-on [:shell-helper],
+   :status :pending}
+  {:description "Convert call-tool giant cond to dispatch map",
+   :id :tool-dispatch,
+   :file "packages/forj-mcp/src/forj/mcp/tools.clj",
+   :acceptance
+   "tool-handlers map dispatches by tool name instead of 50+ cond branches",
+   :gates
+   ["repl:(map? (resolve 'forj.mcp.tools/tool-handlers)) => true"],
+   :depends-on [:error-wrapper],
+   :status :pending}
+  {:description "Add test coverage for forj.lisa.validation namespace",
+   :started "2026-01-21T20:44:03.413560450Z",
+   :completed "2026-01-21T20:45:58.439961342Z",
+   :gates ["repl:(require '[forj.lisa.validation-test]) => nil"],
+   :file "packages/forj-mcp/test/forj/lisa/validation_test.clj",
+   :acceptance
+   "Tests cover parse-validation-string, run-validation for repl type, run-validations with mixed results",
+   :status :done,
+   :id :validation-tests,
+   :depends-on []}
+  {:description "Add test coverage for forj.scaffold namespace",
+   :id :scaffold-tests,
+   :file "packages/forj-mcp/test/forj/scaffold_test.clj",
+   :acceptance
+   "Tests cover substitute-placeholders, merge-configs, scaffold-project with mock modules",
+   :gates ["repl:(require '[forj.scaffold-test]) => nil"],
+   :depends-on [],
+   :status :in-progress,
+   :started "2026-01-21T20:45:51.346543088Z"}],
+ :signs [],
+ :created "2026-01-21T20:40:02.081955227Z"}

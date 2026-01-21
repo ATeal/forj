@@ -1,10 +1,11 @@
 (ns forj.mcp.test-runner
   "Test runner for forj-mcp tests."
   (:require [clojure.test :as t]
-            [forj.mcp.tools-test]))
+            [forj.mcp.tools-test]
+            [forj.lisa.validation-test]))
 
 (defn run-tests []
-  (let [result (t/run-tests 'forj.mcp.tools-test)]
+  (let [result (t/run-tests 'forj.mcp.tools-test 'forj.lisa.validation-test)]
     (if (and (zero? (:fail result))
              (zero? (:error result)))
       (do
