@@ -1,86 +1,52 @@
-{:title "LISA Loop Tool Usage Analytics & REPL Compliance",
+{:title "Process Lifecycle Management Improvements",
  :status :in-progress,
  :checkpoints
- [{:description
-   "Create function to extract tool calls from stream-json log files",
-   :id :extract-tool-calls,
-   :file "packages/forj-mcp/src/forj/lisa/analytics.clj",
+ [{:description "Track PGID alongside PID in process entries",
+   :id :pgid-tracking,
+   :file "packages/forj-mcp/src/forj/mcp/tools.clj",
    :acceptance
-   "extract-tool-calls parses JSONL and returns seq of {:name :input} maps",
-   :gates
-   ["repl:(require '[forj.lisa.analytics :as analytics] :reload)"
-    "repl:(seq (analytics/extract-tool-calls \".forj/logs/lisa/parallel-error-wrapper-2.json\"))"],
-   :status :done,
-   :started "2026-01-22T14:57:12.074190522Z",
-   :completed "2026-01-22T14:58:42.119939551Z"}
-  {:description
-   "Create REPL-driven compliance scoring function that rates iterations",
-   :started "2026-01-22T14:58:47.175880490Z",
-   :completed "2026-01-22T14:59:47.216992007Z",
-   :gates
-   ["repl:(analytics/score-repl-compliance [{:name \"mcp__forj__reload_namespace\"} {:name \"mcp__forj__eval_comment_block\"}])"],
-   :file "packages/forj-mcp/src/forj/lisa/analytics.clj",
-   :acceptance
-   "score-repl-compliance returns {:score :excellent|:good|:fair|:poor :used-repl-tools [...] :anti-patterns [...]}",
-   :status :done,
-   :id :compliance-scoring,
-   :depends-on [:extract-tool-calls]}
-  {:description
-   "Integrate analytics into orchestrator - parse tool calls after each iteration in verbose mode",
-   :id :integrate-analytics,
-   :file "packages/forj-mcp/src/forj/lisa/orchestrator.clj",
-   :acceptance
-   "When verbose=true, orchestrator parses tool calls and logs compliance score after each iteration",
-   :depends-on [:compliance-scoring],
-   :status :done,
-   :started "2026-01-22T15:02:12.295359726Z",
-   :completed "2026-01-22T15:04:42.356995972Z"}
-  {:description
-   "Auto-append sign when iteration has poor REPL compliance",
-   :id :compliance-signs,
-   :file "packages/forj-mcp/src/forj/lisa/orchestrator.clj",
-   :acceptance
-   "Poor compliance iterations automatically append sign with fix guidance",
-   :depends-on [:integrate-analytics],
+   "track-process captures and stores :pgid via ps command, list-tracked-processes shows pgid",
+   :gates ["repl:(require '[forj.mcp.tools :as t] :reload) => ok"],
    :status :in-progress,
-   :started "2026-01-22T15:08:47.492536613Z"}
+   :started "2026-01-22T15:56:44.376389995Z"}
   {:description
-   "Update build-iteration-prompt with prescriptive REPL workflow requirements",
-   :id :strengthen-prompt,
-   :file "packages/forj-mcp/src/forj/lisa/orchestrator.clj",
+   "Update stop-project to kill by process group (PGID) instead of individual PID",
+   :id :group-kill,
+   :file "packages/forj-mcp/src/forj/mcp/tools.clj",
    :acceptance
-   "Iteration prompt includes REQUIRED Workflow section with DO NOT SKIP warnings",
-   :status :done,
-   :started "2026-01-22T14:57:12.085076076Z",
-   :completed "2026-01-22T14:58:42.144543957Z"}
+   "stop-project uses kill -TERM -<pgid> for entries with pgid, falls back to pid for legacy entries",
+   :gates ["repl:(require '[forj.mcp.tools :as t] :reload) => ok"],
+   :depends-on [:pgid-tracking],
+   :status :pending}
   {:description
-   "Add real-time tool call display in verbose mode (tail log file, print tool names as they happen)",
-   :id :verbose-streaming,
-   :file "packages/forj-mcp/src/forj/lisa/orchestrator.clj",
+   "Update /clj-repl skill to use setsid for consistent process daemonization",
+   :id :daemonize-spawns,
+   :file "packages/forj-skill/resources/skills/clj-repl.md",
    :acceptance
-   "With --verbose, tool calls print to console as they execute",
-   :depends-on [:integrate-analytics],
+   "Skill instructions use setsid -f for bb/clj/npx commands, processes survive terminal close",
+   :gates [],
    :status :done,
-   :started "2026-01-22T15:04:37.331476465Z",
-   :completed "2026-01-22T15:08:42.434538421Z"}
+   :started "2026-01-22T15:56:44.388226375Z",
+   :completed "2026-01-22T15:58:09.421071229Z"}
   {:description
-   "Print post-iteration summary showing tools used and compliance score",
-   :id :iteration-summary,
-   :file "packages/forj-mcp/src/forj/lisa/orchestrator.clj",
+   "Add reconcile-session function to prune dead processes and report orphans on startup",
+   :id :session-reconcile,
+   :file "packages/forj-mcp/src/forj/mcp/tools.clj",
    :acceptance
-   "Each iteration ends with summary table of tools used and compliance rating",
-   :depends-on [:verbose-streaming],
-   :status :done,
-   :started "2026-01-22T15:08:47.507860290Z",
-   :completed "2026-01-22T15:11:17.558880570Z"}
-  {:description "Add tests for analytics functions",
-   :id :analytics-tests,
-   :file "packages/forj-mcp/test/forj/lisa/analytics_test.clj",
+   "list-tracked-processes auto-prunes dead entries from session file, returns :pruned-count",
+   :gates ["repl:(require '[forj.mcp.tools :as t] :reload) => ok"],
+   :depends-on [:pgid-tracking],
+   :status :pending}
+  {:description
+   "Add tests for PGID tracking, group kill, and session reconciliation",
+   :id :tests,
+   :file "packages/forj-mcp/test/forj/mcp/tools_test.clj",
    :acceptance
-   "Tests pass for extract-tool-calls and score-repl-compliance",
-   :depends-on [:compliance-scoring],
-   :status :done,
-   :started "2026-01-22T14:59:42.198934711Z",
-   :completed "2026-01-22T15:02:07.263816686Z"}],
+   "Tests cover: pgid capture, group kill logic, dead process pruning",
+   :gates
+   ["repl:(require '[forj.mcp.tools-test] :reload) => ok"
+    "repl:(clojure.test/run-tests 'forj.mcp.tools-test) => passes"],
+   :depends-on [:pgid-tracking :group-kill :session-reconcile],
+   :status :pending}],
  :signs [],
- :created "2026-01-22T14:54:01.404050165Z"}
+ :created "2026-01-22T15:56:39.563335582Z"}
