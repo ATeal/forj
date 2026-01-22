@@ -106,6 +106,103 @@
      :used-repl-tools used-repl-tools
      :anti-patterns bash-anti-patterns}))
 
+(defn- tool-name->display
+  "Convert tool name to shorter display form."
+  [tool-name]
+  (cond
+    (str/starts-with? tool-name "mcp__forj__")
+    (str "forj:" (subs tool-name 11))
+
+    (str/starts-with? tool-name "mcp__")
+    (let [parts (str/split (subs tool-name 5) #"__" 2)]
+      (if (= 2 (count parts))
+        (str (first parts) ":" (second parts))
+        (subs tool-name 5)))
+
+    :else tool-name))
+
+(defn- score->emoji
+  "Convert compliance score to display emoji."
+  [score]
+  (case score
+    :excellent "🟢"
+    :good "🟡"
+    :fair "🟠"
+    :poor "🔴"
+    "⚪"))
+
+(defn- score->description
+  "Human-readable description of the compliance score."
+  [score]
+  (case score
+    :excellent "REPL-driven development followed"
+    :good "Some REPL usage, minor issues"
+    :fair "Limited REPL usage"
+    :poor "Bypassed REPL workflow"
+    "Unknown"))
+
+(defn summarize-tool-usage
+  "Summarize tool usage from tool calls.
+   Returns a map of {:tool-name count} sorted by frequency."
+  [tool-calls]
+  (let [tool-calls (or tool-calls [])]
+    (->> tool-calls
+         (map :name)
+         frequencies
+         (sort-by val >)
+         (into (array-map)))))
+
+(defn format-iteration-summary
+  "Format a summary of an iteration's tool usage and compliance.
+   Returns a vector of strings to be printed line by line.
+
+   Takes tool-calls seq and optional iteration number."
+  [tool-calls & [iteration]]
+  (let [tool-calls (or tool-calls [])
+        tool-summary (summarize-tool-usage tool-calls)
+        compliance (score-repl-compliance tool-calls)
+        {:keys [score used-repl-tools anti-patterns]} compliance
+        emoji (score->emoji score)
+        total-calls (count tool-calls)]
+    (vec
+     (concat
+      ;; Header
+      [(str "┌─────────────────────────────────────────────────────────────")
+       (str "│ " (if iteration (str "Iteration " iteration " Summary") "Iteration Summary"))
+       (str "├─────────────────────────────────────────────────────────────")
+       (str "│ Total tool calls: " total-calls)
+       (str "│ REPL Compliance:  " emoji " " (name score) " - " (score->description score))
+       (str "├─────────────────────────────────────────────────────────────")
+       (str "│ Tools Used:")]
+      ;; Tool breakdown
+      (if (empty? tool-summary)
+        ["│   (none)"]
+        (map (fn [[tool count]]
+               (str "│   " (tool-name->display tool) ": " count))
+             tool-summary))
+      ;; REPL tools section (if any)
+      (when (seq used-repl-tools)
+        [(str "├─────────────────────────────────────────────────────────────")
+         (str "│ ✓ REPL Tools: " (str/join ", " (map #(str/replace % "mcp__forj__" "") used-repl-tools)))])
+      ;; Anti-patterns section (if any)
+      (when (seq anti-patterns)
+        [(str "├─────────────────────────────────────────────────────────────")
+         (str "│ ✗ Anti-patterns detected (" (count anti-patterns) "):")
+         (str "│   " (str/join ", " (take 3 (map #(first (str/split % #"\s+" 2)) anti-patterns)))
+              (when (> (count anti-patterns) 3) "..."))])
+      ;; Footer
+      [(str "└─────────────────────────────────────────────────────────────")]))))
+
+(defn print-iteration-summary
+  "Print a formatted summary of iteration tool usage and compliance.
+   Returns the compliance map for potential further use."
+  [tool-calls & [iteration]]
+  (let [lines (format-iteration-summary tool-calls iteration)
+        compliance (score-repl-compliance tool-calls)]
+    (doseq [line lines]
+      (println line))
+    compliance))
+
 (comment
   ;; Test extract-tool-calls
   (extract-tool-calls ".forj/logs/lisa/parallel-error-wrapper-2.json")
@@ -134,4 +231,42 @@
   ;; Score a real iteration
   (->> (extract-tool-calls ".forj/logs/lisa/parallel-extract-tool-calls-1.json")
        score-repl-compliance)
+
+  ;; Test summarize-tool-usage
+  (summarize-tool-usage [{:name "Read"} {:name "Edit"} {:name "Read"} {:name "Bash"}])
+  ;; => {"Read" 2, "Edit" 1, "Bash" 1}
+
+  ;; Test format-iteration-summary with mock data
+  (format-iteration-summary [{:name "Read"}
+                             {:name "Edit"}
+                             {:name "mcp__forj__reload_namespace"}
+                             {:name "mcp__forj__eval_comment_block"}]
+                            5)
+
+  ;; Test print-iteration-summary with mock data
+  (print-iteration-summary [{:name "Read"}
+                            {:name "Edit"}
+                            {:name "mcp__forj__reload_namespace"}
+                            {:name "mcp__forj__eval_comment_block"}]
+                           5)
+  ;; Prints:
+  ;; ┌─────────────────────────────────────────────────────────────
+  ;; │ Iteration 5 Summary
+  ;; ├─────────────────────────────────────────────────────────────
+  ;; │ Total tool calls: 4
+  ;; │ REPL Compliance:  🟢 excellent - REPL-driven development followed
+  ;; ├─────────────────────────────────────────────────────────────
+  ;; │ Tools Used:
+  ;; │   Read: 1
+  ;; │   Edit: 1
+  ;; │   forj:reload_namespace: 1
+  ;; │   forj:eval_comment_block: 1
+  ;; ├─────────────────────────────────────────────────────────────
+  ;; │ ✓ REPL Tools: reload_namespace, eval_comment_block
+  ;; └─────────────────────────────────────────────────────────────
+
+  ;; Test with real log file
+  (let [log-file ".forj/logs/lisa/parallel-extract-tool-calls-1.json"]
+    (when (babashka.fs/exists? log-file)
+      (print-iteration-summary (extract-tool-calls log-file) 1)))
   )

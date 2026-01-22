@@ -43,7 +43,7 @@
    "Poor compliance iterations automatically append sign with fix guidance",
    :depends-on [:integrate-analytics],
    :status :in-progress,
-   :started "2026-01-22T15:04:32.831978980Z"}
+   :started "2026-01-22T15:08:47.492536613Z"}
   {:description
    "Update build-iteration-prompt with prescriptive REPL workflow requirements",
    :id :strengthen-prompt,
@@ -70,8 +70,9 @@
    :acceptance
    "Each iteration ends with summary table of tools used and compliance rating",
    :depends-on [:verbose-streaming],
-   :status :in-progress,
-   :started "2026-01-22T15:08:37.123881577Z"}
+   :status :done,
+   :started "2026-01-22T15:08:47.507860290Z",
+   :completed "2026-01-22T15:11:17.558880570Z"}
   {:description "Add tests for analytics functions",
    :id :analytics-tests,
    :file "packages/forj-mcp/test/forj/lisa/analytics_test.clj",
