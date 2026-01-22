@@ -32,8 +32,9 @@
    :acceptance
    "When verbose=true, orchestrator parses tool calls and logs compliance score after each iteration",
    :depends-on [:compliance-scoring],
-   :status :in-progress,
-   :started "2026-01-22T14:59:41.445117353Z"}
+   :status :done,
+   :started "2026-01-22T15:02:12.295359726Z",
+   :completed "2026-01-22T15:04:42.356995972Z"}
   {:description
    "Auto-append sign when iteration has poor REPL compliance",
    :id :compliance-signs,
@@ -41,7 +42,8 @@
    :acceptance
    "Poor compliance iterations automatically append sign with fix guidance",
    :depends-on [:integrate-analytics],
-   :status :pending}
+   :status :in-progress,
+   :started "2026-01-22T15:04:32.831978980Z"}
   {:description
    "Update build-iteration-prompt with prescriptive REPL workflow requirements",
    :id :strengthen-prompt,
@@ -58,7 +60,8 @@
    :acceptance
    "With --verbose, tool calls print to console as they execute",
    :depends-on [:integrate-analytics],
-   :status :pending}
+   :status :in-progress,
+   :started "2026-01-22T15:04:37.331476465Z"}
   {:description
    "Print post-iteration summary showing tools used and compliance score",
    :id :iteration-summary,

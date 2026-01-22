@@ -11,6 +11,7 @@
             [babashka.process :as p]
             [cheshire.core :as json]
             [clojure.string :as str]
+            [forj.lisa.analytics :as analytics]
             [forj.lisa.plan :as plan]
             [forj.lisa.plan-edn :as plan-edn]))
 
@@ -338,6 +339,33 @@
     (when-let [[_ reason] (re-find #"CHECKPOINT_BLOCKED:\s*(.*)" text)]
       reason)))
 
+(defn- score->emoji
+  "Convert compliance score to display emoji."
+  [score]
+  (case score
+    :excellent "🟢"
+    :good "🟡"
+    :fair "🟠"
+    :poor "🔴"
+    "⚪"))
+
+(defn- log-iteration-analytics
+  "Parse tool calls from iteration log and display compliance score.
+   Only called when verbose=true (stream-json format)."
+  [log-file iteration]
+  (let [tool-calls (analytics/extract-tool-calls log-file)
+        compliance (analytics/score-repl-compliance tool-calls)
+        {:keys [score used-repl-tools anti-patterns]} compliance
+        emoji (score->emoji score)]
+    (println (str "[Lisa] " emoji " REPL Compliance: " (name score)
+                  " (" (count tool-calls) " tool calls)"))
+    (when (seq used-repl-tools)
+      (println (str "[Lisa]   ✓ REPL tools: " (str/join ", " (map #(str/replace % "mcp__forj__" "") used-repl-tools)))))
+    (when (seq anti-patterns)
+      (println (str "[Lisa]   ✗ Anti-patterns: " (count anti-patterns) " Bash command(s) bypassing REPL")))
+    ;; Return compliance for potential use in sign generation
+    compliance))
+
 (defn- count-checkpoint-failures
   "Count consecutive failures for a checkpoint from signs."
   [project-path checkpoint-id]
@@ -487,9 +515,14 @@
              :last-file-time current-file-time))))
 
 (defn- process-completed-checkpoints!
-  "Handle completed processes - mark checkpoints done, auto-commit, log."
-  [project-path completed-procs]
-  (doseq [{:keys [checkpoint-id checkpoint checkpoint-complete succeeded result idle-killed]} completed-procs]
+  "Handle completed processes - mark checkpoints done, auto-commit, log.
+   When config has :verbose true, also logs analytics for each completed checkpoint."
+  [project-path completed-procs config]
+  (doseq [{:keys [checkpoint-id checkpoint checkpoint-complete succeeded result idle-killed log-file]} completed-procs]
+    ;; Log analytics for verbose mode (completed processes only, not idle-killed)
+    (when (and (:verbose config) (not idle-killed) log-file)
+      (println (str "[Lisa] Analytics for checkpoint " (name checkpoint-id) ":"))
+      (log-iteration-analytics log-file 0))
     (let [cp-display (or (:number checkpoint) checkpoint-id)]
       (cond
         ;; Idle-killed - reset to pending for retry
@@ -626,7 +659,7 @@
 
                 ;; Process completions
                 _ (when (seq completed)
-                    (process-completed-checkpoints! project-path completed)
+                    (process-completed-checkpoints! project-path completed config)
                     ;; Only call callback for checkpoints that actually succeeded
                     (doseq [{:keys [checkpoint succeeded checkpoint-complete]} completed]
                       (when (and on-checkpoint-complete succeeded checkpoint-complete)
@@ -795,7 +828,10 @@
                                       (or (:cache_read_input_tokens usage) 0)
                                       (or (:cache_creation_input_tokens usage) 0))
                         iter-output (or (:output_tokens usage) 0)
-                        _ (println (str "[Lisa] Tokens: " iter-input " in / " iter-output " out, Cost: $" (format "%.2f" iteration-cost)))]
+                        _ (println (str "[Lisa] Tokens: " iter-input " in / " iter-output " out, Cost: $" (format "%.2f" iteration-cost)))
+                        ;; Log analytics when verbose (stream-json provides tool call data)
+                        _ (when (:verbose config)
+                            (log-iteration-analytics log-file iteration))]
 
                     ;; Call iteration callback if provided
                     (when on-iteration
