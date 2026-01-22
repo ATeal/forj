@@ -7,8 +7,9 @@
    :acceptance
    "track-process captures and stores :pgid via ps command, list-tracked-processes shows pgid",
    :gates ["repl:(require '[forj.mcp.tools :as t] :reload) => ok"],
-   :status :in-progress,
-   :started "2026-01-22T15:56:44.376389995Z"}
+   :status :done,
+   :started "2026-01-22T15:56:44.376389995Z",
+   :completed "2026-01-22T15:58:14.454523892Z"}
   {:description
    "Update stop-project to kill by process group (PGID) instead of individual PID",
    :id :group-kill,
@@ -17,7 +18,8 @@
    "stop-project uses kill -TERM -<pgid> for entries with pgid, falls back to pid for legacy entries",
    :gates ["repl:(require '[forj.mcp.tools :as t] :reload) => ok"],
    :depends-on [:pgid-tracking],
-   :status :pending}
+   :status :in-progress,
+   :started "2026-01-22T15:58:10.037951056Z"}
   {:description
    "Update /clj-repl skill to use setsid for consistent process daemonization",
    :id :daemonize-spawns,
@@ -36,7 +38,8 @@
    "list-tracked-processes auto-prunes dead entries from session file, returns :pruned-count",
    :gates ["repl:(require '[forj.mcp.tools :as t] :reload) => ok"],
    :depends-on [:pgid-tracking],
-   :status :pending}
+   :status :in-progress,
+   :started "2026-01-22T15:58:14.454539532Z"}
   {:description
    "Add tests for PGID tracking, group kill, and session reconciliation",
    :id :tests,
