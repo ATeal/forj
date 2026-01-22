@@ -174,11 +174,11 @@ Use `run_in_background: true` for each. **Start them all before moving on.**
 mkdir -p .forj/logs
 ```
 
-**Use `tee` to capture logs while keeping output visible:**
+**Use `setsid -f` with `tee` to daemonize processes (survive terminal close):**
 ```bash
-# Pattern: command 2>&1 | tee .forj/logs/<name>.log &
-bb dev 2>&1 | tee .forj/logs/backend.log &
-bb shadow:web 2>&1 | tee .forj/logs/shadow.log &   # or shadow:mobile for Expo
+# Pattern: setsid -f bash -c 'command 2>&1 | tee .forj/logs/<name>.log' &
+setsid -f bash -c 'bb dev 2>&1 | tee .forj/logs/backend.log' &
+setsid -f bash -c 'bb shadow:web 2>&1 | tee .forj/logs/shadow.log' &   # or shadow:mobile for Expo
 ```
 
 **IMPORTANT: Track each process after starting!**
@@ -200,10 +200,10 @@ This enables `/clj-repl stop` to cleanly shut down all processes later.
 **Full-stack with web + mobile (check shadow-cljs.edn for builds!):**
 ```bash
 mkdir -p .forj/logs
-bb dev 2>&1 | tee .forj/logs/backend.log &
+setsid -f bash -c 'bb dev 2>&1 | tee .forj/logs/backend.log' &
 # Check shadow-cljs.edn for builds - start ALL that exist:
-bb shadow:web 2>&1 | tee .forj/logs/shadow-web.log &     # If :web build exists
-bb shadow:mobile 2>&1 | tee .forj/logs/shadow-mobile.log &  # If :mobile build exists
+setsid -f bash -c 'bb shadow:web 2>&1 | tee .forj/logs/shadow-web.log' &     # If :web build exists
+setsid -f bash -c 'bb shadow:mobile 2>&1 | tee .forj/logs/shadow-mobile.log' &  # If :mobile build exists
 # Then prompt for device (see Step 4a)
 ```
 
@@ -227,12 +227,12 @@ grep -q "react-native-web" package.json && echo "WEB_ENABLED"
 
 **Android:**
 ```bash
-bb expo:android 2>&1 | tee .forj/logs/expo.log &
+setsid -f bash -c 'bb expo:android 2>&1 | tee .forj/logs/expo.log' &
 ```
 
 **iOS:**
 ```bash
-bb expo:ios 2>&1 | tee .forj/logs/expo.log &
+setsid -f bash -c 'bb expo:ios 2>&1 | tee .forj/logs/expo.log' &
 ```
 
 **Physical Device (Manual URL):**
@@ -240,8 +240,8 @@ bb expo:ios 2>&1 | tee .forj/logs/expo.log &
 # Get local IP
 LOCAL_IP=$(ip route get 1 | awk '{print $7; exit}')
 
-# Start Expo in background with logging
-bb expo 2>&1 | tee .forj/logs/expo.log &
+# Start Expo in background with logging (daemonized)
+setsid -f bash -c 'bb expo 2>&1 | tee .forj/logs/expo.log' &
 
 # Wait for startup
 sleep 3
@@ -253,7 +253,7 @@ echo "  exp://${LOCAL_IP}:8081"
 
 **Web Browser (if react-native-web installed):**
 ```bash
-bb expo:web 2>&1 | tee .forj/logs/expo.log &
+setsid -f bash -c 'bb expo:web 2>&1 | tee .forj/logs/expo.log' &
 
 # Wait for startup
 sleep 3
@@ -264,14 +264,14 @@ echo "Open http://localhost:8081 in your browser"
 **Full-stack web:**
 ```bash
 mkdir -p .forj/logs
-bb dev 2>&1 | tee .forj/logs/backend.log &
-bb shadow:web 2>&1 | tee .forj/logs/shadow.log &
+setsid -f bash -c 'bb dev 2>&1 | tee .forj/logs/backend.log' &
+setsid -f bash -c 'bb shadow:web 2>&1 | tee .forj/logs/shadow.log' &
 ```
 
 **Backend only:**
 ```bash
 mkdir -p .forj/logs
-bb dev 2>&1 | tee .forj/logs/backend.log &
+setsid -f bash -c 'bb dev 2>&1 | tee .forj/logs/backend.log' &
 ```
 
 ### Step 5: Start Application Server (REQUIRED - Don't Skip!)

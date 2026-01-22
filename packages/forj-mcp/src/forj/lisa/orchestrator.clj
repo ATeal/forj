@@ -315,23 +315,29 @@
 
 (defn- wait-for-process-with-timeout
   "Wait for process to complete with timeout and idle detection.
-   Returns {:status :completed|:timeout|:idle, :exit-code N, :reason string}"
+   Returns {:status :completed|:timeout|:idle|:spawn-failed, :exit-code N, :reason string}"
   [proc project-path config]
-  (let [start-time (System/currentTimeMillis)
-        iteration-timeout (:iteration-timeout-ms config)
-        idle-timeout (:idle-timeout-ms config)
-        poll-interval (:poll-interval-ms config)
-        initial-file-time (last-src-modification project-path)]
-    (loop [last-activity-time start-time
-           last-file-time initial-file-time]
-      (let [now (System/currentTimeMillis)
-            elapsed (- now start-time)
-            idle-elapsed (- now last-activity-time)
-            current-file-time (last-src-modification project-path)
-            file-changed? (> current-file-time last-file-time)]
-        (cond
-          ;; Process completed normally
-          (not (p/alive? proc))
+  ;; Handle nil proc (spawn failure)
+  (if (nil? proc)
+    {:status :spawn-failed
+     :exit-code -1
+     :elapsed-ms 0
+     :reason "Claude process failed to start"}
+    (let [start-time (System/currentTimeMillis)
+          iteration-timeout (:iteration-timeout-ms config)
+          idle-timeout (:idle-timeout-ms config)
+          poll-interval (:poll-interval-ms config)
+          initial-file-time (last-src-modification project-path)]
+      (loop [last-activity-time start-time
+             last-file-time initial-file-time]
+        (let [now (System/currentTimeMillis)
+              elapsed (- now start-time)
+              idle-elapsed (- now last-activity-time)
+              current-file-time (last-src-modification project-path)
+              file-changed? (> current-file-time last-file-time)]
+          (cond
+            ;; Process completed normally
+            (not (p/alive? proc))
           {:status :completed
            :exit-code (:exit @proc)
            :elapsed-ms elapsed}
@@ -358,12 +364,12 @@
              :elapsed-ms elapsed
              :reason (str "No file activity for " (/ idle-timeout 60000) " minutes")})
 
-          ;; Continue waiting
-          :else
-          (do
-            (Thread/sleep poll-interval)
-            (recur (if file-changed? now last-activity-time)
-                   (if file-changed? current-file-time last-file-time))))))))
+            ;; Continue waiting
+            :else
+            (do
+              (Thread/sleep poll-interval)
+              (recur (if file-changed? now last-activity-time)
+                     (if file-changed? current-file-time last-file-time)))))))))
 
 (defn- wait-for-process
   "Wait for process to complete, polling at intervals. Returns exit code.
@@ -562,23 +568,34 @@
 
 (defn- spawn-checkpoint-process!
   "Spawn a Claude process for a specific checkpoint. Returns process info map.
-   Also marks the checkpoint as in-progress in the plan file."
+   Also marks the checkpoint as in-progress in the plan file.
+   Returns map with :process nil if spawn fails."
   [project-path checkpoint config log-dir iteration-base]
   (let [cp-id (or (:id checkpoint) (:number checkpoint))
         cp-name (name cp-id)
-        log-file (str (fs/path log-dir (str "parallel-" cp-name "-" iteration-base ".json")))
-        ;; Mark as in-progress BEFORE spawning
-        _ (mark-checkpoint-in-progress! project-path cp-id)
-        plan (plan-edn/read-plan project-path)
-        signs (read-signs project-path)
-        prompt (build-iteration-prompt plan checkpoint signs)
-        {:keys [process stream]} (spawn-claude-iteration! project-path prompt config log-file)]
-    {:checkpoint-id cp-id
-     :checkpoint checkpoint
-     :process process
-     :stream stream
-     :log-file log-file
-     :started-at (System/currentTimeMillis)}))
+        log-file (str (fs/path log-dir (str "parallel-" cp-name "-" iteration-base ".json")))]
+    (try
+      ;; Mark as in-progress BEFORE spawning
+      (mark-checkpoint-in-progress! project-path cp-id)
+      (let [plan (plan-edn/read-plan project-path)
+            signs (read-signs project-path)
+            prompt (build-iteration-prompt plan checkpoint signs)
+            {:keys [process stream]} (spawn-claude-iteration! project-path prompt config log-file)]
+        {:checkpoint-id cp-id
+         :checkpoint checkpoint
+         :process process
+         :stream stream
+         :log-file log-file
+         :started-at (System/currentTimeMillis)})
+      (catch Exception e
+        (println (str "[Lisa] ✗ Failed to spawn process for checkpoint " cp-name ": " (.getMessage e)))
+        {:checkpoint-id cp-id
+         :checkpoint checkpoint
+         :process nil
+         :stream nil
+         :log-file log-file
+         :started-at (System/currentTimeMillis)
+         :spawn-error (.getMessage e)}))))
 
 (defn- stop-stream!
   "Stop the tool call stream if present."
@@ -602,6 +619,18 @@
         new-last-activity (if file-changed? now last-activity)
         idle-elapsed (- now new-last-activity)]
     (cond
+      ;; Process failed to spawn
+      (nil? proc)
+      (do
+        (println (str "[Lisa] ✗ Checkpoint " (name (:checkpoint-id proc-info)) " failed to spawn"))
+        (stop-stream! (:stream proc-info))
+        (assoc proc-info
+               :completed true
+               :result {:result "Process failed to start" :is_error true}
+               :succeeded false
+               :checkpoint-complete false
+               :spawn-failed true))
+
       ;; Process completed normally
       (not (p/alive? proc))
       (do

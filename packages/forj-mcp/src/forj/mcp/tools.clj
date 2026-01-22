@@ -1398,6 +1398,15 @@
       (zero? (:exit result)))
     (catch Exception _ false)))
 
+(defn- get-pgid
+  "Get the process group ID (PGID) for a given PID."
+  [pid]
+  (try
+    (let [result (shell-execute "ps" "-o" "pgid=" "-p" (str pid))]
+      (when (zero? (:exit result))
+        (parse-long (str/trim (:out result)))))
+    (catch Exception _ nil)))
+
 (defn track-process
   "Track a process for later cleanup.
    SAFETY: Refuses to track PID 0 or negative PIDs - kill 0 sends signals to entire process group."
@@ -1413,17 +1422,19 @@
     (try
       (let [path "."
             session (or (read-session path) {:processes [] :path (str (fs/absolutize path))})
-            process-entry {:pid pid
-                           :name name
-                           :port port
-                           :command command
-                           :started-at (str (java.time.Instant/now))}
+            pgid (get-pgid pid)
+            process-entry (cond-> {:pid pid
+                                   :name name
+                                   :port port
+                                   :command command
+                                   :started-at (str (java.time.Instant/now))}
+                            pgid (assoc :pgid pgid))
             ;; Remove any existing entry with same name (replacing)
             existing (remove #(= (:name %) name) (:processes session))
             updated (assoc session :processes (conj (vec existing) process-entry))]
         (write-session path updated)
         {:success true
-         :message (str "Tracking process '" name "' (PID " pid ")")
+         :message (str "Tracking process '" name "' (PID " pid (when pgid (str ", PGID " pgid)) ")")
          :tracked process-entry})
       (catch Exception e
         {:success false
