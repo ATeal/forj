@@ -14,8 +14,8 @@ REPL-driven LLM development for Clojure. Provides seamless Claude Code integrati
 
 | Component | Status | Description |
 |-----------|--------|-------------|
-| forj-mcp | ✅ Complete | MCP server with 12 tools |
-| forj-hooks | ✅ Complete | SessionStart + UserPromptSubmit + Stop |
+| forj-mcp | ✅ Complete | MCP server with 29 tools |
+| forj-hooks | ✅ Complete | SessionStart + UserPromptSubmit + PreToolUse + Stop |
 | forj-skill | ✅ Complete | `/clj-repl` + `/clj-init` + `/lisa-loop` |
 
 ## Prerequisites
@@ -35,7 +35,7 @@ bbin install io.github.bhauman/clojure-mcp-light
 ## Quick Start
 
 ```bash
-git clone https://github.com/yourusername/forj.git
+git clone https://github.com/ATeal/forj.git
 cd forj
 bb install    # Installs MCP, hooks, and skill to ~/.claude/
 ```
@@ -43,6 +43,8 @@ bb install    # Installs MCP, hooks, and skill to ~/.claude/
 Then restart Claude Code. The tools will be available automatically in any Clojure project.
 
 ## MCP Tools
+
+### Core REPL Tools
 
 | Tool | Description | Like |
 |------|-------------|------|
@@ -52,12 +54,44 @@ Then restart Claude Code. The tools will be available automatically in any Cloju
 | `eval_comment_block` | Evaluate all forms in a comment block | `,eb` |
 | `doc_symbol` | Look up documentation for a symbol | `K` |
 | `discover_repls` | Find running nREPL servers | - |
-| `analyze_project` | Get project configuration info | - |
-| `run_tests` | Run project tests (auto-detects runner) | - |
-| `validate_changed_files` | Reload + eval comment blocks in changed files | Lisa Loop |
-| `start_loop` | Start a Lisa Loop autonomous session | - |
-| `cancel_loop` | Cancel active Lisa Loop | - |
-| `loop_status` | Check Lisa Loop status | - |
+| `repl_snapshot` | Snapshot of loaded namespaces and vars | - |
+
+### Project Tools
+
+| Tool | Description |
+|------|-------------|
+| `analyze_project` | Get project configuration (tasks, aliases, builds) |
+| `run_tests` | Run tests (auto-detects bb/clj/shadow/lein) |
+| `validate_project` | Validate project setup (deps, npm, Java version) |
+| `scaffold_project` | Create new project from composable modules |
+| `view_repl_logs` | View backend/shadow/expo logs |
+
+### Process Management
+
+| Tool | Description |
+|------|-------------|
+| `track_process` | Track a background process for cleanup |
+| `stop_project` | Stop all tracked processes |
+| `list_tracked_processes` | List tracked processes |
+
+### Lisa Loop (Autonomous Development)
+
+| Tool | Description |
+|------|-------------|
+| `lisa_create_plan` | Create LISA_PLAN.edn with checkpoints |
+| `lisa_get_plan` | Read current plan and progress |
+| `lisa_mark_checkpoint_done` | Mark a checkpoint complete |
+| `lisa_run_orchestrator` | Run the autonomous loop |
+| `lisa_watch` | Monitor loop progress |
+| `validate_changed_files` | Validate changed files via REPL |
+| `lisa_run_validation` | Run validation checks (REPL/Chrome/Judge) |
+| `lisa_check_gates` | Check checkpoint gates |
+| `lisa_append_sign` | Record a learning/failure |
+| `lisa_get_signs` | Read learnings from previous iterations |
+| `lisa_clear_signs` | Clear signs file |
+| `start_loop` | Start legacy loop session |
+| `cancel_loop` | Cancel active loop |
+| `loop_status` | Check loop status |
 
 ## Features
 
@@ -87,6 +121,7 @@ Automatically routes code to the right REPL based on file type:
 - **Web API** - Ring/Reitit backend
 - **Full-stack** - Clojure + ClojureScript + shadow-cljs
 - **Mobile** - Expo + ClojureScript (Reagent/Re-frame)
+- **Flutter** - ClojureDart + Flutter (experimental)
 
 #### /lisa-loop - REPL-Driven Autonomous Loops
 forj's native autonomous development loop, inspired by [Ralph Wiggum](https://ghuntley.com/ralph/):
@@ -137,12 +172,13 @@ forj/
 ```bash
 bb tasks              # List available tasks
 bb nrepl              # Start nREPL server on port 1669
-bb test               # Run all tests (21 tests, 105 assertions)
+bb test               # Run all tests (34 tests, 273 assertions)
 bb test:mcp           # Test MCP tools
 bb test:hooks         # Test hooks
 bb test:skill         # Validate skill definition
 bb mcp:dev            # Run MCP server for testing
 bb logs               # View forj logs
+bb cleanup:sessions   # Remove old session files (>7 days)
 bb install            # Install to ~/.claude/
 bb uninstall          # Remove from ~/.claude/
 ```
