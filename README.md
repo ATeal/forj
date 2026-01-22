@@ -124,23 +124,27 @@ Automatically routes code to the right REPL based on file type:
 - **Flutter** - ClojureDart + Flutter (experimental)
 
 #### /lisa-loop - REPL-Driven Autonomous Loops
-forj's native autonomous development loop, inspired by [Ralph Wiggum](https://ghuntley.com/ralph/):
+Autonomous development loops with REPL validation, inspired by [Ralph Wiggum](https://ghuntley.com/ralph/):
 
 ```bash
 /lisa-loop "Build a REST API for users" --max-iterations 20
 ```
 
 **How it works:**
-1. Claude works on the task using REPL-driven development
-2. When Claude tries to stop, the Stop hook intercepts
-3. Automatically runs `validate_changed_files` for REPL feedback
-4. Continues the loop with validation results injected
-5. Ends when `<promise>COMPLETE</promise>` is output or max iterations reached
+1. You describe the task, Claude proposes checkpoints for approval
+2. Creates `LISA_PLAN.edn` with checkpoints and dependency graph
+3. Orchestrator spawns fresh Claude instances for each checkpoint
+4. Each iteration validates via REPL before marking complete
+5. Learnings from failures persist in `LISA_SIGNS.md` across iterations
+6. Supports parallel execution for independent checkpoints
 
-**Why Lisa Loop?**
-- Validates with REPL evaluation (~10ms) instead of tests (~seconds)
-- See actual data between iterations, not just pass/fail
-- 10x faster feedback = fewer wasted cycles
+**Features:**
+- **EDN plans** with checkpoint dependencies and acceptance criteria
+- **Parallel execution** - independent checkpoints run concurrently
+- **Fresh context** per iteration (no context bloat)
+- **REPL validation** - see actual data, not just pass/fail
+- **Chrome/Playwright validation** for UI testing
+- **LLM-as-judge** for subjective criteria
 
 ## Project Structure
 
