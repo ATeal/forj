@@ -6,7 +6,6 @@
             [clojure.edn :as edn]
             [clojure.string :as str]
             [edamame.core :as edamame]
-            [forj.hooks.loop-state :as loop-state]
             [forj.lisa.plan :as lisa-plan]
             [forj.lisa.plan-edn :as plan-edn]
             [forj.lisa.signs :as lisa-signs]
@@ -103,28 +102,6 @@
                                        :description "List of file paths to validate (optional - uses git diff if not provided)"}
                                :port {:type "integer"
                                       :description "nREPL port (auto-discovered if not provided)"}}}}
-
-   ;; Lisa Loop management tools
-   {:name "start_loop"
-    :description "Start a Lisa Loop autonomous development session. Initializes loop state for REPL-driven iterative development."
-    :inputSchema {:type "object"
-                  :properties {:prompt {:type "string"
-                                        :description "The task/goal for this loop"}
-                               :max_iterations {:type "integer"
-                                                :description "Maximum iterations before stopping (default: 30)"}
-                               :completion_promise {:type "string"
-                                                    :description "Text to output when complete (default: 'COMPLETE')"}}
-                  :required ["prompt"]}}
-
-   {:name "cancel_loop"
-    :description "Cancel the active Lisa Loop. Clears loop state and allows normal session exit."
-    :inputSchema {:type "object"
-                  :properties {}}}
-
-   {:name "loop_status"
-    :description "Check the status of the current Lisa Loop. Returns active state, iteration count, and history."
-    :inputSchema {:type "object"
-                  :properties {}}}
 
    {:name "validate_project"
     :description "Validate a Clojure project setup. Checks bb.edn warnings, deps resolution, npm install status, and Java version for shadow-cljs. Run after scaffolding to catch common issues."
@@ -1054,60 +1031,6 @@
     (catch Exception e
       {:success false
        :error (str "Failed to validate files: " (.getMessage e))})))
-
-;; =============================================================================
-;; Lisa Loop Management
-;; =============================================================================
-
-(defn start-loop
-  "Start a Lisa Loop autonomous development session."
-  [{:keys [prompt max_iterations completion_promise]}]
-  (try
-    (let [config {:prompt prompt
-                  :max-iterations (or max_iterations 30)
-                  :completion-promise (or completion_promise "COMPLETE")}
-          state (loop-state/start-loop! config)]
-      {:success true
-       :message "Lisa Loop started"
-       :state state})
-    (catch Exception e
-      {:success false
-       :error (str "Failed to start loop: " (.getMessage e))})))
-
-(defn cancel-loop
-  "Cancel the active Lisa Loop."
-  [_]
-  (try
-    (if (loop-state/active?)
-      (do
-        (loop-state/clear-state!)
-        {:success true
-         :message "Lisa Loop cancelled"})
-      {:success true
-       :message "No active loop to cancel"})
-    (catch Exception e
-      {:success false
-       :error (str "Failed to cancel loop: " (.getMessage e))})))
-
-(defn loop-status
-  "Check the status of the current Lisa Loop."
-  [_]
-  (try
-    (if-let [state (loop-state/read-state)]
-      {:success true
-       :active (:active? state)
-       :iteration (:iteration state)
-       :max-iterations (:max-iterations state)
-       :prompt (:prompt state)
-       :completion-promise (:completion-promise state)
-       :started-at (:started-at state)
-       :validation-history-count (count (:validation-history state))}
-      {:success true
-       :active false
-       :message "No active loop"})
-    (catch Exception e
-      {:success false
-       :error (str "Failed to get loop status: " (.getMessage e))})))
 
 ;; =============================================================================
 ;; Project Validation
@@ -2040,9 +1963,6 @@
    "run_tests"              run-tests
    "eval_comment_block"     eval-comment-block
    "validate_changed_files" validate-changed-files
-   "start_loop"             start-loop
-   "cancel_loop"            cancel-loop
-   "loop_status"            loop-status
    "validate_project"       validate-project
    "view_repl_logs"         view-repl-logs
    "scaffold_project"       scaffold-project-handler

@@ -74,43 +74,60 @@
                        (when (seq cp-deps) (str "**Depends on:** " (str/join ", " (map name cp-deps))))
                        (when cp-validation (str "**Validation:** " cp-validation))
                        ""
-                       "## Instructions"
+                       "## REQUIRED Workflow - DO NOT SKIP"
                        ""
-                       (str "1. Read the current state - check " plan-file " and query the REPL")
-                       "2. Implement the checkpoint task"
-                       "3. Validate using REPL evaluation (reload_namespace, eval_comment_block)"
+                       "**CRITICAL**: You MUST follow this REPL-driven workflow. Skipping steps wastes iterations."
+                       ""
+                       "### Step 1: Understand Current State"
+                       (str "- Read " plan-file " to understand the full context")
+                       "- Use `repl_eval` to query current REPL state if needed"
+                       "- Read relevant source files to understand existing code"
+                       ""
+                       "### Step 2: Implement Changes"
+                       "- Write code using Edit/Write tools"
+                       (when cp-file (str "- Primary file: " cp-file))
+                       ""
+                       "### Step 3: REPL Validation - DO NOT SKIP"
+                       "**After writing code, you MUST validate via REPL before marking complete:**"
+                       ""
+                       "1. `reload_namespace` - Reload changed namespaces to pick up your edits"
+                       "2. `eval_comment_block` - Run examples in (comment ...) blocks to verify behavior"
+                       "3. `repl_eval` - Test specific expressions to confirm correctness"
+                       ""
+                       "**DO NOT** mark checkpoint complete based only on:"
+                       "- Reading the code and thinking it looks right"
+                       "- Running tests without REPL validation first"
+                       "- Assumptions about what the code does"
+                       ""
+                       "**DO** verify by actually evaluating code in the REPL."
                        (when is-ui?
-                         "4. **VISUAL VALIDATION REQUIRED - DO NOT SKIP**:
-   You MUST take a screenshot and visually verify the UI before marking this checkpoint complete.
-   Do NOT mark [DONE] based only on REPL validation - you need visual evidence.
-
-   **Chrome MCP Workflow** (use these exact steps):
-   ```
-   1. mcp__claude-in-chrome__tabs_context_mcp with createIfEmpty=true
-   2. mcp__claude-in-chrome__tabs_create_mcp (creates a fresh tab, returns tabId)
-   3. mcp__claude-in-chrome__navigate with url and tabId
-   4. mcp__claude-in-chrome__browser_wait_for with time=3 (wait for render)
-   5. mcp__claude-in-chrome__computer with action='screenshot' and tabId
-   ```
-
-   **Alternative - Playwright MCP**:
-   ```
-   1. mcp__playwright__browser_navigate to the app URL
-   2. mcp__playwright__browser_wait_for with time=3
-   3. mcp__playwright__browser_take_screenshot
-   ```
-
-   Check shadow-cljs.edn :dev-http, package.json scripts, or LISA_PLAN.md for the correct URL/port.
-
-   After taking screenshot, analyze it to verify the UI matches acceptance criteria.
-   If UI doesn't match, fix the code and re-verify visually.
-
-   CHECKPOINT WILL BE REJECTED if you mark complete without screenshot verification.")
-                       (str (if is-ui? "5" "4") ". When acceptance criteria are met, "
-                            (if is-edn?
-                              (str "use lisa_mark_checkpoint_done tool with checkpoint '" (name cp-id) "'")
-                              (str "edit " plan-file " to mark this checkpoint [DONE]")))
-                       (str (if is-ui? "6" "5") ". Output 'CHECKPOINT_COMPLETE' when done, or 'CHECKPOINT_BLOCKED: <reason>' if stuck")
+                         (str "\n### Step 4: Visual Validation - DO NOT SKIP\n"
+                              "**For UI checkpoints, you MUST take a screenshot:**\n\n"
+                              "**Chrome MCP Workflow** (use these exact steps):\n"
+                              "```\n"
+                              "1. mcp__claude-in-chrome__tabs_context_mcp with createIfEmpty=true\n"
+                              "2. mcp__claude-in-chrome__tabs_create_mcp (creates a fresh tab, returns tabId)\n"
+                              "3. mcp__claude-in-chrome__navigate with url and tabId\n"
+                              "4. mcp__claude-in-chrome__browser_wait_for with time=3 (wait for render)\n"
+                              "5. mcp__claude-in-chrome__computer with action='screenshot' and tabId\n"
+                              "```\n\n"
+                              "**Alternative - Playwright MCP**:\n"
+                              "```\n"
+                              "1. mcp__playwright__browser_navigate to the app URL\n"
+                              "2. mcp__playwright__browser_wait_for with time=3\n"
+                              "3. mcp__playwright__browser_take_screenshot\n"
+                              "```\n\n"
+                              "Check shadow-cljs.edn :dev-http, package.json scripts, or LISA_PLAN.md for the correct URL/port.\n\n"
+                              "CHECKPOINT WILL BE REJECTED if you mark complete without screenshot verification."))
+                       ""
+                       (str "### Step " (if is-ui? "5" "4") ": Mark Complete")
+                       (str "When acceptance criteria are verified via REPL" (when is-ui? " and screenshot") ":")
+                       (if is-edn?
+                         (str "- Use `lisa_mark_checkpoint_done` tool with checkpoint '" (name cp-id) "'")
+                         (str "- Edit " plan-file " to mark this checkpoint [DONE]"))
+                       "- Output 'CHECKPOINT_COMPLETE'"
+                       ""
+                       "If blocked, output 'CHECKPOINT_BLOCKED: <reason>' with specific details."
                        ""
                        (when (seq signs-content)
                          (str "## Previous Learnings (Signs)\n\n" signs-content))
@@ -168,15 +185,21 @@
   ;; Pass prompt via stdin to avoid shell escaping issues
   ;; --dangerously-skip-permissions is REQUIRED for non-interactive mode
   ;; --mcp-config passes user config so Chrome MCP is available for visual validation
-  (let [output-format (if (:verbose config) "stream-json" "json")]
-    (p/process {:dir project-path
-                :in prompt
-                :out (java.io.File. log-file)
-                :err :stdout}
-               "claude" "-p" "--output-format" output-format
-               "--dangerously-skip-permissions"
-               "--allowedTools" (:allowed-tools config)
-               "--mcp-config" (:mcp-config config))))
+  ;; NOTE: stream-json requires --verbose flag when using -p (print mode)
+  (let [verbose? (:verbose config)
+        base-args ["claude" "-p"
+                   "--output-format" (if verbose? "stream-json" "json")
+                   "--dangerously-skip-permissions"
+                   "--mcp-config" (:mcp-config config)]
+        args (if verbose?
+               (conj base-args "--verbose")
+               base-args)]
+    (apply p/process
+           {:dir project-path
+            :in prompt
+            :out (java.io.File. log-file)
+            :err :stdout}
+           args)))
 
 (defn- last-src-modification
   "Get the most recent modification time of source files in the project."
