@@ -60,8 +60,9 @@
    :acceptance
    "With --verbose, tool calls print to console as they execute",
    :depends-on [:integrate-analytics],
-   :status :in-progress,
-   :started "2026-01-22T15:04:37.331476465Z"}
+   :status :done,
+   :started "2026-01-22T15:04:37.331476465Z",
+   :completed "2026-01-22T15:08:42.434538421Z"}
   {:description
    "Print post-iteration summary showing tools used and compliance score",
    :id :iteration-summary,
@@ -69,7 +70,8 @@
    :acceptance
    "Each iteration ends with summary table of tools used and compliance rating",
    :depends-on [:verbose-streaming],
-   :status :pending}
+   :status :in-progress,
+   :started "2026-01-22T15:08:37.123881577Z"}
   {:description "Add tests for analytics functions",
    :id :analytics-tests,
    :file "packages/forj-mcp/test/forj/lisa/analytics_test.clj",

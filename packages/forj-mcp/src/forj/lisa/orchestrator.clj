@@ -10,6 +10,7 @@
   (:require [babashka.fs :as fs]
             [babashka.process :as p]
             [cheshire.core :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [forj.lisa.analytics :as analytics]
             [forj.lisa.plan :as plan]
@@ -177,11 +178,103 @@
                           "**Fix:** " fix "\n")]
       (spit signs-path sign-entry :append true))))
 
+;;; =============================================================================
+;;; Tool Call Streaming (verbose mode)
+;;; =============================================================================
+
+(defn- tool-name->display
+  "Convert a tool name to a shorter display form."
+  [tool-name]
+  (cond
+    (str/starts-with? tool-name "mcp__forj__")
+    (str "forj:" (subs tool-name 11))
+
+    (str/starts-with? tool-name "mcp__")
+    (let [parts (str/split (subs tool-name 5) #"__" 2)]
+      (if (= 2 (count parts))
+        (str (first parts) ":" (second parts))
+        (subs tool-name 5)))
+
+    :else tool-name))
+
+(defn- parse-jsonl-line
+  "Parse a single JSONL line, returning nil on failure."
+  [line]
+  (when (and line (not (str/blank? line)))
+    (try
+      (json/parse-string line true)
+      (catch Exception _ nil))))
+
+(defn- extract-tool-names-from-entry
+  "Extract tool names from an assistant message entry."
+  [entry]
+  (when (= "assistant" (:type entry))
+    (let [content (get-in entry [:message :content])]
+      (->> content
+           (filter #(= "tool_use" (:type %)))
+           (map :name)))))
+
+(defn- stream-tool-calls!
+  "Stream tool calls from a log file in real-time.
+   Returns a map with:
+   - :stop-fn - Call this to stop streaming
+   - :future - The Future object for the streaming thread
+
+   Prints tool names as they appear in the log file.
+   Automatically stops when stop-fn is called or the file stops growing."
+  [log-file]
+  (let [stop-atom (atom false)
+        seen-tools (atom #{})
+        stop-fn (fn [] (reset! stop-atom true))
+        future-obj
+        (future
+          (try
+            ;; Wait for log file to exist
+            (loop [wait-count 0]
+              (when (and (not @stop-atom)
+                         (< wait-count 100)  ;; Max 10 seconds wait
+                         (not (fs/exists? log-file)))
+                (Thread/sleep 100)
+                (recur (inc wait-count))))
+
+            ;; Stream the file
+            (when (and (not @stop-atom) (fs/exists? log-file))
+              (with-open [rdr (io/reader log-file)]
+                (loop []
+                  (when-not @stop-atom
+                    (if-let [line (.readLine rdr)]
+                      (do
+                        ;; Parse and print any new tool calls
+                        (when-let [entry (parse-jsonl-line line)]
+                          (when-let [tools (extract-tool-names-from-entry entry)]
+                            (doseq [tool tools]
+                              (when-not (@seen-tools tool)
+                                (swap! seen-tools conj tool)
+                                (println (str "[Lisa] 🔧 " (tool-name->display tool)))))))
+                        (recur))
+                      ;; No line available - wait and retry unless stopped
+                      (do
+                        (Thread/sleep 100)
+                        (recur)))))))
+            (catch Exception e
+              (when-not @stop-atom
+                (println (str "[Lisa] Stream error: " (.getMessage e)))))))]
+    {:stop-fn stop-fn
+     :future future-obj}))
+
+;;; =============================================================================
+;;; Process Spawning
+;;; =============================================================================
+
 (defn- spawn-claude-iteration!
-  "Spawn a Claude instance for one iteration. Returns the process.
+  "Spawn a Claude instance for one iteration.
    Uses stdin to pass prompt, avoiding shell quoting issues.
 
-   When :verbose true in config, uses stream-json format for detailed tool call logs."
+   When :verbose true in config, uses stream-json format for detailed tool call logs
+   and starts a real-time stream of tool calls to the console.
+
+   Returns {:process <proc> :stream <stream-info>} where stream-info has :stop-fn to call
+   when the process completes. In non-verbose mode, :stream is nil."
   [project-path prompt config log-file]
   ;; Pass prompt via stdin to avoid shell escaping issues
   ;; --dangerously-skip-permissions is REQUIRED for non-interactive mode
@@ -194,13 +287,17 @@
                    "--mcp-config" (:mcp-config config)]
         args (if verbose?
                (conj base-args "--verbose")
-               base-args)]
-    (apply p/process
-           {:dir project-path
-            :in prompt
-            :out (java.io.File. log-file)
-            :err :stdout}
-           args)))
+               base-args)
+        ;; Start the stream before spawning process so it's ready to catch output
+        stream (when verbose? (stream-tool-calls! log-file))
+        proc (apply p/process
+                    {:dir project-path
+                     :in prompt
+                     :out (java.io.File. log-file)
+                     :err :stdout}
+                    args)]
+    {:process proc
+     :stream stream}))
 
 (defn- last-src-modification
   "Get the most recent modification time of source files in the project."
@@ -464,16 +561,24 @@
         plan (plan-edn/read-plan project-path)
         signs (read-signs project-path)
         prompt (build-iteration-prompt plan checkpoint signs)
-        proc (spawn-claude-iteration! project-path prompt config log-file)]
+        {:keys [process stream]} (spawn-claude-iteration! project-path prompt config log-file)]
     {:checkpoint-id cp-id
      :checkpoint checkpoint
-     :process proc
+     :process process
+     :stream stream
      :log-file log-file
      :started-at (System/currentTimeMillis)}))
 
+(defn- stop-stream!
+  "Stop the tool call stream if present."
+  [stream]
+  (when-let [stop-fn (:stop-fn stream)]
+    (stop-fn)))
+
 (defn- check-process-complete
   "Check if a process has completed or should be killed due to idle timeout.
-   Returns updated info with :completed true if done or killed."
+   Returns updated info with :completed true if done or killed.
+   Stops the tool call stream when process completes."
   [proc-info project-path config]
   (let [proc (:process proc-info)
         idle-timeout (:idle-timeout-ms config)
@@ -488,18 +593,23 @@
     (cond
       ;; Process completed normally
       (not (p/alive? proc))
-      (let [result (parse-iteration-result (:log-file proc-info))]
-        (assoc proc-info
-               :completed true
-               :result result
-               :succeeded (iteration-succeeded? result)
-               :checkpoint-complete (checkpoint-completed? result)))
+      (do
+        ;; Stop the tool call stream
+        (stop-stream! (:stream proc-info))
+        (let [result (parse-iteration-result (:log-file proc-info))]
+          (assoc proc-info
+                 :completed true
+                 :result result
+                 :succeeded (iteration-succeeded? result)
+                 :checkpoint-complete (checkpoint-completed? result))))
 
       ;; Idle timeout - no file activity for too long
       (and idle-timeout (> idle-elapsed idle-timeout))
       (do
         (println (str "[Lisa] ⚠ Checkpoint " (name (:checkpoint-id proc-info))
                       " idle for " (int (/ idle-elapsed 60000)) " minutes, killing"))
+        ;; Stop the tool call stream
+        (stop-stream! (:stream proc-info))
         (p/destroy-tree proc)
         (assoc proc-info
                :completed true
@@ -808,9 +918,11 @@
                     _ (println (str "[Lisa] Iteration " iteration ": Checkpoint " cp-display
                                     " - " (:description checkpoint)))
 
-                    proc (spawn-claude-iteration! project-path prompt config log-file)
-                    wait-result (wait-for-process-with-timeout proc project-path config)
-                    wait-status (:status wait-result)]
+                    {:keys [process stream]} (spawn-claude-iteration! project-path prompt config log-file)
+                    wait-result (wait-for-process-with-timeout process project-path config)
+                    wait-status (:status wait-result)
+                    ;; Stop the stream when process completes
+                    _ (stop-stream! stream)]
 
                 ;; Handle timeout/idle cases
                 (if (#{:timeout :idle} wait-status)
@@ -889,8 +1001,9 @@
                     "- File: path/to/file.clj\n"
                     "- Acceptance: (some-fn arg) => expected\n")
 
-        proc (spawn-claude-iteration! project-path prompt default-config log-file)
-        _exit-code (wait-for-process proc (:poll-interval-ms default-config))
+        {:keys [process stream]} (spawn-claude-iteration! project-path prompt default-config log-file)
+        _exit-code (wait-for-process process (:poll-interval-ms default-config))
+        _ (stop-stream! stream)
         result (parse-iteration-result log-file)]
 
     (if (and (iteration-succeeded? result)
@@ -989,6 +1102,30 @@
 
 (comment
   ;; Test expressions
+
+  ;; Test tool-name->display
+  (tool-name->display "mcp__forj__reload_namespace")
+  ;; => "forj:reload_namespace"
+
+  (tool-name->display "mcp__playwright__browser_navigate")
+  ;; => "playwright:browser_navigate"
+
+  (tool-name->display "Read")
+  ;; => "Read"
+
+  ;; Test parse-jsonl-line
+  (parse-jsonl-line "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Read\"}]}}")
+  ;; => {:type "assistant", :message {:content [{:type "tool_use", :name "Read"}]}}
+
+  ;; Test extract-tool-names-from-entry
+  (extract-tool-names-from-entry {:type "assistant" :message {:content [{:type "tool_use" :name "Read"} {:type "text" :text "hello"}]}})
+  ;; => ("Read")
+
+  ;; Test stream-tool-calls! (creates a streaming reader)
+  ;; This starts a background thread that tails the log file
+  (def test-stream (stream-tool-calls! "/tmp/test-stream.jsonl"))
+  ;; Stop the stream:
+  ((:stop-fn test-stream))
 
   ;; Generate a plan
   (generate-plan! "/tmp/test-project"
