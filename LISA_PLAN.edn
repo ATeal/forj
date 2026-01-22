@@ -73,7 +73,8 @@
    :acceptance
    "Tests pass for extract-tool-calls and score-repl-compliance",
    :depends-on [:compliance-scoring],
-   :status :in-progress,
-   :started "2026-01-22T14:59:42.198934711Z"}],
+   :status :done,
+   :started "2026-01-22T14:59:42.198934711Z",
+   :completed "2026-01-22T15:02:07.263816686Z"}],
  :signs [],
  :created "2026-01-22T14:54:01.404050165Z"}
