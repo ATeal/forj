@@ -12,14 +12,15 @@
    :completed "2026-01-22T15:58:14.454523892Z"}
   {:description
    "Update stop-project to kill by process group (PGID) instead of individual PID",
-   :id :group-kill,
+   :started "2026-01-22T15:58:19.486289802Z",
+   :completed "2026-01-22T16:03:04.584765666Z",
+   :gates ["repl:(require '[forj.mcp.tools :as t] :reload) => ok"],
    :file "packages/forj-mcp/src/forj/mcp/tools.clj",
    :acceptance
    "stop-project uses kill -TERM -<pgid> for entries with pgid, falls back to pid for legacy entries",
-   :gates ["repl:(require '[forj.mcp.tools :as t] :reload) => ok"],
-   :depends-on [:pgid-tracking],
-   :status :in-progress,
-   :started "2026-01-22T15:58:19.486289802Z"}
+   :status :done,
+   :id :group-kill,
+   :depends-on [:pgid-tracking]}
   {:description
    "Update /clj-repl skill to use setsid for consistent process daemonization",
    :id :daemonize-spawns,
@@ -51,6 +52,7 @@
    ["repl:(require '[forj.mcp.tools-test] :reload) => ok"
     "repl:(clojure.test/run-tests 'forj.mcp.tools-test) => passes"],
    :depends-on [:pgid-tracking :group-kill :session-reconcile],
-   :status :pending}],
+   :status :in-progress,
+   :started "2026-01-22T16:02:58.940102500Z"}],
  :signs [],
  :created "2026-01-22T15:56:39.563335582Z"}
