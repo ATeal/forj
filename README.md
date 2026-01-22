@@ -89,9 +89,16 @@ Then restart Claude Code. The tools will be available automatically in any Cloju
 | `lisa_append_sign` | Record a learning/failure |
 | `lisa_get_signs` | Read learnings from previous iterations |
 | `lisa_clear_signs` | Clear signs file |
-| `start_loop` | Start legacy loop session |
-| `cancel_loop` | Cancel active loop |
-| `loop_status` | Check loop status |
+
+### Legacy Loop (Stop Hook-based)
+
+| Tool | Description |
+|------|-------------|
+| `start_loop` | Start loop using Stop hook interception |
+| `cancel_loop` | Cancel active Stop hook loop |
+| `loop_status` | Check Stop hook loop status |
+
+> **Note:** The legacy loop uses the Stop hook to intercept session exits and run `validate_changed_files` between iterations. The orchestrator-based loop (`lisa_run_orchestrator`) is recommended for new projects.
 
 ## Features
 
@@ -134,7 +141,7 @@ Autonomous development loops with REPL validation, inspired by [Ralph Wiggum](ht
 1. You describe the task, Claude proposes checkpoints for approval
 2. Creates `LISA_PLAN.edn` with checkpoints and dependency graph
 3. Orchestrator spawns fresh Claude instances for each checkpoint
-4. Each iteration validates via REPL before marking complete
+4. Each instance is instructed to use REPL-driven validation
 5. Learnings from failures persist in `LISA_SIGNS.md` across iterations
 6. Supports parallel execution for independent checkpoints
 
@@ -142,9 +149,9 @@ Autonomous development loops with REPL validation, inspired by [Ralph Wiggum](ht
 - **EDN plans** with checkpoint dependencies and acceptance criteria
 - **Parallel execution** - independent checkpoints run concurrently
 - **Fresh context** per iteration (no context bloat)
-- **REPL validation** - see actual data, not just pass/fail
-- **Chrome/Playwright validation** for UI testing
-- **LLM-as-judge** for subjective criteria
+- **Signs system** - failures are recorded to prevent repeating mistakes
+- **Chrome/Playwright support** for UI checkpoints
+- **Auto-commit** - each completed checkpoint creates a git rollback point
 
 ## Project Structure
 
