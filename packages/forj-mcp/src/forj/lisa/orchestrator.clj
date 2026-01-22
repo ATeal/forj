@@ -262,7 +262,12 @@
    For stream-json, finds the result message and extracts cost/token info."
   [log-file]
   (try
+    (when-not (fs/exists? log-file)
+      (throw (ex-info "Log file does not exist" {:file log-file})))
     (let [content (slurp log-file)]
+      ;; Handle empty log files (process failed to start or crashed immediately)
+      (when (str/blank? content)
+        (throw (ex-info "Log file is empty - process may have failed to start" {:file log-file})))
       ;; Check if it's JSONL (stream-json) by looking for newlines between JSON objects
       (if (and (str/includes? content "\n{")
                (str/starts-with? (str/trim content) "{"))
@@ -488,14 +493,23 @@
           ;; Auto-commit as rollback point
           (auto-commit-checkpoint! project-path cp-display (:description checkpoint)))
 
-        ;; Process succeeded but checkpoint not marked complete - may need more work
+        ;; Process succeeded but checkpoint not marked complete - reset to pending for next iteration
         succeeded
-        (println (str "[Lisa] → Checkpoint " cp-display " iteration done, may need more work"))
+        (do
+          (println (str "[Lisa] → Checkpoint " cp-display " iteration done, needs more work"))
+          ;; Reset to pending so it can continue in next iteration
+          (-> (plan-edn/read-plan project-path)
+              (plan-edn/update-checkpoint checkpoint-id {:status :pending})
+              (->> (plan-edn/write-plan! project-path))))
 
-        ;; Process failed
+        ;; Process failed - reset to pending for retry
         :else
         (do
-          (println (str "[Lisa] ✗ Checkpoint " cp-display " iteration failed"))
+          (println (str "[Lisa] ✗ Checkpoint " cp-display " iteration failed, resetting to pending"))
+          ;; Reset checkpoint status to pending so it can be retried
+          (-> (plan-edn/read-plan project-path)
+              (plan-edn/update-checkpoint checkpoint-id {:status :pending})
+              (->> (plan-edn/write-plan! project-path)))
           (when-let [blocked (extract-blocked-reason result)]
             (append-sign! project-path 0 blocked "Needs resolution")))))))
 
@@ -590,8 +604,9 @@
                 ;; Process completions
                 _ (when (seq completed)
                     (process-completed-checkpoints! project-path completed)
-                    (doseq [{:keys [checkpoint]} completed]
-                      (when on-checkpoint-complete
+                    ;; Only call callback for checkpoints that actually succeeded
+                    (doseq [{:keys [checkpoint succeeded checkpoint-complete]} completed]
+                      (when (and on-checkpoint-complete succeeded checkpoint-complete)
                         (on-checkpoint-complete checkpoint))))
 
                 ;; Sum up costs from completed
