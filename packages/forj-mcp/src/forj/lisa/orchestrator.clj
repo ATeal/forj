@@ -436,32 +436,43 @@
     (when-let [[_ reason] (re-find #"CHECKPOINT_BLOCKED:\s*(.*)" text)]
       reason)))
 
-(defn- score->emoji
-  "Convert compliance score to display emoji."
-  [score]
-  (case score
-    :excellent "🟢"
-    :good "🟡"
-    :fair "🟠"
-    :poor "🔴"
-    "⚪"))
+(defn- compliance->sign-fix
+  "Generate a fix recommendation based on compliance issues."
+  [{:keys [used-repl-tools anti-patterns]}]
+  (cond
+    (and (empty? used-repl-tools) (seq anti-patterns))
+    (str "Use forj MCP tools (reload_namespace, eval_comment_block, repl_eval) instead of Bash commands like: "
+         (str/join ", " (take 2 (map #(first (str/split % #"\s+" 3)) anti-patterns))))
+
+    (empty? used-repl-tools)
+    "After writing code, use reload_namespace to pick up changes, then eval_comment_block to verify behavior"
+
+    (seq anti-patterns)
+    "Replace Bash REPL commands (bb -e, clj -e) with forj MCP tools for better feedback"
+
+    :else
+    "Follow the REPL-driven workflow: reload_namespace → eval_comment_block → repl_eval"))
 
 (defn- log-iteration-analytics
-  "Parse tool calls from iteration log and display compliance score.
-   Only called when verbose=true (stream-json format)."
+  "Parse tool calls from iteration log and display summary with compliance score.
+   Only called when verbose=true (stream-json format).
+   Returns the compliance data for use in sign generation."
   [log-file iteration]
-  (let [tool-calls (analytics/extract-tool-calls log-file)
-        compliance (analytics/score-repl-compliance tool-calls)
-        {:keys [score used-repl-tools anti-patterns]} compliance
-        emoji (score->emoji score)]
-    (println (str "[Lisa] " emoji " REPL Compliance: " (name score)
-                  " (" (count tool-calls) " tool calls)"))
-    (when (seq used-repl-tools)
-      (println (str "[Lisa]   ✓ REPL tools: " (str/join ", " (map #(str/replace % "mcp__forj__" "") used-repl-tools)))))
-    (when (seq anti-patterns)
-      (println (str "[Lisa]   ✗ Anti-patterns: " (count anti-patterns) " Bash command(s) bypassing REPL")))
-    ;; Return compliance for potential use in sign generation
-    compliance))
+  (let [tool-calls (analytics/extract-tool-calls log-file)]
+    ;; Print the formatted summary table with tool usage breakdown
+    (analytics/print-iteration-summary tool-calls iteration)))
+
+(defn- maybe-append-compliance-sign!
+  "Append a sign when REPL compliance is poor.
+   This teaches future iterations to use REPL-driven workflow."
+  [project-path iteration compliance checkpoint-desc]
+  (when (= :poor (:score compliance))
+    (let [issue (str "Poor REPL compliance in iteration " iteration
+                     (when checkpoint-desc (str " (" checkpoint-desc ")"))
+                     " - no forj MCP tools used for validation")
+          fix (compliance->sign-fix compliance)]
+      (append-sign! project-path iteration issue fix)
+      (println (str "[Lisa] ⚠ Sign appended: Poor REPL compliance - " fix)))))
 
 (defn- count-checkpoint-failures
   "Count consecutive failures for a checkpoint from signs."
@@ -626,13 +637,15 @@
 
 (defn- process-completed-checkpoints!
   "Handle completed processes - mark checkpoints done, auto-commit, log.
-   When config has :verbose true, also logs analytics for each completed checkpoint."
+   When config has :verbose true, also logs analytics and appends signs for poor compliance."
   [project-path completed-procs config]
   (doseq [{:keys [checkpoint-id checkpoint checkpoint-complete succeeded result idle-killed log-file]} completed-procs]
     ;; Log analytics for verbose mode (completed processes only, not idle-killed)
+    ;; and auto-append sign for poor compliance
     (when (and (:verbose config) (not idle-killed) log-file)
       (println (str "[Lisa] Analytics for checkpoint " (name checkpoint-id) ":"))
-      (log-iteration-analytics log-file 0))
+      (let [compliance (log-iteration-analytics log-file 0)]
+        (maybe-append-compliance-sign! project-path 0 compliance (:description checkpoint))))
     (let [cp-display (or (:number checkpoint) checkpoint-id)]
       (cond
         ;; Idle-killed - reset to pending for retry
@@ -942,8 +955,11 @@
                         iter-output (or (:output_tokens usage) 0)
                         _ (println (str "[Lisa] Tokens: " iter-input " in / " iter-output " out, Cost: $" (format "%.2f" iteration-cost)))
                         ;; Log analytics when verbose (stream-json provides tool call data)
-                        _ (when (:verbose config)
-                            (log-iteration-analytics log-file iteration))]
+                        ;; and auto-append sign for poor compliance
+                        compliance (when (:verbose config)
+                                     (log-iteration-analytics log-file iteration))
+                        _ (when compliance
+                            (maybe-append-compliance-sign! project-path iteration compliance (:description checkpoint)))]
 
                     ;; Call iteration callback if provided
                     (when on-iteration
@@ -1135,4 +1151,19 @@
   (run-loop! "/tmp/test-project"
              {:max-iterations 5
               :on-iteration (fn [i r] (println "Iteration" i "cost:" (:total_cost_usd r)))
-              :on-complete (fn [_plan c] (println "Done! Total cost:" c))}))
+              :on-complete (fn [_plan c] (println "Done! Total cost:" c))})
+
+  ;; Test compliance->sign-fix - generates fix guidance based on compliance issues
+  (compliance->sign-fix {:score :poor :used-repl-tools [] :anti-patterns ["bb -e '(+ 1 2)'"]})
+  ;; => "Use forj MCP tools (reload_namespace, eval_comment_block, repl_eval) instead of Bash commands like: bb"
+
+  (compliance->sign-fix {:score :poor :used-repl-tools [] :anti-patterns []})
+  ;; => "After writing code, use reload_namespace to pick up changes, then eval_comment_block to verify behavior"
+
+  ;; Test maybe-append-compliance-sign! - only appends for :poor compliance
+  (maybe-append-compliance-sign! "." 5 {:score :poor :used-repl-tools [] :anti-patterns []} "Test checkpoint")
+  ;; Appends sign with guidance
+
+  (maybe-append-compliance-sign! "." 5 {:score :good :used-repl-tools ["reload_namespace"] :anti-patterns []} "Test checkpoint")
+  ;; => nil (no sign appended for non-poor compliance)
+  )
