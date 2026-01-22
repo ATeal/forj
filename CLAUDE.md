@@ -40,9 +40,6 @@ bb logs                   # View forj logs
 | `analyze_project` | Get project configuration info | - |
 | `run_tests` | Run project tests (auto-detects runner) | - |
 | `validate_changed_files` | Reload + eval comment blocks in changed files | Lisa Loop |
-| `start_loop` | Start a Lisa Loop session | - |
-| `cancel_loop` | Cancel active Lisa Loop | - |
-| `loop_status` | Check Lisa Loop status | - |
 | `validate_project` | Validate project setup (deps, bb.edn, npm, Java) | - |
 | `scaffold_project` | Create new project from composable modules | - |
 | `track_process` | Track a background process for cleanup | - |
@@ -78,8 +75,7 @@ Start an autonomous development loop:
 /lisa-loop "Build a REST API for users" --max-iterations 20
 ```
 
-The Stop hook runs `validate_changed_files` between iterations, injecting REPL feedback.
-Cancel with `/cancel-lisa`.
+The orchestrator spawns fresh Claude instances per checkpoint, with REPL-based validation guidance.
 
 ## Files
 
@@ -123,10 +119,10 @@ All tools tested and working:
 - Structured logging to `~/.forj/logs/`
 - LSP detection and context injection
 - Installation tasks (`bb install`)
-- Full test suite (21 tests, 105 assertions)
+- Full test suite (34 tests, 273 assertions)
 
 ### Completed Recently
-- `/lisa-loop` native autonomous development loop with Stop hook
+- `/lisa-loop` orchestrator-based autonomous development loop
 - `/clj-init` skill with interactive project scaffolding
 - Composable module system for scaffolding (replaces templates)
 - `scaffold_project` MCP tool with config merging

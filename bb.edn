@@ -150,10 +150,7 @@
                              ;; Paren repair with graceful error handling
                              :PreToolUse [{:matcher "Edit|Write|NotebookEdit"
                                            :hooks [{:type "command"
-                                                    :command (str "bb -cp " cp " -m forj.hooks.paren-repair")}]}]
-                             ;; Lisa Loop: Stop hook for autonomous development loops
-                             :Stop [{:hooks [{:type "command"
-                                              :command (str "bb -cp " cp " -m forj.hooks.stop")}]}]}
+                                                    :command (str "bb -cp " cp " -m forj.hooks.paren-repair")}]}]}
                new-config (update existing :hooks merge hooks-config)]
            (fs/create-dirs claude-dir)
            (spit settings-file (json/generate-string new-config {:pretty true}))
@@ -219,7 +216,7 @@
            ;; Remove hooks
            (when (fs/exists? settings-file)
              (let [config (json/parse-string (slurp settings-file) true)
-                   new-config (update config :hooks dissoc :SessionStart :UserPromptSubmit :PreToolUse :Stop)]
+                   new-config (update config :hooks dissoc :SessionStart :UserPromptSubmit :PreToolUse)]
                (spit settings-file (json/generate-string new-config {:pretty true}))
                (println "✓ Removed hooks from" settings-file)))
            ;; Remove skills

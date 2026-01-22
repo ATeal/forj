@@ -14,8 +14,8 @@ REPL-driven LLM development for Clojure. Provides seamless Claude Code integrati
 
 | Component | Status | Description |
 |-----------|--------|-------------|
-| forj-mcp | ✅ Complete | MCP server with 29 tools |
-| forj-hooks | ✅ Complete | SessionStart + UserPromptSubmit + PreToolUse + Stop |
+| forj-mcp | ✅ Complete | MCP server with 26 tools |
+| forj-hooks | ✅ Complete | SessionStart + UserPromptSubmit + PreToolUse |
 | forj-skill | ✅ Complete | `/clj-repl` + `/clj-init` + `/lisa-loop` |
 
 ## Prerequisites
@@ -90,16 +90,6 @@ Then restart Claude Code. The tools will be available automatically in any Cloju
 | `lisa_get_signs` | Read learnings from previous iterations |
 | `lisa_clear_signs` | Clear signs file |
 
-### Legacy Loop (Stop Hook-based)
-
-| Tool | Description |
-|------|-------------|
-| `start_loop` | Start loop using Stop hook interception |
-| `cancel_loop` | Cancel active Stop hook loop |
-| `loop_status` | Check Stop hook loop status |
-
-> **Note:** The legacy loop uses the Stop hook to intercept session exits and run `validate_changed_files` between iterations. The orchestrator-based loop (`lisa_run_orchestrator`) is recommended for new projects.
-
 ## Features
 
 ### Path-Based REPL Routing
@@ -112,7 +102,6 @@ Automatically routes code to the right REPL based on file type:
 - **SessionStart**: Detects Clojure projects, injects context about tasks/aliases/REPLs
 - **UserPromptSubmit**: Reminds Claude to use REPL-first workflow
 - **PreToolUse**: Auto-fixes Clojure delimiter errors before file writes (via `clj-paren-repair-claude-hook`)
-- **Stop**: Powers `/lisa-loop` autonomous development loops
 
 ### Skills
 
