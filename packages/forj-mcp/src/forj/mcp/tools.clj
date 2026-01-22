@@ -1441,7 +1441,8 @@
          :error (str "Failed to track process: " (.getMessage e))}))))
 
 (defn list-tracked-processes
-  "List all tracked processes for a project."
+  "List all tracked processes for a project.
+   Auto-prunes dead processes from the session file and returns :pruned-count."
   [{:keys [path] :or {path "."}}]
   (try
     (if-let [session (read-session path)]
@@ -1449,15 +1450,32 @@
             ;; Check which are still alive
             with-status (mapv (fn [p]
                                 (assoc p :alive (process-alive? (:pid p))))
-                              processes)]
+                              processes)
+            alive-processes (filterv :alive with-status)
+            dead-processes (filterv (complement :alive) with-status)
+            pruned-count (count dead-processes)]
+        ;; Auto-prune: Update session file to only contain alive processes
+        (when (pos? pruned-count)
+          (let [alive-entries (mapv #(dissoc % :alive) alive-processes)]
+            (if (empty? alive-entries)
+              ;; Delete session file if no processes remain
+              (let [session-file (session-file-path path)]
+                (when (fs/exists? session-file)
+                  (fs/delete session-file)))
+              ;; Update session with only alive processes
+              (write-session path (assoc session :processes alive-entries)))))
         {:success true
          :project-path (:path session)
          :processes with-status
          :count (count processes)
-         :alive-count (count (filter :alive with-status))})
+         :alive-count (count alive-processes)
+         :pruned-count pruned-count
+         :pruned (when (pos? pruned-count)
+                   (mapv #(select-keys % [:name :pid :pgid]) dead-processes))})
       {:success true
        :processes []
        :count 0
+       :pruned-count 0
        :message "No tracked processes for this project"})
     (catch Exception e
       {:success false
@@ -1465,30 +1483,43 @@
 
 (defn stop-project
   "Stop all tracked processes for a project.
-   SAFETY: Refuses to kill PID 0 or negative PIDs."
+   Uses process group kill (PGID) when available, falls back to individual PID.
+   SAFETY: Refuses to kill PID 0 or negative PIDs, and validates PGID before use."
   [{:keys [path] :or {path "."}}]
   (try
     (if-let [session (read-session path)]
       (let [processes (:processes session)
-            results (mapv (fn [{:keys [pid name]}]
+            results (mapv (fn [{:keys [pid pgid name]}]
                             (cond
                               ;; SAFETY: Never kill PID 0 (kills process group) or invalid PIDs
                               (or (nil? pid) (not (pos-int? pid)))
-                              {:name name :pid pid :stopped false
+                              {:name name :pid pid :pgid pgid :stopped false
                                :error "SAFETY: Refused to kill invalid PID (0 or negative)"}
 
                               (process-alive? pid)
                               (try
-                                ;; Kill the process and its children
-                                (let [result (shell-execute "kill" "-TERM" (str pid))]
-                                  (if (zero? (:exit result))
-                                    {:name name :pid pid :stopped true}
-                                    {:name name :pid pid :stopped false :error (:err result)}))
+                                ;; Prefer killing by process group (PGID) to get all children
+                                ;; Use negative PGID with kill to signal entire group
+                                (if (and pgid (pos-int? pgid))
+                                  ;; Kill entire process group using negative PGID
+                                  (let [result (shell-execute "kill" "-TERM" (str "-" pgid))]
+                                    (if (zero? (:exit result))
+                                      {:name name :pid pid :pgid pgid :stopped true :killed-by :pgid}
+                                      ;; If group kill fails, fall back to individual PID
+                                      (let [pid-result (shell-execute "kill" "-TERM" (str pid))]
+                                        (if (zero? (:exit pid-result))
+                                          {:name name :pid pid :pgid pgid :stopped true :killed-by :pid-fallback}
+                                          {:name name :pid pid :pgid pgid :stopped false :error (:err pid-result)}))))
+                                  ;; No PGID available (legacy entry), kill by PID
+                                  (let [result (shell-execute "kill" "-TERM" (str pid))]
+                                    (if (zero? (:exit result))
+                                      {:name name :pid pid :stopped true :killed-by :pid}
+                                      {:name name :pid pid :stopped false :error (:err result)})))
                                 (catch Exception e
-                                  {:name name :pid pid :stopped false :error (.getMessage e)}))
+                                  {:name name :pid pid :pgid pgid :stopped false :error (.getMessage e)}))
 
                               :else
-                              {:name name :pid pid :stopped false :already-dead true}))
+                              {:name name :pid pid :pgid pgid :stopped false :already-dead true}))
                           processes)
             stopped-count (count (filter :stopped results))
             ;; Clear the session file

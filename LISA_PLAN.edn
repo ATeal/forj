@@ -19,7 +19,7 @@
    :gates ["repl:(require '[forj.mcp.tools :as t] :reload) => ok"],
    :depends-on [:pgid-tracking],
    :status :in-progress,
-   :started "2026-01-22T15:58:10.037951056Z"}
+   :started "2026-01-22T15:58:19.486289802Z"}
   {:description
    "Update /clj-repl skill to use setsid for consistent process daemonization",
    :id :daemonize-spawns,
@@ -32,14 +32,15 @@
    :completed "2026-01-22T15:58:09.421071229Z"}
   {:description
    "Add reconcile-session function to prune dead processes and report orphans on startup",
-   :id :session-reconcile,
+   :started "2026-01-22T15:58:19.496442184Z",
+   :completed "2026-01-22T15:59:24.526946039Z",
+   :gates ["repl:(require '[forj.mcp.tools :as t] :reload) => ok"],
    :file "packages/forj-mcp/src/forj/mcp/tools.clj",
    :acceptance
    "list-tracked-processes auto-prunes dead entries from session file, returns :pruned-count",
-   :gates ["repl:(require '[forj.mcp.tools :as t] :reload) => ok"],
-   :depends-on [:pgid-tracking],
-   :status :in-progress,
-   :started "2026-01-22T15:58:14.454539532Z"}
+   :status :done,
+   :id :session-reconcile,
+   :depends-on [:pgid-tracking]}
   {:description
    "Add tests for PGID tracking, group kill, and session reconciliation",
    :id :tests,
