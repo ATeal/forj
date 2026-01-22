@@ -15,15 +15,16 @@
    :completed "2026-01-22T14:58:42.119939551Z"}
   {:description
    "Create REPL-driven compliance scoring function that rates iterations",
-   :id :compliance-scoring,
+   :started "2026-01-22T14:58:47.175880490Z",
+   :completed "2026-01-22T14:59:47.216992007Z",
+   :gates
+   ["repl:(analytics/score-repl-compliance [{:name \"mcp__forj__reload_namespace\"} {:name \"mcp__forj__eval_comment_block\"}])"],
    :file "packages/forj-mcp/src/forj/lisa/analytics.clj",
    :acceptance
    "score-repl-compliance returns {:score :excellent|:good|:fair|:poor :used-repl-tools [...] :anti-patterns [...]}",
-   :gates
-   ["repl:(analytics/score-repl-compliance [{:name \"mcp__forj__reload_namespace\"} {:name \"mcp__forj__eval_comment_block\"}])"],
-   :depends-on [:extract-tool-calls],
-   :status :in-progress,
-   :started "2026-01-22T14:58:35.388323446Z"}
+   :status :done,
+   :id :compliance-scoring,
+   :depends-on [:extract-tool-calls]}
   {:description
    "Integrate analytics into orchestrator - parse tool calls after each iteration in verbose mode",
    :id :integrate-analytics,
@@ -31,7 +32,8 @@
    :acceptance
    "When verbose=true, orchestrator parses tool calls and logs compliance score after each iteration",
    :depends-on [:compliance-scoring],
-   :status :pending}
+   :status :in-progress,
+   :started "2026-01-22T14:59:41.445117353Z"}
   {:description
    "Auto-append sign when iteration has poor REPL compliance",
    :id :compliance-signs,
@@ -71,6 +73,7 @@
    :acceptance
    "Tests pass for extract-tool-calls and score-repl-compliance",
    :depends-on [:compliance-scoring],
-   :status :pending}],
+   :status :in-progress,
+   :started "2026-01-22T14:59:42.198934711Z"}],
  :signs [],
  :created "2026-01-22T14:54:01.404050165Z"}
