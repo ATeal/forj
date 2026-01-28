@@ -323,6 +323,16 @@
                                :iteration {:type "integer"
                                            :description "Iteration number (e.g., 1, 2, 3). Omit for latest."}
                                :path {:type "string"
+                                      :description "Project path (defaults to current directory)"}}}}
+
+   {:name "lisa_get_iteration_transcript"
+    :description "Get the raw conversation transcript from a Lisa iteration's Claude session. Returns user messages, assistant responses, and tool calls. Use checkpoint-id and iteration number to identify the specific run, or omit to get the latest."
+    :inputSchema {:type "object"
+                  :properties {:checkpoint_id {:type "string"
+                                               :description "Checkpoint ID (e.g., 'auth-module'). Omit for latest."}
+                               :iteration {:type "integer"
+                                           :description "Iteration number (e.g., 1, 2, 3). Omit for latest."}
+                               :path {:type "string"
                                       :description "Project path (defaults to current directory)"}}}}])
 
 ;; =============================================================================
@@ -2145,6 +2155,37 @@
       {:success false
        :error (str "Failed to inspect iteration: " (.getMessage e))})))
 
+(defn lisa-get-iteration-transcript
+  "Get the conversation transcript from a Lisa iteration's Claude session."
+  [{:keys [checkpoint_id iteration path] :or {path "."}}]
+  (try
+    (let [project-path (str (fs/normalize (fs/absolutize path)))
+          log-dir (str project-path "/.forj/logs/lisa")
+          meta-file (find-meta-file log-dir checkpoint_id iteration)]
+      (if-not meta-file
+        {:success false
+         :error (if (and checkpoint_id iteration)
+                  (str "No iteration found for checkpoint '" checkpoint_id "' iteration " iteration)
+                  "No Lisa iterations found")}
+        (let [meta-data (json/parse-string (slurp (str meta-file)) true)
+              session-id (:session-id meta-data)]
+          (if-not session-id
+            {:success false
+             :error "No session-id found in meta file"}
+            (let [transcript-data (claude-sessions/session-transcript session-id project-path)]
+              (if (:exists? transcript-data)
+                {:success true
+                 :checkpoint-id (:checkpoint-id meta-data)
+                 :iteration (:iteration meta-data)
+                 :session-id session-id
+                 :turn-count (:turn-count transcript-data)
+                 :transcript (:transcript transcript-data)}
+                {:success false
+                 :error (str "Session log not found at: " (:path transcript-data))}))))))
+    (catch Exception e
+      {:success false
+       :error (str "Failed to get iteration transcript: " (.getMessage e))})))
+
 ;; =============================================================================
 ;; Tool Dispatch
 ;; =============================================================================
@@ -2202,7 +2243,8 @@
    "lisa_check_gates"    lisa-check-gates
    ;; Monitoring
    "lisa_watch" lisa-watch
-   "lisa_inspect_iteration" lisa-inspect-iteration})
+   "lisa_inspect_iteration" lisa-inspect-iteration
+   "lisa_get_iteration_transcript" lisa-get-iteration-transcript})
 
 (defn call-tool
   "Dispatch tool call to appropriate handler."

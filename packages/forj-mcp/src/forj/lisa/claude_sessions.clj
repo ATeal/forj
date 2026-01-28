@@ -121,6 +121,94 @@
         :exists? false
         :path (str path)}))))
 
+(defn extract-transcript
+  "Extract conversation transcript from session entries.
+
+   Arguments:
+   - entries: Seq of parsed session entries (from read-session-jsonl)
+
+   Returns a seq of simplified conversation turns with:
+   - :type - 'user', 'assistant', or 'tool_result'
+   - :content - For user/assistant: text content; for tool_result: result summary
+   - :tool_calls - For assistant messages: list of tool calls made
+   - :timestamp - When available"
+  [entries]
+  (->> entries
+       (map (fn [entry]
+              (let [msg-type (:type entry)
+                    message (:message entry)
+                    content (:content message)]
+                (case msg-type
+                  "user"
+                  (let [text-content (if (string? content)
+                                       content
+                                       (->> content
+                                            (filter #(= "text" (:type %)))
+                                            (map :text)
+                                            (str/join "\n")))]
+                    {:type "user"
+                     :content (if (> (count text-content) 500)
+                                (str (subs text-content 0 500) "...")
+                                text-content)})
+
+                  "assistant"
+                  (let [text-parts (->> content
+                                        (filter #(= "text" (:type %)))
+                                        (map :text))
+                        tool-uses (->> content
+                                       (filter #(= "tool_use" (:type %)))
+                                       (map (fn [tu]
+                                              {:tool (:name tu)
+                                               :id (:id tu)
+                                               :input-summary (let [input (:input tu)]
+                                                                (cond
+                                                                  (nil? input) nil
+                                                                  (map? input)
+                                                                  (let [s (pr-str input)]
+                                                                    (if (> (count s) 200)
+                                                                      (str (subs s 0 200) "...")
+                                                                      s))
+                                                                  :else (str input)))})))]
+                    {:type "assistant"
+                     :content (when (seq text-parts)
+                                (let [text (str/join "\n" text-parts)]
+                                  (if (> (count text) 500)
+                                    (str (subs text 0 500) "...")
+                                    text)))
+                     :tool_calls (when (seq tool-uses) tool-uses)})
+
+                  ;; Skip other types (like tool_result which are paired with tool_use)
+                  nil))))
+       (filter some?)))
+
+(defn session-transcript
+  "Get the conversation transcript for a session.
+
+   Arguments:
+   - session-id: UUID string of the session
+   - project-path: (optional) Project directory path
+
+   Returns:
+   {:session-id \"...\",
+    :exists? true/false,
+    :transcript [{:type \"user\", :content \"...\"}, ...],
+    :turn-count 10}"
+  ([session-id]
+   (session-transcript session-id (System/getProperty "user.dir")))
+  ([session-id project-path]
+   (let [path (session-log-path session-id project-path)]
+     (if (fs/exists? path)
+       (let [entries (read-session-jsonl path)
+             transcript (extract-transcript entries)]
+         {:session-id session-id
+          :exists? true
+          :path (str path)
+          :transcript (vec transcript)
+          :turn-count (count transcript)})
+       {:session-id session-id
+        :exists? false
+        :path (str path)}))))
+
 (comment
   ;; Test path encoding
   (encode-project-path "/home/user/Projects/github/forj")

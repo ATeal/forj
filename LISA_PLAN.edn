@@ -24,14 +24,15 @@
    :depends-on [:enhance-meta-files]}
   {:description
    "Add lisa_get_iteration_transcript MCP tool - returns raw conversation/tool calls from Claude's session JSONL",
-   :id :get-transcript-tool,
+   :started "2026-01-28T16:37:50.714203030Z",
+   :completed "2026-01-28T16:40:05.745597674Z",
+   :gates ["repl:(require '[forj.mcp.tools] :reload) => ok"],
    :file "packages/forj-mcp/src/forj/mcp/tools.clj",
    :acceptance
    "lisa_get_iteration_transcript returns conversation data from Claude's logs",
-   :gates ["repl:(require '[forj.mcp.tools] :reload) => ok"],
-   :depends-on [:inspect-iteration-tool],
-   :status :in-progress,
-   :started "2026-01-28T16:37:34.593209933Z"}
+   :status :done,
+   :id :get-transcript-tool,
+   :depends-on [:inspect-iteration-tool]}
   {:description
    "Update orchestrator to stop writing the big parallel-*.json output files (keep only meta files)",
    :id :remove-redundant-logs,
@@ -40,7 +41,8 @@
    "Orchestrator no longer writes parallel-*.json, only parallel-*-meta.json",
    :gates ["repl:(require '[forj.lisa.orchestrator] :reload) => ok"],
    :depends-on [:get-transcript-tool],
-   :status :pending}
+   :status :in-progress,
+   :started "2026-01-28T16:39:53.548165196Z"}
   {:description
    "Add tests for lisa_inspect_iteration and lisa_get_iteration_transcript tools",
    :id :tests,
