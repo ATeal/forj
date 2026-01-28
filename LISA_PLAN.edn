@@ -53,14 +53,16 @@
    :id :wait-30s-7,
    :acceptance "Waited 30 seconds",
    :depends-on [:wait-30s-6],
-   :status :in-progress,
-   :started "2026-01-28T16:06:56.009859745Z"}
+   :status :done,
+   :started "2026-01-28T16:07:06.012504326Z",
+   :completed "2026-01-28T16:07:56.034476042Z"}
   {:description
    "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
    :id :wait-30s-8,
    :acceptance "Waited 30 seconds",
    :depends-on [:wait-30s-7],
-   :status :pending}
+   :status :in-progress,
+   :started "2026-01-28T16:07:47.980885202Z"}
   {:description
    "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
    :id :wait-30s-9,
