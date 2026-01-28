@@ -23,8 +23,9 @@
    :file "packages/forj-mcp/src/forj/mcp/tools.clj",
    :gates ["repl:(require '[forj.mcp.tools :reload]) => nil"],
    :depends-on [:delete-plan-clj :delete-signs-clj],
-   :status :in-progress,
-   :started "2026-01-28T17:01:17.829949917Z"}
+   :status :done,
+   :started "2026-01-28T17:04:20.651595342Z",
+   :completed "2026-01-28T17:07:15.685373605Z"}
   {:description
    "Update orchestrator.clj: remove lisa.plan require, remove use-edn-format? function (always EDN now), remove markdown fallbacks in read-signs, append-sign!, read-plan, build-iteration-prompt, run-loop!, generate-plan!",
    :id :update-orchestrator,
@@ -39,7 +40,8 @@
    :id :update-skill-docs,
    :file "packages/forj-skill/lisa-loop/SKILL.md",
    :depends-on [:update-tools-clj :update-orchestrator],
-   :status :pending}
+   :status :in-progress,
+   :started "2026-01-28T17:07:05.668483096Z"}
   {:description
    "Code review: Check for DRY violations, unused code, and code smells. Add follow-up checkpoints for any issues found.",
    :id :code-review,
