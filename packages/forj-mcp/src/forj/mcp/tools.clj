@@ -401,31 +401,6 @@
     (apply p/shell shell-opts cmd-seq)))
 
 ;; =============================================================================
-;; Error Handling Helper
-;; =============================================================================
-
-(defn safe-execute
-  "Wrap an operation in try-catch, returning standardized error maps on exception.
-
-   Arguments:
-     f          - A no-arg function to execute
-     error-msg  - Prefix for error message (e.g., \"Failed to discover ports\")
-
-   Returns:
-     - The result of (f) if successful
-     - {:success false :error \"<error-msg>: <exception message>\"} on exception
-
-   Examples:
-     (safe-execute #(risky-operation) \"Operation failed\")
-     (safe-execute (fn [] (slurp file)) \"Failed to read file\")"
-  [f error-msg]
-  (try
-    (f)
-    (catch Exception e
-      {:success false
-       :error (str error-msg ": " (.getMessage e))})))
-
-;; =============================================================================
 ;; REPL Type Detection (Path-based routing)
 ;; =============================================================================
 
