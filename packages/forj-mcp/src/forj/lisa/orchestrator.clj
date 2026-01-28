@@ -47,8 +47,25 @@
         metadata {:session-id session-id
                   :checkpoint-id (when checkpoint-id (name checkpoint-id))
                   :iteration iteration
-                  :started-at (str (java.time.Instant/now))}]
+                  :started-at (str (java.time.Instant/now))
+                  ;; These fields are populated by update-iteration-metadata! after completion
+                  :completed-at nil
+                  :success nil
+                  :error nil}]
     (spit meta-file (json/generate-string metadata {:pretty true}))))
+
+(defn- update-iteration-metadata!
+  "Update metadata for a completed iteration with completion status.
+   Reads the existing meta file and adds :completed-at, :success, and :error fields."
+  [log-file success? error-msg]
+  (let [meta-file (str/replace log-file #"\.json$" "-meta.json")]
+    (when (fs/exists? meta-file)
+      (let [existing (json/parse-string (slurp meta-file) true)
+            updated (assoc existing
+                           :completed-at (str (java.time.Instant/now))
+                           :success success?
+                           :error error-msg)]
+        (spit meta-file (json/generate-string updated {:pretty true}))))))
 
 (defn- ui-checkpoint?
   "Check if checkpoint appears to be UI-related based on description."
@@ -645,6 +662,8 @@
       (do
         (println (str "[Lisa] ✗ Checkpoint " (name (:checkpoint-id proc-info)) " failed to spawn"))
         (stop-stream! (:stream proc-info))
+        ;; Update meta file with spawn failure
+        (update-iteration-metadata! (:log-file proc-info) false "Process failed to start")
         (assoc proc-info
                :completed true
                :result {:result "Process failed to start" :is_error true}
@@ -657,12 +676,22 @@
       (do
         ;; Stop the tool call stream
         (stop-stream! (:stream proc-info))
-        (let [result (parse-iteration-result (:log-file proc-info))]
+        (let [result (parse-iteration-result (:log-file proc-info))
+              succeeded? (iteration-succeeded? result)
+              checkpoint-complete? (checkpoint-completed? result)
+              error-msg (when-not succeeded?
+                          (or (:error result)
+                              (extract-blocked-reason result)
+                              "Iteration failed"))]
+          ;; Update meta file with completion status
+          (update-iteration-metadata! (:log-file proc-info)
+                                       (and succeeded? checkpoint-complete?)
+                                       error-msg)
           (assoc proc-info
                  :completed true
                  :result result
-                 :succeeded (iteration-succeeded? result)
-                 :checkpoint-complete (checkpoint-completed? result))))
+                 :succeeded succeeded?
+                 :checkpoint-complete checkpoint-complete?)))
 
       ;; Idle timeout - no file activity for too long
       (and idle-timeout (> idle-elapsed idle-timeout))
@@ -672,6 +701,8 @@
         ;; Stop the tool call stream
         (stop-stream! (:stream proc-info))
         (p/destroy-tree proc)
+        ;; Update meta file with idle timeout
+        (update-iteration-metadata! (:log-file proc-info) false "Idle timeout - no file activity")
         (assoc proc-info
                :completed true
                :result {:result "Idle timeout - no file activity"}
@@ -992,6 +1023,8 @@
                 ;; Handle timeout/idle cases
                 (if (#{:timeout :idle} wait-status)
                   (do
+                    ;; Update meta file with timeout error
+                    (update-iteration-metadata! log-file false (:reason wait-result))
                     (append-sign! project-path iteration
                                   (:reason wait-result)
                                   "Consider breaking checkpoint into smaller tasks")
@@ -1022,8 +1055,13 @@
                       (not (iteration-succeeded? result))
                       (do
                         (println (str "[Lisa] Iteration " iteration " failed"))
-                        (when-let [blocked (extract-blocked-reason result)]
-                          (append-sign! project-path iteration blocked "Needs resolution"))
+                        (let [error-msg (or (:error result)
+                                            (extract-blocked-reason result)
+                                            "Iteration failed")]
+                          ;; Update meta file with failure
+                          (update-iteration-metadata! log-file false error-msg)
+                          (when-let [blocked (extract-blocked-reason result)]
+                            (append-sign! project-path iteration blocked "Needs resolution")))
                         (recur (inc iteration)
                                (+ total-cost iteration-cost)
                                (+ total-input-tokens iter-input)
@@ -1033,6 +1071,8 @@
                       (checkpoint-completed? result)
                       (do
                         (println (str "[Lisa] Checkpoint " cp-display " complete"))
+                        ;; Update meta file with success
+                        (update-iteration-metadata! log-file true nil)
                         ;; Auto-commit as rollback point
                         (auto-commit-checkpoint! project-path cp-display (:description checkpoint))
                         (recur (inc iteration)
@@ -1044,6 +1084,8 @@
                       :else
                       (do
                         (println (str "[Lisa] Iteration " iteration " completed, continuing..."))
+                        ;; Update meta file - iteration succeeded but checkpoint needs more work
+                        (update-iteration-metadata! log-file false "Checkpoint not complete - needs more work")
                         (recur (inc iteration)
                                (+ total-cost iteration-cost)
                                (+ total-input-tokens iter-input)
@@ -1246,4 +1288,31 @@
        :has-iteration? (= 1 (:iteration contents))
        :has-started-at? (some? (:started-at contents))}))
   ;; => {:session-id-matches? true, :has-checkpoint? true, :has-iteration? true, :has-started-at? true}
+
+  ;; Test update-iteration-metadata! - updates meta file with completion status
+  (let [test-log "/tmp/test-iter-2.json"
+        test-session-id (str (java.util.UUID/randomUUID))]
+    ;; First write initial metadata
+    (write-iteration-metadata! test-log test-session-id :test-checkpoint 2)
+    ;; Then update with completion
+    (update-iteration-metadata! test-log true nil)
+    (let [meta-file "/tmp/test-iter-2-meta.json"
+          contents (json/parse-string (slurp meta-file) true)]
+      {:has-completed-at? (some? (:completed-at contents))
+       :success? (:success contents)
+       :error (:error contents)
+       :session-preserved? (= test-session-id (:session-id contents))}))
+  ;; => {:has-completed-at? true, :success? true, :error nil, :session-preserved? true}
+
+  ;; Test update-iteration-metadata! with failure
+  (let [test-log "/tmp/test-iter-3.json"
+        test-session-id (str (java.util.UUID/randomUUID))]
+    (write-iteration-metadata! test-log test-session-id :test-checkpoint 3)
+    (update-iteration-metadata! test-log false "Iteration failed - timeout")
+    (let [meta-file "/tmp/test-iter-3-meta.json"
+          contents (json/parse-string (slurp meta-file) true)]
+      {:has-completed-at? (some? (:completed-at contents))
+       :success? (:success contents)
+       :error (:error contents)}))
+  ;; => {:has-completed-at? true, :success? false, :error "Iteration failed - timeout"}
   )
