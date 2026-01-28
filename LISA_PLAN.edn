@@ -27,8 +27,9 @@
    :acceptance "Can read tool names/counts from a Claude session ID",
    :gates
    ["repl:(require '[forj.lisa.claude-sessions] :reload) => ok"],
-   :status :in-progress,
-   :started "2026-01-28T15:23:32.222195543Z"}
+   :status :done,
+   :started "2026-01-28T15:23:32.222195543Z",
+   :completed "2026-01-28T15:25:52.351016341Z"}
   {:description
    "Update lisa_watch to show tool usage from Claude session logs for current/last iteration",
    :id :integrate-lisa-watch,
