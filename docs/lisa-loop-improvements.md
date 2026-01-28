@@ -2,11 +2,9 @@
 
 ## Research Summary
 
-### Original Ralph Wiggum Philosophy
+### Context Rotation Philosophy
 
-Based on [Geoffrey Huntley's methodology](https://github.com/ghuntley/how-to-ralph-wiggum) and the [Ralph Playbook](https://github.com/ClaytonFarr/ralph-playbook):
-
-The original Ralph methodology has **three distinct phases**:
+Based on established agentic loop methodologies, the pattern has **three distinct phases**:
 
 1. **Phase 1 - Requirements Definition**: Human + LLM collaborate to define Jobs-to-Be-Done (JTBDs), break into topics, generate `specs/*.md` files as single source of truth.
 
@@ -16,8 +14,8 @@ The original Ralph methodology has **three distinct phases**:
 
 ### Core Principles We're Missing
 
-| Principle | Ralph Original | Our Lisa Loop |
-|-----------|---------------|---------------|
+| Principle | Context Rotation Pattern | Our Lisa Loop |
+|-----------|--------------------------|---------------|
 | **Context Isolation** | Fresh context each iteration, state in files/git | Accumulates context until compaction |
 | **1 Task Per Loop** | "Tight tasks = 100% smart zone" | Re-runs entire prompt each time |
 | **Deterministic Planning** | IMPLEMENTATION_PLAN.md drives work | No planning phase |
@@ -25,13 +23,11 @@ The original Ralph methodology has **three distinct phases**:
 | **Guardrails/Signs** | Record failures for future iterations | No failure memory |
 | **Backpressure Gates** | Tests/lints must pass before commit | REPL validation only |
 
-### What Makes Ralph Effective
-
-From [community analysis](https://dev.to/sivarampg/the-ralph-wiggum-approach-running-ai-coding-agents-for-hours-not-minutes-57c1):
+### What Makes Context Rotation Effective
 
 > "State lives in files and git, not in the LLM's memory."
 
-The technique solves the "malloc/free problem" - traditional conversations accumulate context pollution. Ralph resets by rotating contexts while preserving progress in version control.
+The technique solves the "malloc/free problem" - traditional conversations accumulate context pollution. Context rotation resets by spawning fresh instances while preserving progress in version control.
 
 Key success factors:
 1. **Machine-verifiable success criteria** (not subjective goals)
@@ -41,10 +37,10 @@ Key success factors:
 
 ### Criticisms of Simpler Implementations
 
-From the [Alibaba Cloud analysis](https://www.alibabacloud.com/blog/from-react-to-ralph-loop-a-continuous-iteration-paradigm-for-ai-agents_602799) and [DEV Community](https://dev.to/alexandergekov/2026-the-year-of-the-ralph-loop-agent-1gkj):
+Common issues with naive loop implementations:
 
 1. **Context bloat**: Without fresh starts, accumulated context degrades performance
-2. **Semantic filtering unreliability**: Asking AI to "filter to feature X" at runtime achieves only 70-80% accuracy. Ralph scopes work *at plan creation*
+2. **Semantic filtering unreliability**: Asking AI to "filter to feature X" at runtime achieves only 70-80% accuracy. Context rotation scopes work *at plan creation*
 3. **Hallucination accumulation**: Continuous context prevents self-correction
 4. **Missing backpressure**: Simple loops accept incomplete work
 
@@ -74,7 +70,7 @@ From the [Alibaba Cloud analysis](https://www.alibabacloud.com/blog/from-react-t
 
 ### Change 1: Add Planning Phase
 
-**Why**: The original Ralph methodology emphasizes that planning creates deterministic continuation. Without a plan, each iteration must re-parse the entire task.
+**Why**: Planning creates deterministic continuation. Without a plan, each iteration must re-parse the entire task.
 
 **Proposed**:
 - Add `/lisa-plan` command (or make it automatic in `/lisa-loop`)
@@ -176,7 +172,7 @@ From the [Alibaba Cloud analysis](https://www.alibabacloud.com/blog/from-react-t
 
 ### Change 6: True Outer Loop with Fresh Context
 
-**Why**: "Ralph deliberately rotates to fresh LLM instances before degradation occurs." Simple "restart at 70%" suggestions punt the problem to the user.
+**Why**: Context rotation deliberately spawns fresh LLM instances before degradation occurs. Simple "restart at 70%" suggestions punt the problem to the user.
 
 **Proposed**: Run Claude Code instances as background processes, managed by a skill/orchestrator.
 
@@ -223,7 +219,7 @@ claude --print "Work on next checkpoint in LISA_PLAN.md" \
 **Advantages over stop hooks**:
 - True context isolation per iteration
 - State in files + REPL, not LLM memory
-- Original Ralph philosophy
+- Context rotation philosophy
 - Can add spending caps, token tracking
 - Each instance gets 100% "smart zone" context
 
@@ -231,7 +227,7 @@ claude --print "Work on next checkpoint in LISA_PLAN.md" \
 
 ### Change 7: REPL as Persistent State Layer
 
-**Why**: Clojure's REPL is a unique advantage we have over the original Ralph. It's a persistent state machine that survives across Claude instances.
+**Why**: Clojure's REPL is a unique advantage. It's a persistent state machine that survives across Claude instances.
 
 **State layers**:
 
@@ -294,7 +290,7 @@ This snapshot gets injected into each fresh Claude instance - it knows exactly w
 
 ### Change 8: Pluggable Validation Methods
 
-**Why**: The original Ralph supports configurable validation - both programmatic (tests, lints) AND non-deterministic (LLM-as-judge for aesthetics). Different tasks need different validation.
+**Why**: Good agentic loops support configurable validation - both programmatic (tests, lints) AND non-deterministic (LLM-as-judge for aesthetics). Different tasks need different validation.
 
 **Validation methods**:
 
@@ -637,11 +633,5 @@ The actual implementation in `forj.lisa.orchestrator` uses `babashka.process`:
 
 ## Sources
 
-- [Geoff Huntley's Ralph Wiggum Methodology](https://github.com/ghuntley/how-to-ralph-wiggum)
-- [Ralph Playbook - Comprehensive Guide](https://github.com/ClaytonFarr/ralph-playbook)
-- [VentureBeat - Ralph Wiggum AI](https://venturebeat.com/technology/how-ralph-wiggum-went-from-the-simpsons-to-the-biggest-name-in-ai-right-now)
-- [DEV Community - Ralph Wiggum Approach](https://dev.to/sivarampg/the-ralph-wiggum-approach-running-ai-coding-agents-for-hours-not-minutes-57c1)
-- [DEV Community - 2026 Year of Ralph Loop](https://dev.to/alexandergekov/2026-the-year-of-the-ralph-loop-agent-1gkj)
-- [Alibaba Cloud - From ReAct to Ralph Loop](https://www.alibabacloud.com/blog/from-react-to-ralph-loop-a-continuous-iteration-paradigm-for-ai-agents_602799)
 - [UltraThink Documentation](https://claudelog.com/faqs/what-is-ultrathink/)
 - [Extended Thinking Tips](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/extended-thinking-tips)
