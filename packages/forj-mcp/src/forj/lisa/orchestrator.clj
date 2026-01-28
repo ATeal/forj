@@ -273,18 +273,22 @@
    When :verbose true in config, uses stream-json format for detailed tool call logs
    and starts a real-time stream of tool calls to the console.
 
-   Returns {:process <proc> :stream <stream-info>} where stream-info has :stop-fn to call
-   when the process completes. In non-verbose mode, :stream is nil."
+   Returns {:process <proc> :stream <stream-info> :session-id <uuid>} where:
+   - stream-info has :stop-fn to call when the process completes (nil in non-verbose mode)
+   - session-id is the UUID used for Claude's session logs"
   [project-path prompt config log-file]
   ;; Pass prompt via stdin to avoid shell escaping issues
   ;; --dangerously-skip-permissions is REQUIRED for non-interactive mode
   ;; --mcp-config passes user config so Chrome MCP is available for visual validation
+  ;; --session-id allows us to correlate iteration with Claude's session logs
   ;; NOTE: stream-json requires --verbose flag when using -p (print mode)
   (let [verbose? (:verbose config)
+        session-id (str (java.util.UUID/randomUUID))
         base-args ["claude" "-p"
                    "--output-format" (if verbose? "stream-json" "json")
                    "--dangerously-skip-permissions"
-                   "--mcp-config" (:mcp-config config)]
+                   "--mcp-config" (:mcp-config config)
+                   "--session-id" session-id]
         args (if verbose?
                (conj base-args "--verbose")
                base-args)
@@ -297,7 +301,8 @@
                      :err :stdout}
                     args)]
     {:process proc
-     :stream stream}))
+     :stream stream
+     :session-id session-id}))
 
 (defn- last-src-modification
   "Get the most recent modification time of source files in the project."
@@ -1199,4 +1204,16 @@
 
   (maybe-append-compliance-sign! "." 5 {:score :good :used-repl-tools ["reload_namespace"] :anti-patterns []} "Test checkpoint")
   ;; => nil (no sign appended for non-poor compliance)
+
+  ;; Test session-id generation in spawn-claude-iteration!
+  ;; Generate a UUID - this is what spawn-claude-iteration! does internally
+  (str (java.util.UUID/randomUUID))
+  ;; => "550e8400-e29b-41d4-a716-446655440000" (example)
+
+  ;; Verify UUID format (36 chars: 8-4-4-4-12 hex digits with hyphens)
+  (let [uuid-str (str (java.util.UUID/randomUUID))]
+    {:uuid uuid-str
+     :length (count uuid-str)
+     :valid-format? (re-matches #"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" uuid-str)})
+  ;; => {:uuid "...", :length 36, :valid-format? "..."}
   )
