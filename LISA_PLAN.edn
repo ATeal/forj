@@ -31,8 +31,9 @@
    :file "packages/forj-mcp/src/forj/lisa/orchestrator.clj",
    :gates ["repl:(require '[forj.lisa.orchestrator :reload]) => nil"],
    :depends-on [:delete-plan-clj :delete-signs-clj],
-   :status :in-progress,
-   :started "2026-01-28T17:01:20.570334150Z"}
+   :status :done,
+   :started "2026-01-28T17:01:20.570334150Z",
+   :completed "2026-01-28T17:04:15.622786558Z"}
   {:description
    "Update SKILL.md: change all references from LISA_PLAN.md to LISA_PLAN.edn, update format examples",
    :id :update-skill-docs,
