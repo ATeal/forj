@@ -13,14 +13,15 @@
    :completed "2026-01-28T16:34:15.617770234Z"}
   {:description
    "Add lisa_inspect_iteration MCP tool - returns tool counts, success/fail, duration, error summary for a checkpoint/iteration",
-   :id :inspect-iteration-tool,
+   :started "2026-01-28T16:34:20.652948622Z",
+   :completed "2026-01-28T16:37:45.685590906Z",
+   :gates ["repl:(require '[forj.mcp.tools] :reload) => ok"],
    :file "packages/forj-mcp/src/forj/mcp/tools.clj",
    :acceptance
    "lisa_inspect_iteration returns structured data about an iteration",
-   :gates ["repl:(require '[forj.mcp.tools] :reload) => ok"],
-   :depends-on [:enhance-meta-files],
-   :status :in-progress,
-   :started "2026-01-28T16:34:05.561707172Z"}
+   :status :done,
+   :id :inspect-iteration-tool,
+   :depends-on [:enhance-meta-files]}
   {:description
    "Add lisa_get_iteration_transcript MCP tool - returns raw conversation/tool calls from Claude's session JSONL",
    :id :get-transcript-tool,
@@ -29,7 +30,8 @@
    "lisa_get_iteration_transcript returns conversation data from Claude's logs",
    :gates ["repl:(require '[forj.mcp.tools] :reload) => ok"],
    :depends-on [:inspect-iteration-tool],
-   :status :pending}
+   :status :in-progress,
+   :started "2026-01-28T16:37:34.593209933Z"}
   {:description
    "Update orchestrator to stop writing the big parallel-*.json output files (keep only meta files)",
    :id :remove-redundant-logs,
