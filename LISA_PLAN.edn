@@ -1,5 +1,5 @@
 {:title "Integrate Claude Session Logs for Lisa Analytics",
- :status :in-progress,
+ :status :complete,
  :checkpoints
  [{:description
    "Generate and pass --session-id to Claude when spawning iterations",
@@ -55,14 +55,15 @@
    :depends-on [:integrate-lisa-watch]}
   {:description
    "Test claude-logs-dir path generation, JSONL parsing, tool extraction, and end-to-end flow",
-   :id :integration-tests,
-   :file "packages/forj-mcp/test/forj/lisa/claude_sessions_test.clj",
-   :acceptance "bb test passes with new claude_sessions tests",
+   :started "2026-01-28T15:35:37.632838333Z",
+   :completed "2026-01-28T15:37:44.260504980Z",
    :gates
    ["repl:(require '[forj.lisa.claude-sessions-test] :reload) => ok"
     "repl:(clojure.test/run-tests 'forj.lisa.claude-sessions-test) => passes"],
-   :depends-on [:cleanup-legacy],
-   :status :in-progress,
-   :started "2026-01-28T15:35:19.220065475Z"}],
+   :file "packages/forj-mcp/test/forj/lisa/claude_sessions_test.clj",
+   :acceptance "bb test passes with new claude_sessions tests",
+   :status :done,
+   :id :integration-tests,
+   :depends-on [:cleanup-legacy]}],
  :signs [],
  :created "2026-01-28T15:23:16.421183134Z"}

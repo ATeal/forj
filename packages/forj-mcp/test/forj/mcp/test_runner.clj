@@ -3,11 +3,12 @@
   (:require [clojure.test :as t]
             [forj.mcp.tools-test]
             [forj.lisa.analytics-test]
+            [forj.lisa.claude-sessions-test]
             [forj.lisa.validation-test]
             [forj.scaffold-test]))
 
 (defn run-tests []
-  (let [result (t/run-tests 'forj.mcp.tools-test 'forj.lisa.analytics-test 'forj.lisa.validation-test 'forj.scaffold-test)]
+  (let [result (t/run-tests 'forj.mcp.tools-test 'forj.lisa.analytics-test 'forj.lisa.claude-sessions-test 'forj.lisa.validation-test 'forj.scaffold-test)]
     (if (and (zero? (:fail result))
              (zero? (:error result)))
       (do
