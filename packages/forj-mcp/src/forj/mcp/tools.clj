@@ -6,6 +6,7 @@
             [clojure.edn :as edn]
             [clojure.string :as str]
             [edamame.core :as edamame]
+            [forj.lisa.claude-sessions :as claude-sessions]
             [forj.lisa.plan :as lisa-plan]
             [forj.lisa.plan-edn :as plan-edn]
             [forj.lisa.signs :as lisa-signs]
@@ -1981,6 +1982,9 @@
               log-dir (str project-path "/.forj/logs/lisa")
               iter-files (when (fs/exists? log-dir)
                            (fs/glob log-dir "iter-*.json"))
+              ;; Get meta files for session-id extraction
+              meta-files (when (fs/exists? log-dir)
+                           (fs/glob log-dir "iter-*-meta.json"))
               iteration-count (count iter-files)
               ;; Get cost from latest iteration log
               latest-log (when (seq iter-files)
@@ -1988,7 +1992,20 @@
               latest-result (when latest-log
                               (try
                                 (json/parse-string (slurp (str latest-log)) true)
-                                (catch Exception _ nil)))]
+                                (catch Exception _ nil)))
+              ;; Get session-id from latest meta file for tool usage
+              latest-meta (when (seq meta-files)
+                            (last (sort meta-files)))
+              latest-meta-data (when latest-meta
+                                 (try
+                                   (json/parse-string (slurp (str latest-meta)) true)
+                                   (catch Exception _ nil)))
+              session-id (:session-id latest-meta-data)
+              ;; Get tool usage from Claude session logs
+              tool-summary (when session-id
+                             (try
+                               (claude-sessions/session-tool-summary session-id project-path)
+                               (catch Exception _ nil)))]
           {:success true
            :status (:status plan)
            :title (:title plan)
@@ -2011,7 +2028,12 @@
            :file-activity {:last-modified-ms idle-ms
                            :last-modified-ago (format-elapsed idle-ms)
                            :possibly-stuck (when idle-ms (> idle-ms (* 5 60 1000)))}
-           :signs (take 3 (reverse (:signs plan)))})
+           :signs (take 3 (reverse (:signs plan)))
+           ;; Tool usage from Claude session logs (current/last iteration)
+           :tool-usage (when (and tool-summary (:exists? tool-summary))
+                         {:session-id session-id
+                          :total-calls (:total-calls tool-summary)
+                          :tool-counts (:tool-counts tool-summary)})})
 
         ;; Markdown format - basic info
         :else
