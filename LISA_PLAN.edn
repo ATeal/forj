@@ -69,13 +69,15 @@
    :id :wait-30s-9,
    :acceptance "Waited 30 seconds",
    :depends-on [:wait-30s-8],
-   :status :in-progress,
-   :started "2026-01-28T16:08:46.055351662Z"}
+   :status :done,
+   :started "2026-01-28T16:08:56.113880941Z",
+   :completed "2026-01-28T16:09:46.132464762Z"}
   {:description
    "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. This is the final checkpoint - the test is complete!",
    :id :wait-30s-10,
    :acceptance "Waited 30 seconds, test complete",
    :depends-on [:wait-30s-9],
-   :status :pending}],
+   :status :in-progress,
+   :started "2026-01-28T16:09:41.192949455Z"}],
  :signs [],
  :created "2026-01-28T16:01:29.941090958Z"}
