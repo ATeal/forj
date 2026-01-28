@@ -62,8 +62,18 @@
    :acceptance
    "Code review complete, any issues documented as new checkpoints",
    :depends-on [:tests],
-   :status :in-progress,
-   :started "2026-01-28T16:48:22.173258483Z"}],
+   :status :done,
+   :started "2026-01-28T16:48:35.956744381Z",
+   :completed "2026-01-28T16:50:10.980466033Z"}
+  {:status :in-progress,
+   :id :cleanup-unused-safe-execute,
+   :description
+   "Remove or make private the unused safe-execute function in tools.clj (flagged by LSP as unused-public-var)",
+   :file "packages/forj-mcp/src/forj/mcp/tools.clj",
+   :acceptance
+   "LSP diagnostic for unused-public-var on safe-execute is resolved",
+   :depends-on [:code-review],
+   :started "2026-01-28T16:50:02.992947734Z"}],
  :signs
  [{:iteration 0,
    :checkpoint nil,
