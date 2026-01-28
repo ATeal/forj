@@ -100,9 +100,9 @@ Tracking architectural decisions, outcomes, and learnings.
 
 ---
 
-## Future Decisions (Pending)
+## Resolved Decisions
 
-- [ ] REPL process management: background vs manual
-- [ ] Multi-REPL simultaneous connections
-- [ ] Remote REPL support (SSH tunnels)
-- [ ] Session state persistence across Claude sessions
+- [x] **REPL process management**: Manual startup with `track_process` for cleanup
+- [x] **Multi-REPL simultaneous connections**: Supported via path-based routing
+- [ ] Remote REPL support (SSH tunnels) - Not yet implemented
+- [ ] Session state persistence - Not yet implemented

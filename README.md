@@ -14,7 +14,7 @@ REPL-driven LLM development for Clojure. Provides seamless Claude Code integrati
 
 | Component | Status | Description |
 |-----------|--------|-------------|
-| forj-mcp | ✅ Complete | MCP server with 26 tools |
+| forj-mcp | ✅ Complete | MCP server with 29 tools |
 | forj-hooks | ✅ Complete | SessionStart + UserPromptSubmit + PreToolUse |
 | forj-skill | ✅ Complete | `/clj-repl` + `/clj-init` + `/lisa-loop` |
 
@@ -186,7 +186,7 @@ bb uninstall          # Remove from ~/.claude/
 ## Manual Configuration
 
 ### MCP Server
-Add to `~/.claude/mcp.json`:
+Add to `~/.claude.json` (user scope):
 ```json
 {
   "mcpServers": {

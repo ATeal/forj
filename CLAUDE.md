@@ -10,6 +10,25 @@ forj provides seamless Claude Code integration for Clojure projects:
 - **forj-skill**: `/clj-repl` skill for REPL management ✅
 - **clj-init**: `/clj-init` skill for project scaffolding ✅
 
+## Philosophy: Why REPL + LLM
+
+**The Training Data Paradox**: Conventional wisdom says "use Python/TypeScript because LLMs have seen more of it." But if the agent has a REPL, training data volume matters less - wrong syntax gets immediate feedback, the agent self-corrects in real-time.
+
+**REPL vs Test Validation**:
+- Test-based loops validate at the test/build level
+- REPL validation happens at the expression level
+- You catch mistakes 10x faster because you're not waiting for a full test suite
+
+**Lisa Loop's Fresh Instance Advantage**:
+| Layer | Persists Across Iterations? |
+|-------|----------------------------|
+| LISA_PLAN.edn | ✅ Yes - progress tracking |
+| Git/Files | ✅ Yes - code changes |
+| REPL state | ✅ Yes - loaded namespaces |
+| Claude context | ❌ No - fresh each time |
+
+This prevents context bloat and hallucination from stale memory.
+
 ## Quick Start
 
 ```bash
@@ -23,7 +42,7 @@ bb install    # Installs MCP, hooks, and skill to ~/.claude/
 ```bash
 bb nrepl                  # Start REPL for forj development
 bb mcp:dev                # Run MCP server in dev mode
-bb test                   # Run all tests (21 tests, 105 assertions)
+bb test                   # Run all tests
 bb logs                   # View forj logs
 ```
 
@@ -98,12 +117,6 @@ claude mcp remove forj --scope user
 ```
 
 Debug logs: `~/.cache/claude-cli-nodejs/<project-path>/mcp-logs-forj/*.jsonl`
-
-## Testing After Session Restart
-
-All tools tested and working:
-- [x] `run_tests` - Runs bb test, returns structured output ✅
-- [x] `eval_comment_block` - Evaluates all forms in comment block ✅
 
 ## Current Status
 
