@@ -2,7 +2,7 @@
   "Lisa Loop orchestrator - spawns fresh Claude instances for each iteration.
 
    The orchestrator:
-   1. Reads LISA_PLAN.edn (or .md) to find current checkpoint
+   1. Reads LISA_PLAN.edn to find current checkpoint
    2. Spawns a Claude instance with focused prompt
    3. Waits for completion
    4. Reads output JSON for success/failure
@@ -13,7 +13,6 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [forj.lisa.analytics :as analytics]
-            [forj.lisa.plan :as plan]
             [forj.lisa.plan-edn :as plan-edn]))
 
 (def default-config
@@ -78,18 +77,14 @@
   "Build the prompt for a single iteration focused on the current checkpoint."
   [plan checkpoint signs-content]
   (let [plan-title (:title plan)
-        ;; Support both EDN (:id) and markdown (:number) formats
-        cp-id (or (:number checkpoint) (:id checkpoint))
+        cp-id (:id checkpoint)
         cp-desc (:description checkpoint)
         cp-file (:file checkpoint)
         cp-acceptance (:acceptance checkpoint)
         cp-validation (:validation checkpoint)
         cp-gates (:gates checkpoint)
         cp-deps (:depends-on checkpoint)
-        is-ui? (ui-checkpoint? cp-desc)
-        ;; Detect if using EDN format (has :id keyword)
-        is-edn? (keyword? (:id checkpoint))
-        plan-file (if is-edn? "LISA_PLAN.edn" "LISA_PLAN.md")]
+        is-ui? (ui-checkpoint? cp-desc)]
     (str/join "\n\n"
               (filter some?
                       [(str "# Lisa Loop: " plan-title)
@@ -109,7 +104,7 @@
                        "**CRITICAL**: You MUST follow this REPL-driven workflow. Skipping steps wastes iterations."
                        ""
                        "### Step 1: Understand Current State"
-                       (str "- Read " plan-file " to understand the full context")
+                       "- Read LISA_PLAN.edn to understand the full context"
                        "- Use `repl_eval` to query current REPL state if needed"
                        "- Read relevant source files to understand existing code"
                        ""
@@ -147,14 +142,12 @@
                               "2. mcp__playwright__browser_wait_for with time=3\n"
                               "3. mcp__playwright__browser_take_screenshot\n"
                               "```\n\n"
-                              "Check shadow-cljs.edn :dev-http, package.json scripts, or LISA_PLAN.md for the correct URL/port.\n\n"
+                              "Check shadow-cljs.edn :dev-http, package.json scripts, or LISA_PLAN.edn for the correct URL/port.\n\n"
                               "CHECKPOINT WILL BE REJECTED if you mark complete without screenshot verification."))
                        ""
                        (str "### Step " (if is-ui? "5" "4") ": Mark Complete")
                        (str "When acceptance criteria are verified via REPL" (when is-ui? " and screenshot") ":")
-                       (if is-edn?
-                         (str "- Use `lisa_mark_checkpoint_done` tool with checkpoint '" (name cp-id) "'")
-                         (str "- Edit " plan-file " to mark this checkpoint [DONE]"))
+                       (str "- Use `lisa_mark_checkpoint_done` tool with checkpoint '" (name cp-id) "'")
                        "- Output 'CHECKPOINT_COMPLETE'"
                        ""
                        "If blocked, output 'CHECKPOINT_BLOCKED: <reason>' with specific details."
@@ -164,47 +157,27 @@
                        ""
                        "Focus ONLY on this checkpoint. Do not work ahead."]))))
 
-(defn- use-edn-format?
-  "Check if we should use EDN format."
-  [project-path]
-  (plan-edn/plan-exists? project-path))
-
 (defn- read-signs
-  "Read signs - from EDN embedded or LISA_SIGNS.md."
+  "Read signs from EDN plan (embedded in :signs key)."
   [project-path]
-  (if (use-edn-format? project-path)
-    ;; EDN format - get recent signs and format them
-    (let [plan (plan-edn/read-plan project-path)
-          signs (plan-edn/recent-signs plan 5)]
-      (when (seq signs)
-        (str/join "\n\n"
-                  (map (fn [s]
-                         (str "### Sign (iteration " (:iteration s) ")\n"
-                              "**Issue:** " (:issue s) "\n"
-                              "**Fix:** " (:fix s)))
-                       signs))))
-    ;; Markdown fallback
-    (let [signs-path (str (fs/path project-path "LISA_SIGNS.md"))]
-      (when (fs/exists? signs-path)
-        (slurp signs-path)))))
+  (let [plan (plan-edn/read-plan project-path)
+        signs (plan-edn/recent-signs plan 5)]
+    (when (seq signs)
+      (str/join "\n\n"
+                (map (fn [s]
+                       (str "### Sign (iteration " (:iteration s) ")\n"
+                            "**Issue:** " (:issue s) "\n"
+                            "**Fix:** " (:fix s)))
+                     signs)))))
 
 (defn- append-sign!
-  "Append a sign (learning) - to EDN embedded or LISA_SIGNS.md."
+  "Append a sign (learning) to EDN plan (embedded in :signs key)."
   [project-path iteration issue fix]
-  (if (use-edn-format? project-path)
-    ;; EDN format - embedded signs
-    (plan-edn/append-sign! project-path
-                           {:iteration iteration
-                            :issue issue
-                            :fix fix
-                            :severity :error})
-    ;; Markdown fallback
-    (let [signs-path (str (fs/path project-path "LISA_SIGNS.md"))
-          timestamp (str (java.time.Instant/now))
-          sign-entry (str "\n## Sign " iteration " (" timestamp ")\n"
-                          "**Issue:** " issue "\n"
-                          "**Fix:** " fix "\n")]
-      (spit signs-path sign-entry :append true))))
+  (plan-edn/append-sign! project-path
+                         {:iteration iteration
+                          :issue issue
+                          :fix fix
+                          :severity :error}))
 
 ;;; =============================================================================
 ;;; Tool Call Streaming (verbose mode)
@@ -563,32 +536,20 @@
         (spit orch-log "")))))
 
 (defn- read-plan
-  "Read plan from EDN (preferred) or markdown format."
+  "Read plan from LISA_PLAN.edn. Returns nil if not found."
   [project-path]
-  (cond
-    (plan-edn/plan-exists? project-path)
-    {:format :edn
-     :plan (plan-edn/read-plan project-path)}
-
-    (plan/plan-exists? project-path)
-    {:format :markdown
-     :plan (plan/parse-plan project-path)}
-
-    :else nil))
+  (when (plan-edn/plan-exists? project-path)
+    (plan-edn/read-plan project-path)))
 
 (defn- plan-all-complete?
-  "Check if all checkpoints are complete (format-aware)."
-  [{:keys [format plan]}]
-  (case format
-    :edn (plan-edn/all-complete? plan)
-    :markdown (plan/all-complete? plan)))
+  "Check if all checkpoints are complete."
+  [plan]
+  (plan-edn/all-complete? plan))
 
 (defn- plan-current-checkpoint
-  "Get current checkpoint (format-aware)."
-  [{:keys [format plan]}]
-  (case format
-    :edn (plan-edn/current-checkpoint plan)
-    :markdown (plan/current-checkpoint plan)))
+  "Get current checkpoint."
+  [plan]
+  (plan-edn/current-checkpoint plan))
 
 ;;; =============================================================================
 ;;; Parallel Execution (EDN format only)
@@ -946,15 +907,15 @@
    Options:
    - :max-iterations - Maximum iterations (default: 20)
    - :max-parallel - Max concurrent checkpoints for parallel mode (default: 3)
-   - :parallel - Enable parallel execution for EDN plans (default: false)
+   - :parallel - Enable parallel execution (default: false)
    - :allowed-tools - Tools to allow (default: standard set)
    - :on-iteration - Callback (fn [iteration result]) for each iteration
    - :on-checkpoint-complete - Callback (fn [checkpoint]) for parallel mode
    - :on-complete - Callback (fn [final-plan total-cost]) when done"
   [project-path & [{:keys [on-iteration on-complete _on-checkpoint-complete parallel]
                     :as opts}]]
-  ;; Dispatch to parallel mode if requested and using EDN format
-  (if (and parallel (use-edn-format? project-path))
+  ;; Dispatch to parallel mode if requested
+  (if parallel
     (run-loop-parallel! project-path opts)
     ;; Sequential mode (default)
     (let [config (merge default-config opts)
@@ -965,27 +926,26 @@
              total-cost 0.0
              total-input-tokens 0
              total-output-tokens 0]
-        (let [plan-data (read-plan project-path)
-            current-plan (:plan plan-data)]
+        (let [plan (read-plan project-path)]
 
         (cond
           ;; No plan found
-          (nil? plan-data)
+          (nil? plan)
           {:status :error
-           :error "No LISA_PLAN.edn or LISA_PLAN.md found"
+           :error "No LISA_PLAN.edn found"
            :iterations iteration
            :total-cost total-cost
            :total-input-tokens total-input-tokens
            :total-output-tokens total-output-tokens}
 
           ;; All checkpoints complete
-          (plan-all-complete? plan-data)
+          (plan-all-complete? plan)
           (let [result {:status :complete
                         :iterations (dec iteration)
                         :total-cost total-cost
                         :total-input-tokens total-input-tokens
                         :total-output-tokens total-output-tokens}]
-            (when on-complete (on-complete current-plan total-cost))
+            (when on-complete (on-complete plan total-cost))
             result)
 
           ;; Max iterations reached
@@ -998,10 +958,9 @@
 
           ;; Run iteration
           :else
-          (let [checkpoint (plan-current-checkpoint plan-data)
-                ;; For EDN, use :id if no :number; add number for display
+          (let [checkpoint (plan-current-checkpoint plan)
                 cp-id (:id checkpoint)
-                cp-display (or (:number checkpoint) cp-id)
+                cp-display cp-id
                 max-failures (:max-checkpoint-failures config)]
 
             ;; Check if checkpoint should be skipped due to repeated failures
@@ -1012,13 +971,12 @@
                               (str "Checkpoint " cp-display " skipped after " max-failures " failures")
                               "Consider breaking into smaller tasks or manual intervention")
                 ;; Mark as failed and continue to next
-                (when (plan-edn/plan-exists? project-path)
-                  (plan-edn/mark-checkpoint-failed! project-path cp-id "Too many failures"))
+                (plan-edn/mark-checkpoint-failed! project-path cp-id "Too many failures")
                 (recur (inc iteration) total-cost total-input-tokens total-output-tokens))
 
               ;; Normal iteration
               (let [signs (read-signs project-path)
-                    prompt (build-iteration-prompt current-plan checkpoint signs)
+                    prompt (build-iteration-prompt plan checkpoint signs)
                     log-file (str (fs/path log-dir (str "iter-" iteration ".json")))
 
                     _ (println (str "[Lisa] Iteration " iteration ": Checkpoint " cp-display
@@ -1104,24 +1062,30 @@
                                (+ total-output-tokens iter-output)))))))))))))))
 
 (defn generate-plan!
-  "Generate a LISA_PLAN.md by asking Claude to analyze the task and create checkpoints."
+  "Generate a LISA_PLAN.edn by asking Claude to analyze the task and create checkpoints."
   [project-path task-description & [{:keys [max-checkpoints] :or {max-checkpoints 10}}]]
   (let [log-dir (ensure-log-dir! project-path default-config)
         log-file (str (fs/path log-dir "planning.json"))
 
         prompt (str "# Lisa Loop Planning\n\n"
-                    "Analyze this task and create a LISA_PLAN.md with checkpoints.\n\n"
+                    "Analyze this task and create a LISA_PLAN.edn with checkpoints.\n\n"
                     "## Task\n" task-description "\n\n"
                     "## Instructions\n\n"
                     "1. Break the task into " max-checkpoints " or fewer checkpoints\n"
                     "2. Each checkpoint should be independently verifiable\n"
                     "3. Include acceptance criteria that can be validated via REPL\n"
-                    "4. Create the file LISA_PLAN.md in the project root\n"
+                    "4. Create the file LISA_PLAN.edn in the project root\n"
                     "5. Output 'PLAN_CREATED' when done\n\n"
-                    "Use the standard format:\n"
-                    "### N. [PENDING] Description\n"
-                    "- File: path/to/file.clj\n"
-                    "- Acceptance: (some-fn arg) => expected\n")
+                    "Use the EDN format:\n"
+                    "{:title \"Task title\"\n"
+                    " :status :pending\n"
+                    " :checkpoints\n"
+                    " [{:id :checkpoint-id\n"
+                    "   :description \"What to do\"\n"
+                    "   :file \"path/to/file.clj\"\n"
+                    "   :acceptance \"Expected result\"\n"
+                    "   :status :pending}]\n"
+                    " :signs []}\n")
 
         {:keys [process stream]} (spawn-claude-iteration! project-path prompt default-config log-file)
         _exit-code (wait-for-process process (:poll-interval-ms default-config))
@@ -1129,9 +1093,9 @@
         result (parse-iteration-result log-file)]
 
     (if (and (iteration-succeeded? result)
-             (plan/plan-exists? project-path))
+             (plan-edn/plan-exists? project-path))
       {:status :success
-       :plan (plan/parse-plan project-path)
+       :plan (plan-edn/read-plan project-path)
        :cost (:total_cost_usd result)}
       {:status :error
        :error (or (:result result) "Failed to generate plan")
