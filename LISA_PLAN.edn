@@ -14,22 +14,25 @@
    :id :delete-signs-clj,
    :file "packages/forj-mcp/src/forj/lisa/signs.clj",
    :acceptance "File no longer exists",
-   :status :in-progress,
-   :started "2026-01-28T17:00:40.535146540Z"}
+   :status :done,
+   :started "2026-01-28T17:00:40.535146540Z",
+   :completed "2026-01-28T17:01:25.581532525Z"}
   {:description
    "Update tools.clj: remove lisa-plan/lisa-signs requires, remove markdown fallbacks in lisa-get-plan, lisa-mark-checkpoint-done, lisa-append-sign, lisa-get-signs, lisa-clear-signs, lisa-watch. Update error messages to only mention LISA_PLAN.edn",
    :id :update-tools-clj,
    :file "packages/forj-mcp/src/forj/mcp/tools.clj",
    :gates ["repl:(require '[forj.mcp.tools :reload]) => nil"],
    :depends-on [:delete-plan-clj :delete-signs-clj],
-   :status :pending}
+   :status :in-progress,
+   :started "2026-01-28T17:01:17.829949917Z"}
   {:description
    "Update orchestrator.clj: remove lisa.plan require, remove use-edn-format? function (always EDN now), remove markdown fallbacks in read-signs, append-sign!, read-plan, build-iteration-prompt, run-loop!, generate-plan!",
    :id :update-orchestrator,
    :file "packages/forj-mcp/src/forj/lisa/orchestrator.clj",
    :gates ["repl:(require '[forj.lisa.orchestrator :reload]) => nil"],
    :depends-on [:delete-plan-clj :delete-signs-clj],
-   :status :pending}
+   :status :in-progress,
+   :started "2026-01-28T17:01:20.570334150Z"}
   {:description
    "Update SKILL.md: change all references from LISA_PLAN.md to LISA_PLAN.edn, update format examples",
    :id :update-skill-docs,
