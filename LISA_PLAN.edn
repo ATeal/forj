@@ -1,59 +1,61 @@
-{:title "Process Lifecycle Management Improvements",
- :status :complete,
+{:title "Integrate Claude Session Logs for Lisa Analytics",
+ :status :in-progress,
  :checkpoints
- [{:description "Track PGID alongside PID in process entries",
-   :id :pgid-tracking,
-   :file "packages/forj-mcp/src/forj/mcp/tools.clj",
+ [{:description
+   "Generate and pass --session-id to Claude when spawning iterations",
+   :id :session-id-generation,
+   :file "packages/forj-mcp/src/forj/lisa/orchestrator.clj",
    :acceptance
-   "track-process captures and stores :pgid via ps command, list-tracked-processes shows pgid",
-   :gates ["repl:(require '[forj.mcp.tools :as t] :reload) => ok"],
+   "spawn-claude-iteration! generates UUID and adds --session-id flag to claude command",
+   :gates ["repl:(require '[forj.lisa.orchestrator] :reload) => ok"],
    :status :done,
-   :started "2026-01-22T15:56:44.376389995Z",
-   :completed "2026-01-22T15:58:14.454523892Z"}
+   :started "2026-01-28T15:23:32.206018111Z",
+   :completed "2026-01-28T15:24:47.251955947Z"}
   {:description
-   "Update stop-project to kill by process group (PGID) instead of individual PID",
-   :started "2026-01-22T15:58:19.486289802Z",
-   :completed "2026-01-22T16:03:04.584765666Z",
-   :gates ["repl:(require '[forj.mcp.tools :as t] :reload) => ok"],
-   :file "packages/forj-mcp/src/forj/mcp/tools.clj",
-   :acceptance
-   "stop-project uses kill -TERM -<pgid> for entries with pgid, falls back to pid for legacy entries",
-   :status :done,
-   :id :group-kill,
-   :depends-on [:pgid-tracking]}
+   "Store session ID in iteration metadata written to .forj/logs/lisa/*.json",
+   :id :store-session-id,
+   :file "packages/forj-mcp/src/forj/lisa/orchestrator.clj",
+   :acceptance "Iteration JSON files contain :session-id field",
+   :gates ["repl:(require '[forj.lisa.orchestrator] :reload) => ok"],
+   :depends-on [:session-id-generation],
+   :status :in-progress,
+   :started "2026-01-28T15:24:40.896142251Z"}
   {:description
-   "Update /clj-repl skill to use setsid for consistent process daemonization",
-   :id :daemonize-spawns,
-   :file "packages/forj-skill/resources/skills/clj-repl.md",
-   :acceptance
-   "Skill instructions use setsid -f for bb/clj/npx commands, processes survive terminal close",
-   :gates [],
-   :status :done,
-   :started "2026-01-22T15:56:44.388226375Z",
-   :completed "2026-01-22T15:58:09.421071229Z"}
-  {:description
-   "Add reconcile-session function to prune dead processes and report orphans on startup",
-   :started "2026-01-22T15:58:19.496442184Z",
-   :completed "2026-01-22T15:59:24.526946039Z",
-   :gates ["repl:(require '[forj.mcp.tools :as t] :reload) => ok"],
-   :file "packages/forj-mcp/src/forj/mcp/tools.clj",
-   :acceptance
-   "list-tracked-processes auto-prunes dead entries from session file, returns :pruned-count",
-   :status :done,
-   :id :session-reconcile,
-   :depends-on [:pgid-tracking]}
-  {:description
-   "Add tests for PGID tracking, group kill, and session reconciliation",
-   :started "2026-01-22T16:03:09.609833802Z",
-   :completed "2026-01-22T16:05:53.936934508Z",
+   "Add functions to read Claude session logs: claude-logs-dir, read-session-jsonl, extract-tool-calls",
+   :id :claude-session-reader,
+   :file "packages/forj-mcp/src/forj/lisa/claude_sessions.clj",
+   :acceptance "Can read tool names/counts from a Claude session ID",
    :gates
-   ["repl:(require '[forj.mcp.tools-test] :reload) => ok"
-    "repl:(clojure.test/run-tests 'forj.mcp.tools-test) => passes"],
-   :file "packages/forj-mcp/test/forj/mcp/tools_test.clj",
+   ["repl:(require '[forj.lisa.claude-sessions] :reload) => ok"],
+   :status :in-progress,
+   :started "2026-01-28T15:23:32.222195543Z"}
+  {:description
+   "Update lisa_watch to show tool usage from Claude session logs for current/last iteration",
+   :id :integrate-lisa-watch,
+   :file "packages/forj-mcp/src/forj/mcp/tools.clj",
    :acceptance
-   "Tests cover: pgid capture, group kill logic, dead process pruning",
-   :status :done,
-   :id :tests,
-   :depends-on [:pgid-tracking :group-kill :session-reconcile]}],
+   "lisa_watch output includes tool call counts from Claude's session logs",
+   :gates ["repl:(require '[forj.mcp.tools] :reload) => ok"],
+   :depends-on [:store-session-id :claude-session-reader],
+   :status :pending}
+  {:description
+   "Remove redundant analytics/logging code - keep orchestrator events, remove duplicate tool parsing",
+   :id :cleanup-legacy,
+   :file "packages/forj-mcp/src/forj/lisa/analytics.clj",
+   :acceptance
+   "No duplicate tool call parsing in analytics.clj, orchestrator uses claude-sessions for tool data",
+   :gates ["repl:(require '[forj.lisa.analytics] :reload) => ok"],
+   :depends-on [:integrate-lisa-watch],
+   :status :pending}
+  {:description
+   "Test claude-logs-dir path generation, JSONL parsing, tool extraction, and end-to-end flow",
+   :id :integration-tests,
+   :file "packages/forj-mcp/test/forj/lisa/claude_sessions_test.clj",
+   :acceptance "bb test passes with new claude_sessions tests",
+   :gates
+   ["repl:(require '[forj.lisa.claude-sessions-test] :reload) => ok"
+    "repl:(clojure.test/run-tests 'forj.lisa.claude-sessions-test) => passes"],
+   :depends-on [:cleanup-legacy],
+   :status :pending}],
  :signs [],
- :created "2026-01-22T15:56:39.563335582Z"}
+ :created "2026-01-28T15:23:16.421183134Z"}
