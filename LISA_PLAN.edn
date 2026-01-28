@@ -35,14 +35,15 @@
    :depends-on [:inspect-iteration-tool]}
   {:description
    "Update orchestrator to stop writing the big parallel-*.json output files (keep only meta files)",
-   :id :remove-redundant-logs,
+   :started "2026-01-28T16:40:10.775720184Z",
+   :completed "2026-01-28T16:42:10.799580644Z",
+   :gates ["repl:(require '[forj.lisa.orchestrator] :reload) => ok"],
    :file "packages/forj-mcp/src/forj/lisa/orchestrator.clj",
    :acceptance
    "Orchestrator no longer writes parallel-*.json, only parallel-*-meta.json",
-   :gates ["repl:(require '[forj.lisa.orchestrator] :reload) => ok"],
-   :depends-on [:get-transcript-tool],
-   :status :in-progress,
-   :started "2026-01-28T16:39:53.548165196Z"}
+   :status :done,
+   :id :remove-redundant-logs,
+   :depends-on [:get-transcript-tool]}
   {:description
    "Add tests for lisa_inspect_iteration and lisa_get_iteration_transcript tools",
    :id :tests,
@@ -51,7 +52,8 @@
    :gates
    ["repl:(clojure.test/run-tests 'forj.mcp.tools-test) => passes"],
    :depends-on [:remove-redundant-logs],
-   :status :pending}
+   :status :in-progress,
+   :started "2026-01-28T16:42:02.183300382Z"}
   {:description
    "Code review: Check for DRY violations, unused code, and code smells. Add follow-up checkpoints for any issues found.",
    :id :code-review,

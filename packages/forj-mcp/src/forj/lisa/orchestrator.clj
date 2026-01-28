@@ -13,7 +13,6 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [forj.lisa.analytics :as analytics]
-            [forj.lisa.claude-sessions :as claude-sessions]
             [forj.lisa.plan :as plan]
             [forj.lisa.plan-edn :as plan-edn]))
 
@@ -550,9 +549,14 @@
   "Clean up logs from previous runs to prevent stale output confusion."
   [project-path config]
   (let [log-dir (str (fs/path project-path (:log-dir config)))]
-    ;; Clear iteration logs from previous runs
+    ;; Clear iteration logs from previous runs (sequential mode)
     (doseq [f (fs/glob log-dir "iter-*.json")]
       (fs/delete f))
+    ;; Clear parallel output logs (but NOT meta files) from previous runs
+    ;; Meta files end in -meta.json and should be preserved
+    (doseq [f (fs/glob log-dir "parallel-*.json")]
+      (when-not (str/ends-with? (str f) "-meta.json")
+        (fs/delete f)))
     ;; Clear orchestrator log if it exists
     (let [orch-log (str (fs/path log-dir "orchestrator.log"))]
       (when (fs/exists? orch-log)
@@ -676,7 +680,8 @@
       (do
         ;; Stop the tool call stream
         (stop-stream! (:stream proc-info))
-        (let [result (parse-iteration-result (:log-file proc-info))
+        (let [log-file (:log-file proc-info)
+              result (parse-iteration-result log-file)
               succeeded? (iteration-succeeded? result)
               checkpoint-complete? (checkpoint-completed? result)
               error-msg (when-not succeeded?
@@ -684,9 +689,12 @@
                               (extract-blocked-reason result)
                               "Iteration failed"))]
           ;; Update meta file with completion status
-          (update-iteration-metadata! (:log-file proc-info)
+          (update-iteration-metadata! log-file
                                        (and succeeded? checkpoint-complete?)
                                        error-msg)
+          ;; Delete the large parallel-*.json file - we have meta file + session logs
+          (when (fs/exists? log-file)
+            (fs/delete log-file))
           (assoc proc-info
                  :completed true
                  :result result
@@ -701,14 +709,18 @@
         ;; Stop the tool call stream
         (stop-stream! (:stream proc-info))
         (p/destroy-tree proc)
-        ;; Update meta file with idle timeout
-        (update-iteration-metadata! (:log-file proc-info) false "Idle timeout - no file activity")
-        (assoc proc-info
-               :completed true
-               :result {:result "Idle timeout - no file activity"}
-               :succeeded false
-               :checkpoint-complete false
-               :idle-killed true))
+        (let [log-file (:log-file proc-info)]
+          ;; Update meta file with idle timeout
+          (update-iteration-metadata! log-file false "Idle timeout - no file activity")
+          ;; Delete the large parallel-*.json file - we have meta file + session logs
+          (when (fs/exists? log-file)
+            (fs/delete log-file))
+          (assoc proc-info
+                 :completed true
+                 :result {:result "Idle timeout - no file activity"}
+                 :succeeded false
+                 :checkpoint-complete false
+                 :idle-killed true)))
 
       ;; Still running, update activity tracking
       :else
