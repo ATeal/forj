@@ -38,6 +38,17 @@
     (fs/create-dirs log-dir)
     log-dir))
 
+(defn- write-iteration-metadata!
+  "Write metadata for an iteration including session-id for later correlation.
+   Creates a file like iter-1-meta.json alongside iter-1.json."
+  [log-file session-id checkpoint-id iteration]
+  (let [meta-file (str/replace log-file #"\.json$" "-meta.json")
+        metadata {:session-id session-id
+                  :checkpoint-id (when checkpoint-id (name checkpoint-id))
+                  :iteration iteration
+                  :started-at (str (java.time.Instant/now))}]
+    (spit meta-file (json/generate-string metadata {:pretty true}))))
+
 (defn- ui-checkpoint?
   "Check if checkpoint appears to be UI-related based on description."
   [description]
@@ -585,11 +596,14 @@
       (let [plan (plan-edn/read-plan project-path)
             signs (read-signs project-path)
             prompt (build-iteration-prompt plan checkpoint signs)
-            {:keys [process stream]} (spawn-claude-iteration! project-path prompt config log-file)]
+            {:keys [process stream session-id]} (spawn-claude-iteration! project-path prompt config log-file)
+            ;; Write metadata file with session-id for later correlation
+            _ (write-iteration-metadata! log-file session-id cp-id iteration-base)]
         {:checkpoint-id cp-id
          :checkpoint checkpoint
          :process process
          :stream stream
+         :session-id session-id
          :log-file log-file
          :started-at (System/currentTimeMillis)})
       (catch Exception e
@@ -598,6 +612,7 @@
          :checkpoint checkpoint
          :process nil
          :stream nil
+         :session-id nil
          :log-file log-file
          :started-at (System/currentTimeMillis)
          :spawn-error (.getMessage e)}))))
@@ -965,7 +980,9 @@
                     _ (println (str "[Lisa] Iteration " iteration ": Checkpoint " cp-display
                                     " - " (:description checkpoint)))
 
-                    {:keys [process stream]} (spawn-claude-iteration! project-path prompt config log-file)
+                    {:keys [process stream session-id]} (spawn-claude-iteration! project-path prompt config log-file)
+                    ;; Write metadata file with session-id for later correlation
+                    _ (write-iteration-metadata! log-file session-id cp-id iteration)
                     wait-result (wait-for-process-with-timeout process project-path config)
                     wait-status (:status wait-result)
                     ;; Stop the stream when process completes
@@ -1216,4 +1233,16 @@
      :length (count uuid-str)
      :valid-format? (re-matches #"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" uuid-str)})
   ;; => {:uuid "...", :length 36, :valid-format? "..."}
+
+  ;; Test write-iteration-metadata! - writes session-id to meta file
+  (let [test-log "/tmp/test-iter-1.json"
+        test-session-id (str (java.util.UUID/randomUUID))]
+    (write-iteration-metadata! test-log test-session-id :test-checkpoint 1)
+    (let [meta-file "/tmp/test-iter-1-meta.json"
+          contents (json/parse-string (slurp meta-file) true)]
+      {:session-id-matches? (= test-session-id (:session-id contents))
+       :has-checkpoint? (= "test-checkpoint" (:checkpoint-id contents))
+       :has-iteration? (= 1 (:iteration contents))
+       :has-started-at? (some? (:started-at contents))}))
+  ;; => {:session-id-matches? true, :has-checkpoint? true, :has-iteration? true, :has-started-at? true}
   )
