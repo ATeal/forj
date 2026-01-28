@@ -1,51 +1,60 @@
-{:title "Test lisa-loop watch notification feature (3 min)",
+{:title "Iteration Inspection MCP Tools and Log Cleanup",
  :status :in-progress,
  :checkpoints
  [{:description
-   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
-   :id :test-1,
-   :acceptance "Waited 30 seconds",
+   "Update orchestrator to write enhanced meta files with completed-at, success, and error fields",
+   :id :enhance-meta-files,
+   :file "packages/forj-mcp/src/forj/lisa/orchestrator.clj",
+   :acceptance
+   "Meta files include :completed-at, :success, and :error fields",
+   :gates ["repl:(require '[forj.lisa.orchestrator] :reload) => ok"],
    :status :done,
-   :started "2026-01-28T16:13:58.178021679Z",
-   :completed "2026-01-28T16:14:48.193159355Z"}
+   :started "2026-01-28T16:31:55.584853564Z",
+   :completed "2026-01-28T16:34:15.617770234Z"}
   {:description
-   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
-   :id :test-2,
-   :acceptance "Waited 30 seconds",
-   :depends-on [:test-1],
-   :status :done,
-   :started "2026-01-28T16:14:53.220594167Z",
-   :completed "2026-01-28T16:15:43.233303106Z"}
-  {:description
-   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
-   :id :test-3,
-   :acceptance "Waited 30 seconds",
-   :depends-on [:test-2],
-   :status :done,
-   :started "2026-01-28T16:15:48.254657946Z",
-   :completed "2026-01-28T16:16:38.268059270Z"}
-  {:description
-   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
-   :id :test-4,
-   :acceptance "Waited 30 seconds",
-   :depends-on [:test-3],
-   :status :done,
-   :started "2026-01-28T16:16:43.290267256Z",
-   :completed "2026-01-28T16:17:33.304034887Z"}
-  {:description
-   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
-   :id :test-5,
-   :acceptance "Waited 30 seconds",
-   :depends-on [:test-4],
-   :status :done,
-   :started "2026-01-28T16:17:38.340560225Z",
-   :completed "2026-01-28T16:18:28.355745662Z"}
-  {:description
-   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. This is the FINAL checkpoint - test complete!",
-   :id :test-6,
-   :acceptance "Waited 30 seconds, test complete",
-   :depends-on [:test-5],
+   "Add lisa_inspect_iteration MCP tool - returns tool counts, success/fail, duration, error summary for a checkpoint/iteration",
+   :id :inspect-iteration-tool,
+   :file "packages/forj-mcp/src/forj/mcp/tools.clj",
+   :acceptance
+   "lisa_inspect_iteration returns structured data about an iteration",
+   :gates ["repl:(require '[forj.mcp.tools] :reload) => ok"],
+   :depends-on [:enhance-meta-files],
    :status :in-progress,
-   :started "2026-01-28T16:18:23.603309581Z"}],
+   :started "2026-01-28T16:34:05.561707172Z"}
+  {:description
+   "Add lisa_get_iteration_transcript MCP tool - returns raw conversation/tool calls from Claude's session JSONL",
+   :id :get-transcript-tool,
+   :file "packages/forj-mcp/src/forj/mcp/tools.clj",
+   :acceptance
+   "lisa_get_iteration_transcript returns conversation data from Claude's logs",
+   :gates ["repl:(require '[forj.mcp.tools] :reload) => ok"],
+   :depends-on [:inspect-iteration-tool],
+   :status :pending}
+  {:description
+   "Update orchestrator to stop writing the big parallel-*.json output files (keep only meta files)",
+   :id :remove-redundant-logs,
+   :file "packages/forj-mcp/src/forj/lisa/orchestrator.clj",
+   :acceptance
+   "Orchestrator no longer writes parallel-*.json, only parallel-*-meta.json",
+   :gates ["repl:(require '[forj.lisa.orchestrator] :reload) => ok"],
+   :depends-on [:get-transcript-tool],
+   :status :pending}
+  {:description
+   "Add tests for lisa_inspect_iteration and lisa_get_iteration_transcript tools",
+   :id :tests,
+   :file "packages/forj-mcp/test/forj/mcp/tools_test.clj",
+   :acceptance "bb test passes with new tool tests",
+   :gates
+   ["repl:(clojure.test/run-tests 'forj.mcp.tools-test) => passes"],
+   :depends-on [:remove-redundant-logs],
+   :status :pending}
+  {:description
+   "Code review: Check for DRY violations, unused code, and code smells. Add follow-up checkpoints for any issues found.",
+   :id :code-review,
+   :file "packages/forj-mcp/src/forj",
+   :acceptance
+   "Code review complete, any issues documented as new checkpoints",
+   :depends-on [:tests],
+   :status :pending}],
  :signs [],
- :created "2026-01-28T16:13:49.167203171Z"}
+ :created "2026-01-28T16:28:32.133980060Z"}

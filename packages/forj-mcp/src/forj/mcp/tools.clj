@@ -1980,11 +1980,14 @@
               idle-ms (when (pos? last-file-mod) (- now last-file-mod))
               ;; Check log dir for iteration info
               log-dir (str project-path "/.forj/logs/lisa")
+              ;; Match both old (iter-*) and new (parallel-*) naming patterns
               iter-files (when (fs/exists? log-dir)
-                           (fs/glob log-dir "iter-*.json"))
+                           (concat (fs/glob log-dir "iter-*.json")
+                                   (fs/glob log-dir "parallel-*.json")))
               ;; Get meta files for session-id extraction
               meta-files (when (fs/exists? log-dir)
-                           (fs/glob log-dir "iter-*-meta.json"))
+                           (concat (fs/glob log-dir "iter-*-meta.json")
+                                   (fs/glob log-dir "parallel-*-meta.json")))
               iteration-count (count iter-files)
               ;; Get cost from latest iteration log
               latest-log (when (seq iter-files)
