@@ -2,15 +2,15 @@
 
  :tasks
  {dev {:doc "Start backend with nREPL"
-       :task (shell "clojure" "-M:dev")}
+       :task (shell "clj" "-M:dev")}
 
   repl {:doc "Start nREPL server"
         :override-builtin true
-        :task (shell "clojure" "-M:dev")}
+        :task (shell "clj" "-M:dev")}
 
   test {:doc "Run tests"
-        :task (shell "clojure" "-M:test")}
+        :task (shell "clj" "-M:test")}
 
   run {:doc "Run server"
        :override-builtin true
-       :task (shell "clojure" "-M" "-m" "{{project-name}}.core")}}}
+       :task (shell "clj" "-M" "-m" "{{project-name}}.core")}}}

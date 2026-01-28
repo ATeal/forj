@@ -1,22 +1,22 @@
 {:paths ["src"]
  :tasks
  {init {:doc "Re-initialize ClojureDart (auto-run during scaffold, use for upgrades)"
-        :task (shell "clojure" "-M:cljd" "init")}
+        :task (shell "clj" "-M:cljd" "init")}
 
   flutter {:doc "Compile and run Flutter app (REPL auto-starts, watch for port in output)"
-           :task (shell "clojure" "-M:cljd" "flutter")}
+           :task (shell "clj" "-M:cljd" "flutter")}
 
   compile {:doc "Compile without running"
-           :task (shell "clojure" "-M:cljd" "compile")}
+           :task (shell "clj" "-M:cljd" "compile")}
 
   build:apk {:doc "Build Android APK"
              :task (do
-                     (shell "clojure" "-M:cljd" "compile")
+                     (shell "clj" "-M:cljd" "compile")
                      (shell "flutter" "build" "apk" "--release"))}
 
   build:ios {:doc "Build iOS app (macOS only)"
              :task (do
-                     (shell "clojure" "-M:cljd" "compile")
+                     (shell "clj" "-M:cljd" "compile")
                      (shell "flutter" "build" "ios" "--release"))}
 
   clean {:doc "Clean build artifacts"
@@ -25,4 +25,4 @@
                  (shell "flutter" "clean"))}
 
   upgrade {:doc "Upgrade to latest ClojureDart"
-           :task (shell "clojure" "-M:cljd" "upgrade")}}}
+           :task (shell "clj" "-M:cljd" "upgrade")}}}

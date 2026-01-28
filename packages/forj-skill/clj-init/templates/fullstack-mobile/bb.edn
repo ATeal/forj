@@ -1,13 +1,13 @@
 {:tasks
  {;; Backend
   dev {:doc "Start backend nREPL"
-       :task (shell "clojure -M:dev")}
+       :task (shell "clj -M:dev")}
 
   run {:doc "Run backend server"
-       :task (shell "clojure -M:run")}
+       :task (shell "clj -M:run")}
 
   test {:doc "Run tests"
-        :task (shell "clojure -M:test")}
+        :task (shell "clj -M:test")}
 
   ;; Frontend (shadow-cljs)
   shadow {:doc "Start shadow-cljs watch"
@@ -33,4 +33,4 @@
   ;; REPL (override builtin)
   repl {:doc "Start backend nREPL"
         :override-builtin true
-        :task (shell "clojure -M:dev")}}}
+        :task (shell "clj -M:dev")}}}

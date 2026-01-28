@@ -1,0 +1,3 @@
+{:deps
+ {io.simpleui/simpleui {:mvn/version "{{clj:io.simpleui/simpleui}}"}
+  hiccup/hiccup {:mvn/version "{{clj:hiccup/hiccup}}"}}}

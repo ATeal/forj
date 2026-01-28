@@ -1,6 +1,6 @@
 # {{project-name}}
 
-A Clojure project created with [forj](https://github.com/yourusername/forj).
+A Clojure project created with [forj](https://github.com/ateal/forj).
 
 ## Development
 

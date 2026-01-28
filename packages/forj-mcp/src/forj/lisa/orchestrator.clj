@@ -1109,6 +1109,10 @@
                 :else
                 (recur more opts)))))]
 
+    ;; Force line-buffered output so logs appear immediately when redirected to file
+    ;; Without this, OS block buffering delays log output significantly
+    (alter-var-root #'*flush-on-newline* (constantly true))
+
     (println "[Lisa] Starting orchestrator")
     (println "[Lisa] Project:" project-path)
     (println "[Lisa] Max iterations:" max-iterations)

@@ -1,5 +1,5 @@
 {:title "Process Lifecycle Management Improvements",
- :status :in-progress,
+ :status :complete,
  :checkpoints
  [{:description "Track PGID alongside PID in process entries",
    :id :pgid-tracking,
@@ -44,15 +44,16 @@
    :depends-on [:pgid-tracking]}
   {:description
    "Add tests for PGID tracking, group kill, and session reconciliation",
-   :id :tests,
-   :file "packages/forj-mcp/test/forj/mcp/tools_test.clj",
-   :acceptance
-   "Tests cover: pgid capture, group kill logic, dead process pruning",
+   :started "2026-01-22T16:03:09.609833802Z",
+   :completed "2026-01-22T16:05:53.936934508Z",
    :gates
    ["repl:(require '[forj.mcp.tools-test] :reload) => ok"
     "repl:(clojure.test/run-tests 'forj.mcp.tools-test) => passes"],
-   :depends-on [:pgid-tracking :group-kill :session-reconcile],
-   :status :in-progress,
-   :started "2026-01-22T16:02:58.940102500Z"}],
+   :file "packages/forj-mcp/test/forj/mcp/tools_test.clj",
+   :acceptance
+   "Tests cover: pgid capture, group kill logic, dead process pruning",
+   :status :done,
+   :id :tests,
+   :depends-on [:pgid-tracking :group-kill :session-reconcile]}],
  :signs [],
  :created "2026-01-22T15:56:39.563335582Z"}

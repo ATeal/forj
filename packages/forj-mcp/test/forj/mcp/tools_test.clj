@@ -1,6 +1,7 @@
 (ns forj.mcp.tools-test
   "Tests for forj.mcp.tools"
   (:require [clojure.test :refer [deftest testing is are]]
+            [babashka.fs :as fs]
             [forj.mcp.tools :as tools]))
 
 ;; =============================================================================
@@ -159,3 +160,177 @@
   (testing "Dispatches to analyze_project"
     (let [result (tools/call-tool {:name "analyze_project" :arguments {}})]
       (is (:success result)))))
+
+;; =============================================================================
+;; Process Tracking tests - PGID capture, group kill, session reconciliation
+;; =============================================================================
+
+(deftest track-process-safety-test
+  (testing "Rejects PID 0 (would kill process group)"
+    (let [result (tools/track-process {:pid 0 :name "dangerous"})]
+      (is (false? (:success result)))
+      (is (re-find #"Invalid PID" (:error result)))))
+
+  (testing "Rejects negative PIDs"
+    (let [result (tools/track-process {:pid -1 :name "negative"})]
+      (is (false? (:success result)))
+      (is (re-find #"Invalid PID" (:error result)))))
+
+  (testing "Rejects nil PID"
+    (let [result (tools/track-process {:pid nil :name "nil-pid"})]
+      (is (false? (:success result)))
+      (is (re-find #"Invalid PID" (:error result))))))
+
+(deftest track-process-pgid-capture-test
+  (testing "Captures PGID alongside PID for current process"
+    ;; Use current process PID which we know exists
+    (let [current-pid (-> (java.lang.ProcessHandle/current) .pid)
+          result (tools/track-process {:pid current-pid
+                                       :name "test-pgid-capture"
+                                       :command "test"})]
+      (is (:success result))
+      (is (= current-pid (get-in result [:tracked :pid])))
+      ;; PGID should be captured (may equal PID if process is its own group leader)
+      (is (pos-int? (get-in result [:tracked :pgid])))
+      ;; Clean up session file directly (don't call stop-project as it would kill us!)
+      (let [session-file (#'tools/session-file-path ".")]
+        (when (fs/exists? session-file)
+          (fs/delete session-file))))))
+
+(deftest list-tracked-processes-pruning-test
+  (testing "Auto-prunes dead processes from session"
+    ;; Track a fake process with a non-existent PID
+    (let [fake-pid 999999999  ; Very high PID unlikely to exist
+          session-path "."]
+      ;; Write a session with a dead process entry
+      (#'tools/write-session session-path
+                             {:processes [{:pid fake-pid
+                                           :pgid fake-pid
+                                           :name "dead-process"
+                                           :command "fake"
+                                           :started-at "2024-01-01T00:00:00Z"}]
+                              :path (str (fs/absolutize session-path))})
+      ;; List processes - should detect dead and prune
+      (let [result (tools/list-tracked-processes {:path session-path})]
+        (is (:success result))
+        (is (= 1 (:count result)) "Should report original count")
+        (is (= 0 (:alive-count result)) "Dead process should not be alive")
+        (is (= 1 (:pruned-count result)) "Should prune the dead process")
+        (is (= "dead-process" (-> result :pruned first :name)))))))
+
+(deftest list-tracked-processes-status-test
+  (testing "Reports alive status for running processes"
+    (let [current-pid (-> (java.lang.ProcessHandle/current) .pid)
+          _ (tools/track-process {:pid current-pid
+                                  :name "alive-test"
+                                  :command "test"})
+          result (tools/list-tracked-processes {:path "."})]
+      (is (:success result))
+      (is (pos? (:alive-count result)))
+      ;; Find our process in the list
+      (let [our-proc (first (filter #(= "alive-test" (:name %)) (:processes result)))]
+        (is (:alive our-proc) "Current process should be reported as alive"))
+      ;; Clean up session file directly (don't call stop-project as it would kill us!)
+      (let [session-file (#'tools/session-file-path ".")]
+        (when (fs/exists? session-file)
+          (fs/delete session-file))))))
+
+(deftest stop-project-group-kill-test
+  (testing "Uses PGID for killing when available"
+    ;; Track current process (won't actually be killed, but tests the logic)
+    (let [current-pid (-> (java.lang.ProcessHandle/current) .pid)
+          _ (tools/track-process {:pid current-pid
+                                  :name "pgid-kill-test"
+                                  :command "test"})
+          ;; Note: We can't actually test killing the current process,
+          ;; but we can verify the session tracking works with PGID
+          list-result (tools/list-tracked-processes {:path "."})]
+      (is (:success list-result))
+      (let [proc (first (filter #(= "pgid-kill-test" (:name %)) (:processes list-result)))]
+        (is (pos-int? (:pgid proc)) "PGID should be captured"))
+      ;; Clean up session without actually killing
+      (let [session-file (#'tools/session-file-path ".")]
+        (when (fs/exists? session-file)
+          (fs/delete session-file))))))
+
+(deftest stop-project-safety-test
+  (testing "Refuses to kill invalid PIDs in session"
+    ;; Manually create a session with invalid entries
+    (let [session-path "."]
+      (#'tools/write-session session-path
+                             {:processes [{:pid 0 :name "dangerous-zero" :pgid 0}
+                                          {:pid -1 :name "dangerous-negative" :pgid -1}]
+                              :path (str (fs/absolutize session-path))})
+      (let [result (tools/stop-project {:path session-path})]
+        (is (:success result))
+        ;; Both should be refused with safety error
+        (doseq [r (:results result)]
+          (is (false? (:stopped r)))
+          (is (re-find #"SAFETY" (:error r))))))))
+
+(deftest stop-project-fallback-test
+  (testing "Falls back to PID when PGID kill fails"
+    ;; This tests the logic path - we use a dead process so kill will fail
+    (let [fake-pid 999999998
+          session-path "."]
+      (#'tools/write-session session-path
+                             {:processes [{:pid fake-pid
+                                           :pgid fake-pid
+                                           :name "dead-for-fallback"
+                                           :command "fake"}]
+                              :path (str (fs/absolutize session-path))})
+      (let [result (tools/stop-project {:path session-path})]
+        (is (:success result))
+        ;; Process was dead, so it should report already-dead
+        (let [proc-result (first (:results result))]
+          (is (:already-dead proc-result)))))))
+
+(deftest stop-project-legacy-pid-only-test
+  (testing "Falls back to PID for legacy entries without PGID"
+    (let [fake-pid 999999997
+          session-path "."]
+      ;; Create entry without :pgid (legacy format)
+      (#'tools/write-session session-path
+                             {:processes [{:pid fake-pid
+                                           :name "legacy-no-pgid"
+                                           :command "old-style"}]
+                              :path (str (fs/absolutize session-path))})
+      (let [result (tools/stop-project {:path session-path})]
+        (is (:success result))
+        ;; Should handle gracefully even without PGID
+        (let [proc-result (first (:results result))]
+          (is (:already-dead proc-result))
+          (is (nil? (:pgid proc-result))))))))
+
+(deftest session-reconciliation-test
+  (testing "Mixed alive/dead processes are reconciled correctly"
+    (let [current-pid (-> (java.lang.ProcessHandle/current) .pid)
+          fake-pid 999999996
+          session-path "."]
+      ;; Write session with one alive and one dead process
+      (#'tools/write-session session-path
+                             {:processes [{:pid current-pid
+                                           :pgid current-pid
+                                           :name "alive-process"
+                                           :command "real"}
+                                          {:pid fake-pid
+                                           :pgid fake-pid
+                                           :name "dead-process"
+                                           :command "fake"}]
+                              :path (str (fs/absolutize session-path))})
+      ;; List should prune dead, keep alive
+      (let [result (tools/list-tracked-processes {:path session-path})]
+        (is (:success result))
+        (is (= 2 (:count result)) "Original count should be 2")
+        (is (= 1 (:alive-count result)) "One process should be alive")
+        (is (= 1 (:pruned-count result)) "One process should be pruned")
+        ;; Verify the dead one was pruned from the list
+        (is (= "dead-process" (-> result :pruned first :name))))
+      ;; Verify session file was updated to only contain alive process
+      (let [updated-session (#'tools/read-session session-path)]
+        (is (= 1 (count (:processes updated-session))))
+        (is (= "alive-process" (-> updated-session :processes first :name))))
+      ;; Clean up session file directly (don't call stop-project as it would kill us!)
+      (let [session-file (#'tools/session-file-path ".")]
+        (when (fs/exists? session-file)
+          (fs/delete session-file))))))

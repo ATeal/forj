@@ -1,6 +1,6 @@
 # {{project-name}}
 
-A ClojureDart Flutter app created with [forj](https://github.com/yourusername/forj).
+A ClojureDart Flutter app created with [forj](https://github.com/ateal/forj).
 
 ## Prerequisites
 

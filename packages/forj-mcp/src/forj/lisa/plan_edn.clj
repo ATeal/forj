@@ -200,6 +200,98 @@
         (assoc :status :failed)
         (->> (write-plan! project-path)))))
 
+(defn- find-checkpoint-idx
+  "Find index of checkpoint by ID."
+  [checkpoints id]
+  (->> checkpoints
+       (map-indexed vector)
+       (filter #(= id (:id (second %))))
+       first
+       first))
+
+(defn- find-in-progress-idx
+  "Find index of current in-progress checkpoint."
+  [checkpoints]
+  (->> checkpoints
+       (map-indexed vector)
+       (filter #(= :in-progress (:status (second %))))
+       first
+       first))
+
+(defn- compute-insert-position
+  "Compute where to insert a checkpoint.
+   Smart defaults:
+   - If explicit position given, use it
+   - If checkpoint has depends-on, insert after last dependency
+   - If loop is running (has in-progress), insert after current
+   - Otherwise append to end"
+  [checkpoints checkpoint position]
+  (cond
+    ;; Explicit: append to end
+    (= position :end)
+    (count checkpoints)
+
+    ;; Explicit: after current in-progress
+    (= position :next)
+    (if-let [idx (find-in-progress-idx checkpoints)]
+      (inc idx)
+      (count checkpoints))
+
+    ;; Explicit: after specific checkpoint ID
+    (and (keyword? position) (not= position :auto))
+    (if-let [idx (find-checkpoint-idx checkpoints position)]
+      (inc idx)
+      (count checkpoints))
+
+    ;; Auto: infer from context
+    :else
+    (cond
+      ;; Has dependencies → insert after last dependency
+      (seq (:depends-on checkpoint))
+      (let [dep-indices (->> (:depends-on checkpoint)
+                             (map #(find-checkpoint-idx checkpoints %))
+                             (remove nil?))]
+        (if (seq dep-indices)
+          (inc (apply max dep-indices))
+          (count checkpoints)))
+
+      ;; Loop is running → insert after current in-progress
+      (find-in-progress-idx checkpoints)
+      (inc (find-in-progress-idx checkpoints))
+
+      ;; Default → end
+      :else
+      (count checkpoints))))
+
+(defn add-checkpoint!
+  "Add a checkpoint to an existing plan.
+   Position is auto-determined by default:
+   - If checkpoint has depends-on → insert after last dependency
+   - If loop is running (has in-progress checkpoint) → insert after current
+   - Otherwise → append to end
+
+   Explicit position options:
+   - :position :end - append to end
+   - :position :next - insert after current in-progress checkpoint
+   - :position :<checkpoint-id> - insert after specific checkpoint
+
+   Returns updated plan or nil if plan doesn't exist."
+  [project-path checkpoint & {:keys [position] :or {position :auto}}]
+  (when-let [plan (read-plan project-path)]
+    (let [checkpoints (:checkpoints plan)
+          new-cp (merge {:status :pending} checkpoint)
+          insert-idx (compute-insert-position checkpoints new-cp position)
+          updated-checkpoints (vec (concat (take insert-idx checkpoints)
+                                           [new-cp]
+                                           (drop insert-idx checkpoints)))
+          updated-plan (-> plan
+                           (assoc :checkpoints updated-checkpoints)
+                           ;; Ensure status is in-progress if we're adding tasks
+                           (assoc :status (if (= :complete (:status plan))
+                                            :in-progress
+                                            (:status plan))))]
+      (write-plan! project-path updated-plan))))
+
 ;;; =============================================================================
 ;;; Signs (Learnings)
 ;;; =============================================================================
