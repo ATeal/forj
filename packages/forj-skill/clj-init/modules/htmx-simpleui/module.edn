@@ -1,0 +1,17 @@
+{:name "htmx-simpleui"
+ :description "HTMX with SimpleUI for server-rendered HTML"
+ :requires ["api"]
+
+ ;; Merge configs (deep merge with special handling)
+ :merge {:deps.edn "deps.edn"}
+
+ ;; Source files to copy
+ :sources [{:from "src/views.clj"
+            :to "src/{{namespace}}/views.clj"}
+           {:from "src/htmx.clj"
+            :to "src/{{namespace}}/htmx.clj"}
+           {:from "resources/public/index.html"
+            :to "resources/public/index.html"}]
+
+ ;; Additional gitignore entries
+ :gitignore-append []}

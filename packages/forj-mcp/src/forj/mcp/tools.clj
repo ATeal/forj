@@ -203,6 +203,29 @@
                                       :description "Project path (defaults to current directory)"}}
                   :required ["checkpoint"]}}
 
+   {:name "lisa_add_checkpoint"
+    :description "Add a checkpoint to a running Lisa plan. Position is auto-determined: inserts after dependencies if specified, after current in-progress checkpoint if loop is running, or at end otherwise."
+    :inputSchema {:type "object"
+                  :properties {:id {:type "string"
+                                    :description "Checkpoint ID (will be converted to keyword, e.g., 'fix-bug' becomes :fix-bug)"}
+                               :description {:type "string"
+                                             :description "What this checkpoint should accomplish"}
+                               :file {:type "string"
+                                      :description "Target file to modify (optional)"}
+                               :acceptance {:type "string"
+                                            :description "Acceptance criteria - how to know it's done (optional)"}
+                               :gates {:type "array"
+                                       :items {:type "string"}
+                                       :description "Validation gates like 'repl:(run-tests)' (optional)"}
+                               :depends_on {:type "array"
+                                            :items {:type "string"}
+                                            :description "Checkpoint IDs this depends on (optional, also affects auto-positioning)"}
+                               :position {:type "string"
+                                          :description "Override auto-positioning: 'end', 'next', or checkpoint ID. Usually not needed."}
+                               :path {:type "string"
+                                      :description "Project path (defaults to current directory)"}}
+                  :required ["id" "description"]}}
+
    {:name "lisa_run_orchestrator"
     :description "Run the Lisa Loop orchestrator. Spawns fresh Claude instances for each iteration until all checkpoints complete. Includes timeout detection (15 min per iteration, 5 min idle) to recover from stuck iterations."
     :inputSchema {:type "object"
@@ -1054,37 +1077,8 @@
           {:issue :bb-parse-error
            :message (str "Failed to parse bb.edn: " (.getMessage e))})))))
 
-(defn- check-bb-tasks-use-clj
-  "Check if bb.edn tasks use 'clj' which requires rlwrap (fails headless)."
-  [path]
-  (let [bb-file (java.io.File. path "bb.edn")]
-    (when (.exists bb-file)
-      (try
-        (let [content (slurp bb-file)]
-          ;; Look for (shell "clj ...) pattern
-          (when (re-find #"\(shell\s+\"clj\s" content)
-            {:issue :bb-tasks-use-clj
-             :message "bb.edn tasks use 'clj' which requires rlwrap - use 'clojure' instead"
-             :fix-available true}))
-        (catch Exception _ nil)))))
-
-(defn- fix-bb-tasks-clj-to-clojure
-  "Replace 'clj' with 'clojure' in bb.edn shell commands."
-  [path]
-  (let [bb-file (java.io.File. path "bb.edn")]
-    (try
-      (let [content (slurp bb-file)
-            fixed (str/replace content #"\"clj " "\"clojure ")]
-        (if (= content fixed)
-          {:fix-failed :bb-tasks-use-clj
-           :message "No 'clj' commands found to replace"}
-          (do
-            (spit bb-file fixed)
-            {:fixed :bb-tasks-use-clj
-             :message "Replaced 'clj' with 'clojure' in bb.edn tasks"})))
-      (catch Exception e
-        {:fix-failed :bb-tasks-use-clj
-         :message (str "Failed to fix: " (.getMessage e))}))))
+;; Removed check-bb-tasks-use-clj and fix-bb-tasks-clj-to-clojure
+;; We now use 'clj' everywhere for consistency with Clojure ecosystem docs
 
 (defn- check-deps-resolve
   "Check if deps.edn dependencies resolve."
@@ -1216,6 +1210,20 @@
              :fix-available false}))
         (catch Exception _ nil)))))
 
+(defn- check-rlwrap-installed
+  "Check if rlwrap is installed (needed for clj command readline support)."
+  [_path]
+  (try
+    (let [result (shell-execute "which" "rlwrap")]
+      (when-not (zero? (:exit result))
+        {:issue :rlwrap-not-installed
+         :message "rlwrap not installed - 'clj' command will work but without readline support. Install: sudo pacman -S rlwrap (Arch) or brew install rlwrap (macOS)"
+         :fix-available false}))
+    (catch Exception _
+      {:issue :rlwrap-not-installed
+       :message "rlwrap not installed - 'clj' command will work but without readline support"
+       :fix-available false})))
+
 (defn- fix-bb-override-builtin
   "Add :override-builtin true to repl task in bb.edn."
   [path]
@@ -1259,12 +1267,12 @@
   (try
     (let [;; Run all checks
           checks [(check-bb-override-builtin path)
-                  (check-bb-tasks-use-clj path)
                   (check-deps-resolve path)
                   (check-npm-install path)
                   (check-cljd-init path)
                   (check-java-version path)
-                  (check-shadow-cljs-upgrade path)]
+                  (check-shadow-cljs-upgrade path)
+                  (check-rlwrap-installed path)]
           issues (remove nil? checks)
 
           ;; Apply fixes if requested
@@ -1272,8 +1280,6 @@
                   (remove nil?
                           [(when (some #(= (:issue %) :bb-repl-override) issues)
                              (fix-bb-override-builtin path))
-                           (when (some #(= (:issue %) :bb-tasks-use-clj) issues)
-                             (fix-bb-tasks-clj-to-clojure path))
                            (when (some #(= (:issue %) :npm-not-installed) issues)
                              (run-npm-install path))
                            (when (some #(= (:issue %) :cljd-not-initialized) issues)
@@ -1284,14 +1290,13 @@
           remaining-issues (if fix
                              (remove nil?
                                      [(check-bb-override-builtin path)
-                                      (check-bb-tasks-use-clj path)
                                       (check-deps-resolve path)
                                       (check-npm-install path)
                                       (check-cljd-init path)])
                              ;; Filter out informational issues for success check
-                             (remove #(= (:issue %) :java-version-low) issues))
-          ;; Keep java version in issues for info, but don't let it block success
-          info-issues (filter #(= (:issue %) :java-version-low) issues)
+                             (remove #(#{:java-version-low :rlwrap-not-installed :shadow-cljs-upgrade-available} (:issue %)) issues))
+          ;; Keep informational issues for display, but don't let them block success
+          info-issues (filter #(#{:java-version-low :rlwrap-not-installed :shadow-cljs-upgrade-available} (:issue %)) issues)
           summary (cond
                     (seq remaining-issues)
                     (str (count remaining-issues) " issue(s) found"
@@ -1648,6 +1653,51 @@
       {:success false
        :error (str "Failed to mark checkpoint: " (.getMessage e))})))
 
+(defn lisa-add-checkpoint
+  "Add a checkpoint to a running Lisa plan.
+   Position is auto-determined by default:
+   - If depends_on specified → insert after last dependency
+   - If loop is running → insert after current in-progress checkpoint
+   - Otherwise → append to end
+
+   Explicit position options: 'end', 'next', or a checkpoint ID."
+  [{:keys [id description file acceptance gates depends_on position path]
+    :or {path "."}}]
+  (try
+    (if-not (plan-edn/plan-exists? path)
+      {:success false
+       :error "No LISA_PLAN.edn found. Create a plan first with lisa_create_plan."}
+      (let [checkpoint (cond-> {:id (keyword id)
+                                :description description}
+                         file (assoc :file file)
+                         acceptance (assoc :acceptance acceptance)
+                         gates (assoc :gates (vec gates))
+                         depends_on (assoc :depends-on (mapv keyword depends_on)))
+            pos-kw (cond
+                     (nil? position) :auto
+                     (= position "end") :end
+                     (= position "next") :next
+                     (= position "auto") :auto
+                     :else (keyword position))
+            updated-plan (plan-edn/add-checkpoint! path checkpoint :position pos-kw)]
+        (if updated-plan
+          (let [new-cp (plan-edn/checkpoint-by-id updated-plan (keyword id))
+                idx (inc (.indexOf (mapv :id (:checkpoints updated-plan)) (keyword id)))]
+            {:success true
+             :message (str "Added checkpoint :" id " at position " idx)
+             :checkpoint new-cp
+             :total-checkpoints (count (:checkpoints updated-plan))
+             :position idx
+             :position-reason (cond
+                                (seq depends_on) "after last dependency"
+                                (some #(= :in-progress (:status %)) (:checkpoints updated-plan)) "after current in-progress"
+                                :else "appended to end")})
+          {:success false
+           :error "Failed to add checkpoint to plan"})))
+    (catch Exception e
+      {:success false
+       :error (str "Failed to add checkpoint: " (.getMessage e))})))
+
 (defn lisa-run-orchestrator
   "Run the Lisa Loop orchestrator (spawns Claude instances).
    Spawns as a detached background process and returns immediately."
@@ -1850,17 +1900,45 @@
       {:success false
        :error (str "Failed to check gates: " (.getMessage e))})))
 
-(defn- last-src-modification
-  "Get the most recent modification time of source files."
+(defn- last-lisa-activity
+  "Get the most recent modification time of Lisa-related files.
+   Checks (in priority order):
+   1. LISA_PLAN.edn - updated on every checkpoint state change
+   2. Orchestrator log - updated continuously during execution
+   3. Source files - updated when agents edit code"
   [project-path]
   (try
-    (let [src-files (concat
+    (let [plan-file (str project-path "/LISA_PLAN.edn")
+          log-dir (str project-path "/.forj/logs/lisa")
+          ;; Get plan file modification time (most reliable)
+          plan-mod (when (fs/exists? plan-file)
+                     (.toMillis (fs/last-modified-time plan-file)))
+          ;; Get latest orchestrator log modification time
+          orch-logs (when (fs/exists? log-dir)
+                      (fs/glob log-dir "orchestrator-*.log"))
+          latest-orch-log (when (seq orch-logs)
+                            (last (sort-by #(.toMillis (fs/last-modified-time %)) orch-logs)))
+          orch-mod (when latest-orch-log
+                     (.toMillis (fs/last-modified-time latest-orch-log)))
+          ;; Get latest iteration log modification time
+          iter-logs (when (fs/exists? log-dir)
+                      (fs/glob log-dir "*.json"))
+          latest-iter-log (when (seq iter-logs)
+                            (last (sort-by #(.toMillis (fs/last-modified-time %)) iter-logs)))
+          iter-mod (when latest-iter-log
+                     (.toMillis (fs/last-modified-time latest-iter-log)))
+          ;; Get source file modification times
+          src-files (concat
                      (fs/glob (str project-path "/src") "**/*.{clj,cljs,cljc}")
-                     (fs/glob (str project-path "/test") "**/*.{clj,cljs,cljc}"))]
-      (if (seq src-files)
-        (->> src-files
-             (map #(.toMillis (fs/last-modified-time %)))
-             (apply max))
+                     (fs/glob (str project-path "/test") "**/*.{clj,cljs,cljc}"))
+          src-mod (when (seq src-files)
+                    (->> src-files
+                         (map #(.toMillis (fs/last-modified-time %)))
+                         (apply max)))
+          ;; Return the most recent of all
+          all-mods (remove nil? [plan-mod orch-mod iter-mod src-mod])]
+      (if (seq all-mods)
+        (apply max all-mods)
         0))
     (catch Exception _ 0)))
 
@@ -1897,7 +1975,7 @@
               current (plan-edn/current-checkpoint plan)
               done-count (count (filter #(= :done (:status %)) checkpoints))
               total-count (count checkpoints)
-              last-file-mod (last-src-modification project-path)
+              last-file-mod (last-lisa-activity project-path)
               idle-ms (when (pos? last-file-mod) (- now last-file-mod))
               ;; Check log dir for iteration info
               log-dir (str project-path "/.forj/logs/lisa")
@@ -1942,7 +2020,7 @@
               current (first (filter #(= :in-progress (:status %)) checkpoints))
               done-count (count (filter #(= :done (:status %)) checkpoints))
               total-count (count checkpoints)
-              last-file-mod (last-src-modification project-path)
+              last-file-mod (last-lisa-activity project-path)
               idle-ms (when (pos? last-file-mod) (- now last-file-mod))]
           {:success true
            :status (cond
@@ -2015,6 +2093,7 @@
    "lisa_create_plan"           lisa-create-plan
    "lisa_get_plan"              lisa-get-plan
    "lisa_mark_checkpoint_done"  lisa-mark-checkpoint-done
+   "lisa_add_checkpoint"        lisa-add-checkpoint
    "lisa_run_orchestrator"      lisa-run-orchestrator
    "repl_snapshot"              repl-snapshot
    ;; Signs (guardrails) tools
