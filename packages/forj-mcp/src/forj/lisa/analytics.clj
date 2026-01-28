@@ -1,35 +1,24 @@
 (ns forj.lisa.analytics
-  "Analytics for Lisa Loop iterations - tool usage and REPL compliance."
-  (:require [babashka.fs :as fs]
-            [cheshire.core :as json]
-            [clojure.string :as str]))
+  "Analytics for Lisa Loop iterations - tool usage and REPL compliance.
+
+   Tool extraction is delegated to forj.lisa.claude-sessions.
+   This namespace focuses on compliance scoring and formatting."
+  (:require [clojure.string :as str]
+            [forj.lisa.claude-sessions :as claude-sessions]))
 
 (defn extract-tool-calls
-  "Parse a stream-json log file and extract tool calls.
-   Returns a seq of {:name <tool-name> :input <tool-input>} maps.
+  "Extract tool calls from a log file or session.
 
-   The log file is JSONL format where each line is a JSON object.
-   Tool calls appear in 'assistant' type messages with content
-   containing 'tool_use' objects."
-  [log-file]
-  (when (and (fs/exists? log-file)
-             (pos? (fs/size log-file)))
-    (let [lines (-> log-file slurp (str/split #"\n"))]
-      (->> lines
-           (filter seq)
-           (mapcat (fn [line]
-                     (try
-                       (let [entry (json/parse-string line true)]
-                         (when (= "assistant" (:type entry))
-                           (let [content (get-in entry [:message :content])]
-                             (->> content
-                                  (filter #(= "tool_use" (:type %)))
-                                  (map (fn [tool-use]
-                                         {:name (:name tool-use)
-                                          :input (:input tool-use)}))))))
-                       (catch Exception _
-                         nil))))
-           (remove nil?)))))
+   Delegates to claude-sessions for actual parsing.
+   Accepts either:
+   - A file path (string or path) to a JSONL log file
+   - A session-id string (will look up in Claude's projects dir)
+
+   Returns a seq of {:name <tool-name> :input <tool-input>} maps,
+   or nil if the file doesn't exist or is empty."
+  [log-file-or-session-id]
+  (when-let [entries (seq (claude-sessions/read-session-jsonl log-file-or-session-id))]
+    (claude-sessions/extract-tool-calls entries)))
 
 (def ^:private repl-tools
   "Set of forj MCP tools that indicate proper REPL-driven development."
@@ -167,13 +156,13 @@
     (vec
      (concat
       ;; Header
-      [(str "┌─────────────────────────────────────────────────────────────")
+      ["┌─────────────────────────────────────────────────────────────"
        (str "│ " (if iteration (str "Iteration " iteration " Summary") "Iteration Summary"))
-       (str "├─────────────────────────────────────────────────────────────")
+       "├─────────────────────────────────────────────────────────────"
        (str "│ Total tool calls: " total-calls)
        (str "│ REPL Compliance:  " emoji " " (name score) " - " (score->description score))
-       (str "├─────────────────────────────────────────────────────────────")
-       (str "│ Tools Used:")]
+       "├─────────────────────────────────────────────────────────────"
+       "│ Tools Used:"]
       ;; Tool breakdown
       (if (empty? tool-summary)
         ["│   (none)"]
@@ -182,16 +171,16 @@
              tool-summary))
       ;; REPL tools section (if any)
       (when (seq used-repl-tools)
-        [(str "├─────────────────────────────────────────────────────────────")
+        ["├─────────────────────────────────────────────────────────────"
          (str "│ ✓ REPL Tools: " (str/join ", " (map #(str/replace % "mcp__forj__" "") used-repl-tools)))])
       ;; Anti-patterns section (if any)
       (when (seq anti-patterns)
-        [(str "├─────────────────────────────────────────────────────────────")
+        ["├─────────────────────────────────────────────────────────────"
          (str "│ ✗ Anti-patterns detected (" (count anti-patterns) "):")
          (str "│   " (str/join ", " (take 3 (map #(first (str/split % #"\s+" 2)) anti-patterns)))
               (when (> (count anti-patterns) 3) "..."))])
       ;; Footer
-      [(str "└─────────────────────────────────────────────────────────────")]))))
+      ["└─────────────────────────────────────────────────────────────"]))))
 
 (defn print-iteration-summary
   "Print a formatted summary of iteration tool usage and compliance.
@@ -265,8 +254,8 @@
   ;; │ ✓ REPL Tools: reload_namespace, eval_comment_block
   ;; └─────────────────────────────────────────────────────────────
 
-  ;; Test with real log file
-  (let [log-file ".forj/logs/lisa/parallel-extract-tool-calls-1.json"]
-    (when (babashka.fs/exists? log-file)
-      (print-iteration-summary (extract-tool-calls log-file) 1)))
+  ;; Test with real log file (delegates to claude-sessions)
+  (print-iteration-summary
+   (extract-tool-calls ".forj/logs/lisa/parallel-extract-tool-calls-1.json")
+   1)
   )

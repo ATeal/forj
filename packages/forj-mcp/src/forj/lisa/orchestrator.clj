@@ -13,6 +13,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [forj.lisa.analytics :as analytics]
+            [forj.lisa.claude-sessions :as claude-sessions]
             [forj.lisa.plan :as plan]
             [forj.lisa.plan-edn :as plan-edn]))
 

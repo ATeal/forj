@@ -44,14 +44,15 @@
    :depends-on [:store-session-id :claude-session-reader]}
   {:description
    "Remove redundant analytics/logging code - keep orchestrator events, remove duplicate tool parsing",
-   :id :cleanup-legacy,
+   :started "2026-01-28T15:31:12.539037036Z",
+   :completed "2026-01-28T15:35:32.598370194Z",
+   :gates ["repl:(require '[forj.lisa.analytics] :reload) => ok"],
    :file "packages/forj-mcp/src/forj/lisa/analytics.clj",
    :acceptance
    "No duplicate tool call parsing in analytics.clj, orchestrator uses claude-sessions for tool data",
-   :gates ["repl:(require '[forj.lisa.analytics] :reload) => ok"],
-   :depends-on [:integrate-lisa-watch],
-   :status :in-progress,
-   :started "2026-01-28T15:30:58.079543933Z"}
+   :status :done,
+   :id :cleanup-legacy,
+   :depends-on [:integrate-lisa-watch]}
   {:description
    "Test claude-logs-dir path generation, JSONL parsing, tool extraction, and end-to-end flow",
    :id :integration-tests,
@@ -61,6 +62,7 @@
    ["repl:(require '[forj.lisa.claude-sessions-test] :reload) => ok"
     "repl:(clojure.test/run-tests 'forj.lisa.claude-sessions-test) => passes"],
    :depends-on [:cleanup-legacy],
-   :status :pending}],
+   :status :in-progress,
+   :started "2026-01-28T15:35:19.220065475Z"}],
  :signs [],
  :created "2026-01-28T15:23:16.421183134Z"}
