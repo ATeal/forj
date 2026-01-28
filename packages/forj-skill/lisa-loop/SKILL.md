@@ -115,42 +115,57 @@ Glob for: .forj/logs/lisa/orchestrator-*.log
 Get the most recent one for the tail command
 ```
 
-**Step 3: Spawn background monitor agent**
+**Step 3: Tell user about live tailing option**
+```
+Tell user:
+- For live updates: tail -f <log-path>
+- You'll also get periodic status updates here
+```
+
+**Step 4: Spawn ONE-SHOT background check agent**
+
+IMPORTANT: The agent does ONE check and exits. It does NOT loop internally.
+
 ```
 Task({
   subagent_type: "general-purpose",
   run_in_background: true,
   prompt: """
-    Monitor the Lisa loop until it completes.
+    1. Sleep for {interval} seconds using Bash: `sleep {interval}`
+    2. Read the file LISA_PLAN.edn using Read tool
+    3. Report: How many checkpoints are :done vs total? What's the current :status? Is it :complete?
 
-    Check LISA_PLAN.edn every {interval} seconds.
-    Look for :status :complete in the file.
-
-    When complete, report:
-    1. Final status
-    2. How many checkpoints completed
-    3. Any signs/learnings recorded
-    4. Summary of each checkpoint
-
-    Use Bash with cat to read the file and sleep {interval} between checks.
-    Max checks: {max_checks} (to avoid infinite loops)
+    That's it - just those 3 steps then exit.
   """
 })
 ```
 
-**Step 4: Inform user**
+**Step 5: When agent completes, react**
+
+When the background agent completes and notifies you:
+1. Read the agent's result (it contains the status report)
+2. Tell the user the current status (X/Y checkpoints, current checkpoint name)
+3. If status is `:complete` → announce "Lisa Loop complete!" and stop
+4. If status is `:in-progress` → spawn another identical agent (go to Step 4)
+
+**Example flow:**
 ```
-Tell user:
-- Background monitor is running
-- They'll be notified on completion
-- For live updates: tail -f <log-path>
+Agent completes → "Status: 5/10 (50%) - wait-30s-6 in progress"
+                → Spawn another agent
+                → Wait...
+Agent completes → "Status: 8/10 (80%) - wait-30s-9 in progress"
+                → Spawn another agent
+                → Wait...
+Agent completes → "Status: 10/10 (100%) - COMPLETE!"
+                → Announce completion, stop spawning
 ```
 
 **Why this approach:**
 - Claude Code can't truly loop (no timers/schedulers)
-- Background Task agents DO notify when they complete
-- User can continue working while monitor runs
-- User can also tail logs for real-time output
+- Background Task agents notify when they complete
+- ONE-SHOT agents are reliable - they sleep, check, report, exit
+- The "loop" happens at the orchestration level (you spawn new agents)
+- User can continue working between status updates
 
 ## How It Works
 

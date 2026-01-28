@@ -1,83 +1,43 @@
-{:title "Test lisa-loop watch notification feature",
+{:title "Test lisa-loop watch notification feature (3 min)",
  :status :in-progress,
  :checkpoints
  [{:description
    "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
-   :id :wait-30s-1,
+   :id :test-1,
    :acceptance "Waited 30 seconds",
    :status :done,
-   :started "2026-01-28T16:01:40.724140105Z",
-   :completed "2026-01-28T16:02:25.749184205Z"}
+   :started "2026-01-28T16:13:58.178021679Z",
+   :completed "2026-01-28T16:14:48.193159355Z"}
   {:description
    "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
-   :id :wait-30s-2,
+   :id :test-2,
    :acceptance "Waited 30 seconds",
-   :depends-on [:wait-30s-1],
-   :status :done,
-   :started "2026-01-28T16:02:30.773843376Z",
-   :completed "2026-01-28T16:03:20.789459905Z"}
-  {:description
-   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
-   :id :wait-30s-3,
-   :acceptance "Waited 30 seconds",
-   :depends-on [:wait-30s-2],
-   :status :done,
-   :started "2026-01-28T16:03:25.820181824Z",
-   :completed "2026-01-28T16:04:15.836774528Z"}
-  {:description
-   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
-   :id :wait-30s-4,
-   :acceptance "Waited 30 seconds",
-   :depends-on [:wait-30s-3],
-   :status :done,
-   :started "2026-01-28T16:04:20.865870560Z",
-   :completed "2026-01-28T16:05:10.883842307Z"}
-  {:description
-   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
-   :id :wait-30s-5,
-   :acceptance "Waited 30 seconds",
-   :depends-on [:wait-30s-4],
-   :status :done,
-   :started "2026-01-28T16:05:15.914191037Z",
-   :completed "2026-01-28T16:06:05.934212466Z"}
-  {:description
-   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
-   :id :wait-30s-6,
-   :acceptance "Waited 30 seconds",
-   :depends-on [:wait-30s-5],
-   :status :done,
-   :started "2026-01-28T16:06:10.963894171Z",
-   :completed "2026-01-28T16:07:00.981618820Z"}
-  {:description
-   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
-   :id :wait-30s-7,
-   :acceptance "Waited 30 seconds",
-   :depends-on [:wait-30s-6],
-   :status :done,
-   :started "2026-01-28T16:07:06.012504326Z",
-   :completed "2026-01-28T16:07:56.034476042Z"}
-  {:description
-   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
-   :id :wait-30s-8,
-   :acceptance "Waited 30 seconds",
-   :depends-on [:wait-30s-7],
-   :status :done,
-   :started "2026-01-28T16:08:01.064086588Z",
-   :completed "2026-01-28T16:08:51.082517460Z"}
-  {:description
-   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
-   :id :wait-30s-9,
-   :acceptance "Waited 30 seconds",
-   :depends-on [:wait-30s-8],
-   :status :done,
-   :started "2026-01-28T16:08:56.113880941Z",
-   :completed "2026-01-28T16:09:46.132464762Z"}
-  {:description
-   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. This is the final checkpoint - the test is complete!",
-   :id :wait-30s-10,
-   :acceptance "Waited 30 seconds, test complete",
-   :depends-on [:wait-30s-9],
+   :depends-on [:test-1],
    :status :in-progress,
-   :started "2026-01-28T16:09:41.192949455Z"}],
+   :started "2026-01-28T16:14:43.474235087Z"}
+  {:description
+   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
+   :id :test-3,
+   :acceptance "Waited 30 seconds",
+   :depends-on [:test-2],
+   :status :pending}
+  {:description
+   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
+   :id :test-4,
+   :acceptance "Waited 30 seconds",
+   :depends-on [:test-3],
+   :status :pending}
+  {:description
+   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
+   :id :test-5,
+   :acceptance "Waited 30 seconds",
+   :depends-on [:test-4],
+   :status :pending}
+  {:description
+   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. This is the FINAL checkpoint - test complete!",
+   :id :test-6,
+   :acceptance "Waited 30 seconds, test complete",
+   :depends-on [:test-5],
+   :status :pending}],
  :signs [],
- :created "2026-01-28T16:01:29.941090958Z"}
+ :created "2026-01-28T16:13:49.167203171Z"}
