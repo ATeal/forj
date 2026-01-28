@@ -37,13 +37,15 @@
    :id :test-5,
    :acceptance "Waited 30 seconds",
    :depends-on [:test-4],
-   :status :in-progress,
-   :started "2026-01-28T16:17:27.921942053Z"}
+   :status :done,
+   :started "2026-01-28T16:17:38.340560225Z",
+   :completed "2026-01-28T16:18:28.355745662Z"}
   {:description
    "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. This is the FINAL checkpoint - test complete!",
    :id :test-6,
    :acceptance "Waited 30 seconds, test complete",
    :depends-on [:test-5],
-   :status :pending}],
+   :status :in-progress,
+   :started "2026-01-28T16:18:23.603309581Z"}],
  :signs [],
  :created "2026-01-28T16:13:49.167203171Z"}
