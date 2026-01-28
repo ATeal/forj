@@ -14,12 +14,12 @@ commands:
 
 # Lisa Loop - REPL-Driven Autonomous Development
 
-Lisa Loop is forj's native autonomous development loop. It spawns **fresh Claude instances for each iteration**, using LISA_PLAN.md for state and REPL for validation.
+Lisa Loop is forj's native autonomous development loop. It spawns **fresh Claude instances for each iteration**, using LISA_PLAN.edn for state and REPL for validation.
 
 ## Key Concepts
 
 1. **Fresh Context Per Iteration**: Each checkpoint gets a fresh Claude instance (no context bloat)
-2. **LISA_PLAN.md as State**: Checkpoints persist progress across instances
+2. **LISA_PLAN.edn as State**: Checkpoints persist progress across instances
 3. **REPL as Ground Truth**: Query REPL for actual state, not LLM memory
 4. **Signs for Learnings**: Failures are recorded so future iterations don't repeat mistakes
 
@@ -179,7 +179,7 @@ Agent completes → "Status: 10/10 (100%) - COMPLETE!"
 │ - Read PRD if exists│
 │ - Propose checkpoints│
 │ - Get user approval │
-│ - Create LISA_PLAN.md│
+│ - Create LISA_PLAN.edn│
 └─────────┬───────────┘
           │
           ▼
@@ -198,8 +198,8 @@ Agent completes → "Status: 10/10 (100%) - COMPLETE!"
 │ ITERATION N         │  ◄── Fresh Claude instance
 │ (Fresh Context)     │
 │                     │
-│ - Read LISA_PLAN.md │
-│ - Read LISA_SIGNS.md│
+│ - Read LISA_PLAN.edn│
+│ - Read embedded signs│
 │ - Work on checkpoint│
 │ - Validate via REPL │
 │ - Mark done if pass │
@@ -234,7 +234,7 @@ Glob for: PRD.md, SPEC.md, REQUIREMENTS.md, docs/*.md
 
 | Situation | Action |
 |-----------|--------|
-| LISA_PLAN.md exists with pending checkpoints | Ask: resume or start fresh? |
+| LISA_PLAN.edn exists with pending checkpoints | Ask: resume or start fresh? |
 | PRD exists, no plan | Read PRD, propose checkpoints |
 | No plan, no PRD | Create plan from prompt |
 
@@ -279,7 +279,7 @@ lisa_run_orchestrator with:
 ```
 
 This spawns fresh Claude instances for each iteration. The orchestrator:
-1. Reads LISA_PLAN.md to find current checkpoint
+1. Reads LISA_PLAN.edn to find current checkpoint
 2. Spawns `claude -p <focused-prompt>` for that checkpoint
 3. Waits for completion
 4. Repeats until all checkpoints done or max iterations
@@ -295,28 +295,31 @@ Lisa Loop complete!
 - Logs: .forj/logs/lisa/
 ```
 
-## LISA_PLAN.md Format
+## LISA_PLAN.edn Format
 
-```markdown
-# Lisa Loop Plan: Build user authentication
-
-## Status: IN_PROGRESS
-## Current Checkpoint: 2
-
-## Checkpoints
-
-### 1. [DONE] Create password hashing module
-- File: src/auth/password.clj
-- Acceptance: (verify-password "test" (hash-password "test")) => true
-- Completed: 2026-01-16T10:30:00Z
-
-### 2. [IN_PROGRESS] Create JWT token module
-- File: src/auth/jwt.clj
-- Acceptance: (verify-token (create-token {:user-id 1})) => {:user-id 1}
-
-### 3. [PENDING] Create auth middleware
-- File: src/middleware/auth.clj
-- Acceptance: Middleware extracts user from valid token
+```clojure
+{:title "Build user authentication"
+ :status :in-progress
+ :checkpoints
+ [{:id :password-hashing
+   :description "Create password hashing module"
+   :file "src/auth/password.clj"
+   :acceptance "(verify-password \"test\" (hash-password \"test\")) => true"
+   :status :done
+   :completed "2026-01-16T10:30:00Z"}
+  {:id :jwt-tokens
+   :description "Create JWT token module"
+   :file "src/auth/jwt.clj"
+   :acceptance "(verify-token (create-token {:user-id 1})) => {:user-id 1}"
+   :status :in-progress
+   :started "2026-01-16T10:35:00Z"}
+  {:id :auth-middleware
+   :description "Create auth middleware"
+   :file "src/middleware/auth.clj"
+   :acceptance "Middleware extracts user from valid token"
+   :status :pending}]
+ :signs []
+ :created "2026-01-16T10:00:00Z"}
 ```
 
 ## Tools Reference
@@ -325,7 +328,7 @@ Lisa Loop complete!
 
 | Tool | Purpose |
 |------|---------|
-| `lisa_create_plan` | Create LISA_PLAN.md with checkpoints |
+| `lisa_create_plan` | Create LISA_PLAN.edn with checkpoints |
 | `lisa_get_plan` | Read current plan status |
 | `lisa_mark_checkpoint_done` | Mark checkpoint complete |
 | `lisa_run_orchestrator` | **Start the loop** (spawns fresh instances) |
@@ -354,18 +357,22 @@ Lisa Loop complete!
 
 ## Signs (Guardrails)
 
-Signs record failures that persist across iterations. When something goes wrong in iteration 3, future iterations can read it and avoid the same mistake.
+Signs record failures that persist across iterations. When something goes wrong in iteration 3, future iterations can read it and avoid the same mistake. Signs are embedded directly in the LISA_PLAN.edn file.
 
-### LISA_SIGNS.md Format
+### Signs Format (embedded in LISA_PLAN.edn)
 
-```markdown
-# Lisa Loop Signs (Learnings)
-
-## Sign 1 (Iteration 3, 2026-01-16T10:30:00Z)
-**Checkpoint:** 2 - Create JWT module
-**Issue:** Forgot to require clojure.string
-**Fix:** Always check requires when adding string functions
-**Severity:** error
+```clojure
+{:title "Build user authentication"
+ :status :in-progress
+ :checkpoints [...]
+ :signs
+ [{:checkpoint :jwt-tokens
+   :iteration 3
+   :timestamp "2026-01-16T10:30:00Z"
+   :issue "Forgot to require clojure.string"
+   :fix "Always check requires when adding string functions"
+   :severity :error}]
+ :created "2026-01-16T10:00:00Z"}
 ```
 
 ### When to Append Signs
@@ -381,8 +388,7 @@ Each iteration gets a **fresh Claude context**:
 
 | Layer | Persists Across Iterations? |
 |-------|----------------------------|
-| LISA_PLAN.md | ✅ Yes - progress tracking |
-| LISA_SIGNS.md | ✅ Yes - learnings |
+| LISA_PLAN.edn | ✅ Yes - progress tracking & learnings |
 | Git/Files | ✅ Yes - code changes |
 | REPL state | ✅ Yes - loaded namespaces |
 | Claude context | ❌ No - fresh each time |
@@ -415,7 +421,7 @@ Does this look right?
 
 > yes
 
-Creating LISA_PLAN.md and starting orchestrator...
+Creating LISA_PLAN.edn and starting orchestrator...
 
 [Lisa] Iteration 1: Checkpoint 1 - Create password hashing
 [Lisa] Checkpoint 1 complete

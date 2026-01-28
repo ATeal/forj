@@ -40,8 +40,9 @@
    :id :update-skill-docs,
    :file "packages/forj-skill/lisa-loop/SKILL.md",
    :depends-on [:update-tools-clj :update-orchestrator],
-   :status :in-progress,
-   :started "2026-01-28T17:07:05.668483096Z"}
+   :status :done,
+   :started "2026-01-28T17:07:20.712953539Z",
+   :completed "2026-01-28T17:08:45.733853594Z"}
   {:description
    "Code review: Check for DRY violations, unused code, and code smells. Add follow-up checkpoints for any issues found.",
    :id :code-review,
@@ -49,7 +50,8 @@
    "No remaining references to LISA_PLAN.md, plan.clj, signs.clj, or markdown plan format",
    :depends-on
    [:update-tools-clj :update-orchestrator :update-skill-docs],
-   :status :pending}
+   :status :in-progress,
+   :started "2026-01-28T17:08:38.027726037Z"}
   {:description "Run tests to verify nothing is broken: bb test",
    :id :tests,
    :gates
