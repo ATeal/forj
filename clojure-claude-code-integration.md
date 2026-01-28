@@ -75,7 +75,7 @@ The counter-argument: **If the agent has a REPL, training data volume matters le
 
 ### REPL Validation vs Test Validation
 
-**Ralph Wiggum Loop** (current agentic pattern):
+**Test-based Loop** (common agentic pattern):
 ```
 while not done:
     try thing
@@ -92,9 +92,9 @@ while not done:
     if wrong: iterate on data
 ```
 
-*Named after Lisa Simpson—the methodical one who validates her work. Contrast to Ralph Wiggum loops (blind iteration until tests pass). Lisa evaluates incrementally, sees actual data, catches mistakes at the expression level.*
+*Lisa evaluates incrementally, sees actual data, catches mistakes at the expression level.*
 
-The difference: Ralph Wiggum validates at the **test/build level**. REPL validation happens at the **expression level**. You catch mistakes 10x faster because you're not waiting for a full test suite.
+The difference: Test-based loops validate at the **test/build level**. REPL validation happens at the **expression level**. You catch mistakes 10x faster because you're not waiting for a full test suite.
 
 ### The Multi-Host Advantage
 

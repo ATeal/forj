@@ -120,7 +120,7 @@ Automatically routes code to the right REPL based on file type:
 - **Flutter** - ClojureDart + Flutter (experimental)
 
 #### /lisa-loop - REPL-Driven Autonomous Loops
-Autonomous development loops with REPL validation, inspired by [Ralph Wiggum](https://ghuntley.com/ralph/):
+Autonomous development loops with REPL validation:
 
 ```bash
 /lisa-loop "Build a REST API for users" --max-iterations 20

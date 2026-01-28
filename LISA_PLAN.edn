@@ -43,14 +43,15 @@
    :status :done,
    :started "2026-01-28T17:07:20.712953539Z",
    :completed "2026-01-28T17:08:45.733853594Z"}
-  {:status :in-progress,
+  {:status :done,
    :id :remove-ralph-refs,
    :description
    "Remove all references to Ralph loops/Ralph Wiggum from the codebase. Search for and remove any ralph-related code, skills, or documentation.",
    :acceptance
    "No remaining references to ralph, ralph-loop, or ralph-wiggum in the codebase",
    :depends-on [:update-skill-docs],
-   :started "2026-01-28T17:11:20.792777174Z"}
+   :started "2026-01-28T17:11:20.792777174Z",
+   :completed "2026-01-28T17:15:10.918138147Z"}
   {:description
    "Code review: Check for DRY violations, unused code, and code smells. Add follow-up checkpoints for any issues found.",
    :id :code-review,
@@ -66,6 +67,7 @@
    :gates
    ["repl:(do (require '[babashka.tasks]) (babashka.tasks/run 'test) :pass) => :pass"],
    :depends-on [:code-review :remove-ralph-refs],
-   :status :pending}],
+   :status :in-progress,
+   :started "2026-01-28T17:14:59.415197321Z"}],
  :signs [],
  :created "2026-01-28T17:00:32.588046551Z"}
