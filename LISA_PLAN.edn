@@ -1,5 +1,5 @@
 {:title "Iteration Inspection MCP Tools and Log Cleanup",
- :status :in-progress,
+ :status :complete,
  :checkpoints
  [{:description
    "Update orchestrator to write enhanced meta files with completed-at, success, and error fields",
@@ -65,7 +65,7 @@
    :status :done,
    :started "2026-01-28T16:48:35.956744381Z",
    :completed "2026-01-28T16:50:10.980466033Z"}
-  {:status :in-progress,
+  {:status :done,
    :id :cleanup-unused-safe-execute,
    :description
    "Remove or make private the unused safe-execute function in tools.clj (flagged by LSP as unused-public-var)",
@@ -73,7 +73,8 @@
    :acceptance
    "LSP diagnostic for unused-public-var on safe-execute is resolved",
    :depends-on [:code-review],
-   :started "2026-01-28T16:50:02.992947734Z"}],
+   :started "2026-01-28T16:50:16.011946311Z",
+   :completed "2026-01-28T16:51:16.713993049Z"}],
  :signs
  [{:iteration 0,
    :checkpoint nil,
