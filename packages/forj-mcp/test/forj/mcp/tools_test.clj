@@ -2,6 +2,7 @@
   "Tests for forj.mcp.tools"
   (:require [clojure.test :refer [deftest testing is are]]
             [babashka.fs :as fs]
+            [cheshire.core :as json]
             [forj.mcp.tools :as tools]))
 
 ;; =============================================================================
@@ -334,3 +335,267 @@
       (let [session-file (#'tools/session-file-path ".")]
         (when (fs/exists? session-file)
           (fs/delete session-file))))))
+
+;; =============================================================================
+;; Lisa Iteration Inspection tests
+;; =============================================================================
+
+(defn- create-test-lisa-dir
+  "Create a temporary Lisa log directory with test meta files."
+  []
+  (let [temp-dir (fs/create-temp-dir {:prefix "forj-test-"})
+        lisa-dir (fs/path temp-dir ".forj" "logs" "lisa")]
+    (fs/create-dirs lisa-dir)
+    {:temp-dir temp-dir
+     :lisa-dir lisa-dir}))
+
+(defn- write-meta-file
+  "Write a test meta file to the Lisa directory."
+  [lisa-dir checkpoint-id iteration meta-data]
+  (let [filename (str "parallel-" checkpoint-id "-" iteration "-meta.json")
+        file-path (fs/path lisa-dir filename)]
+    (spit (str file-path) (json/generate-string meta-data {:pretty true}))
+    file-path))
+
+(defn- cleanup-test-dir
+  "Clean up a test directory."
+  [temp-dir]
+  (when (fs/exists? temp-dir)
+    (fs/delete-tree temp-dir)))
+
+(deftest lisa-inspect-iteration-no-iterations-test
+  (testing "Returns error when no iterations exist"
+    (let [{:keys [temp-dir]} (create-test-lisa-dir)]
+      (try
+        (let [result (tools/lisa-inspect-iteration {:path (str temp-dir)})]
+          (is (false? (:success result)))
+          (is (re-find #"No Lisa iterations found" (:error result))))
+        (finally
+          (cleanup-test-dir temp-dir))))))
+
+(deftest lisa-inspect-iteration-not-found-test
+  (testing "Returns error when specific checkpoint/iteration not found"
+    (let [{:keys [temp-dir lisa-dir]} (create-test-lisa-dir)]
+      (try
+        ;; Create a different checkpoint
+        (write-meta-file lisa-dir "other-checkpoint" 1
+                         {:session-id "abc-123"
+                          :checkpoint-id "other-checkpoint"
+                          :iteration 1
+                          :started-at "2026-01-01T00:00:00Z"})
+        (let [result (tools/lisa-inspect-iteration {:path (str temp-dir)
+                                                    :checkpoint_id "missing-checkpoint"
+                                                    :iteration 1})]
+          (is (false? (:success result)))
+          (is (re-find #"No iteration found for checkpoint" (:error result))))
+        (finally
+          (cleanup-test-dir temp-dir))))))
+
+(deftest lisa-inspect-iteration-success-test
+  (testing "Successfully inspects iteration from meta file"
+    (let [{:keys [temp-dir lisa-dir]} (create-test-lisa-dir)]
+      (try
+        ;; Create a meta file with complete data
+        (write-meta-file lisa-dir "test-checkpoint" 1
+                         {:session-id "test-session-123"
+                          :checkpoint-id "test-checkpoint"
+                          :iteration 1
+                          :started-at "2026-01-01T10:00:00Z"
+                          :completed-at "2026-01-01T10:05:30Z"
+                          :success true
+                          :error nil})
+        (let [result (tools/lisa-inspect-iteration {:path (str temp-dir)
+                                                    :checkpoint_id "test-checkpoint"
+                                                    :iteration 1})]
+          (is (:success result))
+          (is (= "test-checkpoint" (:checkpoint-id result)))
+          (is (= 1 (:iteration result)))
+          (is (= "test-session-123" (:session-id result)))
+          (is (= "2026-01-01T10:00:00Z" (:started-at result)))
+          (is (= "2026-01-01T10:05:30Z" (:completed-at result)))
+          ;; Duration should be calculated: 5 minutes 30 seconds = 330000 ms
+          (is (= 330000 (:duration-ms result)))
+          (is (:result result))
+          (is (true? (get-in result [:result :success]))))
+        (finally
+          (cleanup-test-dir temp-dir))))))
+
+(deftest lisa-inspect-iteration-latest-test
+  (testing "Returns latest iteration when no checkpoint specified"
+    (let [{:keys [temp-dir lisa-dir]} (create-test-lisa-dir)]
+      (try
+        ;; Create two meta files - the second one should be newer
+        (let [older-file (write-meta-file lisa-dir "first-cp" 1
+                                          {:session-id "session-1"
+                                           :checkpoint-id "first-cp"
+                                           :iteration 1
+                                           :started-at "2026-01-01T00:00:00Z"})]
+          ;; Wait a tiny bit to ensure different modification times
+          (Thread/sleep 10)
+          (write-meta-file lisa-dir "second-cp" 1
+                           {:session-id "session-2"
+                            :checkpoint-id "second-cp"
+                            :iteration 1
+                            :started-at "2026-01-02T00:00:00Z"}))
+        (let [result (tools/lisa-inspect-iteration {:path (str temp-dir)})]
+          (is (:success result))
+          ;; Should return the most recently modified meta file
+          (is (= "session-2" (:session-id result)))
+          (is (= "second-cp" (:checkpoint-id result))))
+        (finally
+          (cleanup-test-dir temp-dir))))))
+
+(deftest lisa-inspect-iteration-error-result-test
+  (testing "Properly reports error from failed iteration"
+    (let [{:keys [temp-dir lisa-dir]} (create-test-lisa-dir)]
+      (try
+        (write-meta-file lisa-dir "failed-cp" 1
+                         {:session-id "failed-session"
+                          :checkpoint-id "failed-cp"
+                          :iteration 1
+                          :started-at "2026-01-01T10:00:00Z"
+                          :completed-at "2026-01-01T10:02:00Z"
+                          :success false
+                          :error "REPL eval failed: namespace not found"})
+        (let [result (tools/lisa-inspect-iteration {:path (str temp-dir)
+                                                    :checkpoint_id "failed-cp"
+                                                    :iteration 1})]
+          (is (:success result)) ;; Inspection succeeded
+          (is (false? (get-in result [:result :success]))) ;; But iteration failed
+          (is (= "REPL eval failed: namespace not found" (get-in result [:result :error]))))
+        (finally
+          (cleanup-test-dir temp-dir))))))
+
+;; =============================================================================
+;; Lisa Get Iteration Transcript tests
+;; =============================================================================
+
+(deftest lisa-get-iteration-transcript-no-iterations-test
+  (testing "Returns error when no iterations exist"
+    (let [{:keys [temp-dir]} (create-test-lisa-dir)]
+      (try
+        (let [result (tools/lisa-get-iteration-transcript {:path (str temp-dir)})]
+          (is (false? (:success result)))
+          (is (re-find #"No Lisa iterations found" (:error result))))
+        (finally
+          (cleanup-test-dir temp-dir))))))
+
+(deftest lisa-get-iteration-transcript-not-found-test
+  (testing "Returns error when specific checkpoint/iteration not found"
+    (let [{:keys [temp-dir lisa-dir]} (create-test-lisa-dir)]
+      (try
+        ;; Create a different checkpoint
+        (write-meta-file lisa-dir "other-checkpoint" 1
+                         {:session-id "abc-123"
+                          :checkpoint-id "other-checkpoint"
+                          :iteration 1})
+        (let [result (tools/lisa-get-iteration-transcript {:path (str temp-dir)
+                                                           :checkpoint_id "missing-checkpoint"
+                                                           :iteration 1})]
+          (is (false? (:success result)))
+          (is (re-find #"No iteration found for checkpoint" (:error result))))
+        (finally
+          (cleanup-test-dir temp-dir))))))
+
+(deftest lisa-get-iteration-transcript-no-session-id-test
+  (testing "Returns error when meta file has no session-id"
+    (let [{:keys [temp-dir lisa-dir]} (create-test-lisa-dir)]
+      (try
+        ;; Create meta file without session-id
+        (write-meta-file lisa-dir "no-session" 1
+                         {:checkpoint-id "no-session"
+                          :iteration 1
+                          :started-at "2026-01-01T00:00:00Z"})
+        (let [result (tools/lisa-get-iteration-transcript {:path (str temp-dir)
+                                                           :checkpoint_id "no-session"
+                                                           :iteration 1})]
+          (is (false? (:success result)))
+          (is (re-find #"No session-id found" (:error result))))
+        (finally
+          (cleanup-test-dir temp-dir))))))
+
+(deftest lisa-get-iteration-transcript-session-not-found-test
+  (testing "Returns error when Claude session log doesn't exist"
+    (let [{:keys [temp-dir lisa-dir]} (create-test-lisa-dir)]
+      (try
+        ;; Create meta file with a fake session-id that won't exist
+        (write-meta-file lisa-dir "fake-session" 1
+                         {:session-id "nonexistent-session-id"
+                          :checkpoint-id "fake-session"
+                          :iteration 1
+                          :started-at "2026-01-01T00:00:00Z"})
+        (let [result (tools/lisa-get-iteration-transcript {:path (str temp-dir)
+                                                           :checkpoint_id "fake-session"
+                                                           :iteration 1})]
+          (is (false? (:success result)))
+          (is (re-find #"Session log not found" (:error result))))
+        (finally
+          (cleanup-test-dir temp-dir))))))
+
+;; =============================================================================
+;; Tool definitions include Lisa tools
+;; =============================================================================
+
+(deftest lisa-tools-defined-test
+  (testing "Lisa iteration tools are defined"
+    (let [tool-names (set (map :name tools/tools))]
+      (is (contains? tool-names "lisa_inspect_iteration"))
+      (is (contains? tool-names "lisa_get_iteration_transcript"))))
+
+  (testing "Tool dispatching works for Lisa tools"
+    ;; Just verify the tools dispatch without error (will fail due to no iterations)
+    (let [inspect-result (tools/call-tool {:name "lisa_inspect_iteration"
+                                           :arguments {:path "/nonexistent/path"}})
+          transcript-result (tools/call-tool {:name "lisa_get_iteration_transcript"
+                                              :arguments {:path "/nonexistent/path"}})]
+      ;; Both should fail gracefully with proper error messages
+      (is (false? (:success inspect-result)))
+      (is (false? (:success transcript-result))))))
+
+;; =============================================================================
+;; find-meta-file helper tests
+;; =============================================================================
+
+(deftest find-meta-file-test
+  (testing "Finds specific checkpoint/iteration meta file"
+    (let [{:keys [temp-dir lisa-dir]} (create-test-lisa-dir)]
+      (try
+        (write-meta-file lisa-dir "test-cp" 1 {:checkpoint-id "test-cp" :iteration 1})
+        (write-meta-file lisa-dir "test-cp" 2 {:checkpoint-id "test-cp" :iteration 2})
+        (write-meta-file lisa-dir "other-cp" 1 {:checkpoint-id "other-cp" :iteration 1})
+        (let [result (#'tools/find-meta-file (str lisa-dir) "test-cp" 2)]
+          (is (some? result))
+          (is (re-find #"test-cp-2-meta\.json$" (str result))))
+        (finally
+          (cleanup-test-dir temp-dir)))))
+
+  (testing "Returns nil for nonexistent checkpoint/iteration"
+    (let [{:keys [temp-dir lisa-dir]} (create-test-lisa-dir)]
+      (try
+        (write-meta-file lisa-dir "existing" 1 {:checkpoint-id "existing" :iteration 1})
+        (is (nil? (#'tools/find-meta-file (str lisa-dir) "nonexistent" 1)))
+        (is (nil? (#'tools/find-meta-file (str lisa-dir) "existing" 99)))
+        (finally
+          (cleanup-test-dir temp-dir)))))
+
+  (testing "Returns latest meta file when no checkpoint specified"
+    (let [{:keys [temp-dir lisa-dir]} (create-test-lisa-dir)]
+      (try
+        (write-meta-file lisa-dir "older" 1 {:checkpoint-id "older" :iteration 1})
+        (Thread/sleep 10)
+        (write-meta-file lisa-dir "newer" 1 {:checkpoint-id "newer" :iteration 1})
+        (let [result (#'tools/find-meta-file (str lisa-dir) nil nil)]
+          (is (some? result))
+          (is (re-find #"newer-1-meta\.json$" (str result))))
+        (finally
+          (cleanup-test-dir temp-dir)))))
+
+  (testing "Returns nil for empty directory"
+    (let [{:keys [temp-dir lisa-dir]} (create-test-lisa-dir)]
+      (try
+        (is (nil? (#'tools/find-meta-file (str lisa-dir) nil nil)))
+        (finally
+          (cleanup-test-dir temp-dir)))))
+
+  (testing "Returns nil for nonexistent directory"
+    (is (nil? (#'tools/find-meta-file "/nonexistent/path" nil nil)))))
