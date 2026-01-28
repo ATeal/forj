@@ -33,14 +33,15 @@
    :completed "2026-01-28T15:25:52.351016341Z"}
   {:description
    "Update lisa_watch to show tool usage from Claude session logs for current/last iteration",
-   :id :integrate-lisa-watch,
+   :started "2026-01-28T15:28:02.463256443Z",
+   :completed "2026-01-28T15:31:07.509764290Z",
+   :gates ["repl:(require '[forj.mcp.tools] :reload) => ok"],
    :file "packages/forj-mcp/src/forj/mcp/tools.clj",
    :acceptance
    "lisa_watch output includes tool call counts from Claude's session logs",
-   :gates ["repl:(require '[forj.mcp.tools] :reload) => ok"],
-   :depends-on [:store-session-id :claude-session-reader],
-   :status :in-progress,
-   :started "2026-01-28T15:27:49.574949171Z"}
+   :status :done,
+   :id :integrate-lisa-watch,
+   :depends-on [:store-session-id :claude-session-reader]}
   {:description
    "Remove redundant analytics/logging code - keep orchestrator events, remove duplicate tool parsing",
    :id :cleanup-legacy,
@@ -49,7 +50,8 @@
    "No duplicate tool call parsing in analytics.clj, orchestrator uses claude-sessions for tool data",
    :gates ["repl:(require '[forj.lisa.analytics] :reload) => ok"],
    :depends-on [:integrate-lisa-watch],
-   :status :pending}
+   :status :in-progress,
+   :started "2026-01-28T15:30:58.079543933Z"}
   {:description
    "Test claude-logs-dir path generation, JSONL parsing, tool extraction, and end-to-end flow",
    :id :integration-tests,
