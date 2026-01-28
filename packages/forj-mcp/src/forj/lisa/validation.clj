@@ -6,10 +6,13 @@
    - :chrome - Use Chrome MCP/Playwright for UI validation (screenshots, assertions)
    - :judge - Use LLM-as-judge for subjective criteria (aesthetics, clarity)
 
-   Validation config in LISA_PLAN.md:
+   Validation config in LISA_PLAN.edn :gates field:
 
-   ### 1. [PENDING] Create login form
-   - Validation: repl:(render-to-string [login-form]) returns hiccup | chrome:screenshot /login | judge:Form has clean layout"
+   {:id :create-login-form
+    :description \"Create login form\"
+    :gates [\"repl:(render-to-string [login-form]) => hiccup\"
+            \"chrome:screenshot /login\"
+            \"judge:Form has clean layout\"]}"
   (:require [babashka.process :as p]
             [clojure.string :as str]))
 

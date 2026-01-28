@@ -43,6 +43,14 @@
    :status :done,
    :started "2026-01-28T17:07:20.712953539Z",
    :completed "2026-01-28T17:08:45.733853594Z"}
+  {:status :in-progress,
+   :id :remove-ralph-refs,
+   :description
+   "Remove all references to Ralph loops/Ralph Wiggum from the codebase. Search for and remove any ralph-related code, skills, or documentation.",
+   :acceptance
+   "No remaining references to ralph, ralph-loop, or ralph-wiggum in the codebase",
+   :depends-on [:update-skill-docs],
+   :started "2026-01-28T17:11:20.792777174Z"}
   {:description
    "Code review: Check for DRY violations, unused code, and code smells. Add follow-up checkpoints for any issues found.",
    :id :code-review,
@@ -50,13 +58,14 @@
    "No remaining references to LISA_PLAN.md, plan.clj, signs.clj, or markdown plan format",
    :depends-on
    [:update-tools-clj :update-orchestrator :update-skill-docs],
-   :status :in-progress,
-   :started "2026-01-28T17:08:38.027726037Z"}
+   :status :done,
+   :started "2026-01-28T17:08:50.763452162Z",
+   :completed "2026-01-28T17:12:05.810596154Z"}
   {:description "Run tests to verify nothing is broken: bb test",
    :id :tests,
    :gates
    ["repl:(do (require '[babashka.tasks]) (babashka.tasks/run 'test) :pass) => :pass"],
-   :depends-on [:code-review],
+   :depends-on [:code-review :remove-ralph-refs],
    :status :pending}],
  :signs [],
  :created "2026-01-28T17:00:32.588046551Z"}
