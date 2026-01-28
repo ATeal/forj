@@ -6,7 +6,8 @@ commands:
     description: Start an autonomous development loop - spawns fresh Claude instances per checkpoint
     args: "<prompt> [--max-iterations N]"
   - name: lisa-loop watch
-    description: Watch the active Lisa loop - auto-refreshes status every 10s until complete
+    description: Watch the active Lisa loop - spawns background monitor that notifies on completion
+    args: "[--interval N]"
   - name: cancel-lisa
     description: Cancel the active Lisa loop
 ---
@@ -47,22 +48,25 @@ Stop the loop:
 
 ### /lisa-loop watch
 
-Watch the loop progress in real-time:
+Monitor the loop and get notified on completion:
 
 ```
 /lisa-loop watch
+/lisa-loop watch --interval 60
 ```
 
+**Arguments:**
+- `--interval N` - Check every N seconds (default: 30)
+
 **This will:**
-1. Poll `lisa_get_plan` every 10 seconds
-2. Display a progress table showing checkpoint status
-3. Show iteration count and current checkpoint
-4. Auto-refresh until loop completes or you press Ctrl+C
-5. Ring terminal bell when complete
+1. Show current status immediately via `lisa_watch`
+2. Spawn a background monitor agent that polls at intervals
+3. Notify you when the loop completes with a full summary
+4. Tell you the log file path for live tailing
 
 **Example output:**
 ```
-[Lisa Watch] Refreshing every 10s (Ctrl+C to stop)
+[Lisa Watch] Current Status:
 
 ┌────────────┬─────────────────────────────────┬────────┐
 │ Checkpoint │           Description           │ Status │
@@ -72,41 +76,81 @@ Watch the loop progress in real-time:
 │ 3          │ Create auth middleware          │ 🔄 In Progress │
 │ 4          │ Integration test                │ ⏳ Pending │
 └────────────┴─────────────────────────────────┴────────┘
-Iteration: 4 | Current: Checkpoint 3 | Cost: $2.34
+Progress: 2/4 (50%)
+
+Background monitor started (checking every 30s).
+You'll be notified when the loop completes.
+
+For live updates, tail the log in another terminal:
+  tail -f .forj/logs/lisa/orchestrator-20260128-102332.log
+```
+
+**On completion, the monitor reports:**
+```
+Lisa Loop complete!
+
+Final Status: COMPLETE
+Checkpoints: 4/4 (100%)
+Signs/Learnings: None
+
+All checkpoints:
+  1. Create password hashing - Done
+  2. Create JWT tokens - Done
+  3. Create auth middleware - Done
+  4. Integration test - Done
 ```
 
 ## How to implement /lisa-loop watch
 
 When user runs `/lisa-loop watch`:
 
-```python
-# Pseudo-code for watch loop
-while True:
-    plan = lisa_get_plan()
-
-    if plan.status == "COMPLETE":
-        print("🎉 Lisa Loop complete!")
-        print("\u0007")  # Terminal bell
-        break
-
-    # Display table of checkpoints
-    display_checkpoint_table(plan.checkpoints)
-
-    # Show progress summary
-    print(f"Iteration: {iteration} | Current: {plan.current_checkpoint}")
-
-    # Check for orchestrator log for iteration/cost
-    read latest from .forj/logs/lisa/orchestrator.log
-
-    sleep(10)  # Wait 10 seconds before refresh
+**Step 1: Show immediate status**
+```
+lisa_watch  → Display current checkpoint table
 ```
 
-**Important:** In Claude Code, you can't truly loop. Instead:
-1. Call `lisa_get_plan` to get status
-2. Display the table
-3. Tell user: "Refreshing in 10 seconds... (say 'stop' to quit watching)"
-4. If user says nothing, refresh after a moment
-5. If all checkpoints done, announce completion
+**Step 2: Find orchestrator log**
+```
+Glob for: .forj/logs/lisa/orchestrator-*.log
+Get the most recent one for the tail command
+```
+
+**Step 3: Spawn background monitor agent**
+```
+Task({
+  subagent_type: "general-purpose",
+  run_in_background: true,
+  prompt: """
+    Monitor the Lisa loop until it completes.
+
+    Check LISA_PLAN.edn every {interval} seconds.
+    Look for :status :complete in the file.
+
+    When complete, report:
+    1. Final status
+    2. How many checkpoints completed
+    3. Any signs/learnings recorded
+    4. Summary of each checkpoint
+
+    Use Bash with cat to read the file and sleep {interval} between checks.
+    Max checks: {max_checks} (to avoid infinite loops)
+  """
+})
+```
+
+**Step 4: Inform user**
+```
+Tell user:
+- Background monitor is running
+- They'll be notified on completion
+- For live updates: tail -f <log-path>
+```
+
+**Why this approach:**
+- Claude Code can't truly loop (no timers/schedulers)
+- Background Task agents DO notify when they complete
+- User can continue working while monitor runs
+- User can also tail logs for real-time output
 
 ## How It Works
 
