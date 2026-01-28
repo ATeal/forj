@@ -313,6 +313,16 @@
     :description "Get Lisa Loop status for monitoring. Returns checkpoint table, current iteration, elapsed time, cost, and file activity. Use this to watch loop progress."
     :inputSchema {:type "object"
                   :properties {:path {:type "string"
+                                      :description "Project path (defaults to current directory)"}}}}
+
+   {:name "lisa_inspect_iteration"
+    :description "Inspect a completed Lisa iteration. Returns tool counts, success/fail status, duration, and error summary. Use checkpoint-id and iteration number to identify the specific run, or omit to get the latest."
+    :inputSchema {:type "object"
+                  :properties {:checkpoint_id {:type "string"
+                                               :description "Checkpoint ID (e.g., 'auth-module'). Omit for latest."}
+                               :iteration {:type "integer"
+                                           :description "Iteration number (e.g., 1, 2, 3). Omit for latest."}
+                               :path {:type "string"
                                       :description "Project path (defaults to current directory)"}}}}])
 
 ;; =============================================================================
@@ -2073,6 +2083,68 @@
       {:success false
        :error (str "Failed to get loop status: " (.getMessage e))})))
 
+(defn- find-meta-file
+  "Find meta file for a checkpoint/iteration, or the latest one if not specified."
+  [log-dir checkpoint-id iteration]
+  (let [meta-files (when (fs/exists? log-dir)
+                     (vec (fs/glob log-dir "*-meta.json")))]
+    (if (and checkpoint-id iteration)
+      ;; Find specific file: parallel-<checkpoint>-<iteration>-meta.json
+      (let [pattern (re-pattern (str "parallel-" checkpoint-id "-" iteration "-meta\\.json$"))]
+        (first (filter #(re-find pattern (str %)) meta-files)))
+      ;; Find latest by modification time
+      (when (seq meta-files)
+        (->> meta-files
+             (sort-by #(.toMillis (fs/last-modified-time %)))
+             last)))))
+
+(defn- calculate-duration-ms
+  "Calculate duration in milliseconds from started-at and completed-at ISO timestamps."
+  [started-at completed-at]
+  (when (and started-at completed-at)
+    (try
+      (let [start (java.time.Instant/parse started-at)
+            end (java.time.Instant/parse completed-at)]
+        (.toMillis (java.time.Duration/between start end)))
+      (catch Exception _ nil))))
+
+(defn lisa-inspect-iteration
+  "Inspect a completed Lisa iteration. Returns tool counts, success/fail, duration, error summary."
+  [{:keys [checkpoint_id iteration path] :or {path "."}}]
+  (try
+    (let [project-path (str (fs/normalize (fs/absolutize path)))
+          log-dir (str project-path "/.forj/logs/lisa")
+          meta-file (find-meta-file log-dir checkpoint_id iteration)]
+      (if-not meta-file
+        {:success false
+         :error (if (and checkpoint_id iteration)
+                  (str "No iteration found for checkpoint '" checkpoint_id "' iteration " iteration)
+                  "No Lisa iterations found")}
+        (let [meta-data (json/parse-string (slurp (str meta-file)) true)
+              session-id (:session-id meta-data)
+              duration-ms (calculate-duration-ms (:started-at meta-data) (:completed-at meta-data))
+              ;; Get tool usage from Claude session logs
+              tool-summary (when session-id
+                             (try
+                               (claude-sessions/session-tool-summary session-id project-path)
+                               (catch Exception _ nil)))]
+          {:success true
+           :checkpoint-id (:checkpoint-id meta-data)
+           :iteration (:iteration meta-data)
+           :session-id session-id
+           :started-at (:started-at meta-data)
+           :completed-at (:completed-at meta-data)
+           :duration-ms duration-ms
+           :duration (format-elapsed duration-ms)
+           :result {:success (:success meta-data)
+                    :error (:error meta-data)}
+           :tool-usage (when (and tool-summary (:exists? tool-summary))
+                         {:total-calls (:total-calls tool-summary)
+                          :tool-counts (:tool-counts tool-summary)})})))
+    (catch Exception e
+      {:success false
+       :error (str "Failed to inspect iteration: " (.getMessage e))})))
+
 ;; =============================================================================
 ;; Tool Dispatch
 ;; =============================================================================
@@ -2129,7 +2201,8 @@
    "lisa_run_validation" lisa-run-validation
    "lisa_check_gates"    lisa-check-gates
    ;; Monitoring
-   "lisa_watch" lisa-watch})
+   "lisa_watch" lisa-watch
+   "lisa_inspect_iteration" lisa-inspect-iteration})
 
 (defn call-tool
   "Dispatch tool call to appropriate handler."
