@@ -1,69 +1,67 @@
-{:title "Integrate Claude Session Logs for Lisa Analytics",
- :status :complete,
+{:title "Test lisa-loop watch notification feature",
+ :status :in-progress,
  :checkpoints
  [{:description
-   "Generate and pass --session-id to Claude when spawning iterations",
-   :id :session-id-generation,
-   :file "packages/forj-mcp/src/forj/lisa/orchestrator.clj",
-   :acceptance
-   "spawn-claude-iteration! generates UUID and adds --session-id flag to claude command",
-   :gates ["repl:(require '[forj.lisa.orchestrator] :reload) => ok"],
+   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
+   :id :wait-30s-1,
+   :acceptance "Waited 30 seconds",
    :status :done,
-   :started "2026-01-28T15:23:32.206018111Z",
-   :completed "2026-01-28T15:24:47.251955947Z"}
+   :started "2026-01-28T16:01:40.724140105Z",
+   :completed "2026-01-28T16:02:25.749184205Z"}
   {:description
-   "Store session ID in iteration metadata written to .forj/logs/lisa/*.json",
-   :started "2026-01-28T15:25:57.378529045Z",
-   :completed "2026-01-28T15:27:57.434279954Z",
-   :gates ["repl:(require '[forj.lisa.orchestrator] :reload) => ok"],
-   :file "packages/forj-mcp/src/forj/lisa/orchestrator.clj",
-   :acceptance "Iteration JSON files contain :session-id field",
-   :status :done,
-   :id :store-session-id,
-   :depends-on [:session-id-generation]}
+   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
+   :id :wait-30s-2,
+   :acceptance "Waited 30 seconds",
+   :depends-on [:wait-30s-1],
+   :status :in-progress,
+   :started "2026-01-28T16:02:22.038960160Z"}
   {:description
-   "Add functions to read Claude session logs: claude-logs-dir, read-session-jsonl, extract-tool-calls",
-   :id :claude-session-reader,
-   :file "packages/forj-mcp/src/forj/lisa/claude_sessions.clj",
-   :acceptance "Can read tool names/counts from a Claude session ID",
-   :gates
-   ["repl:(require '[forj.lisa.claude-sessions] :reload) => ok"],
-   :status :done,
-   :started "2026-01-28T15:23:32.222195543Z",
-   :completed "2026-01-28T15:25:52.351016341Z"}
+   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
+   :id :wait-30s-3,
+   :acceptance "Waited 30 seconds",
+   :depends-on [:wait-30s-2],
+   :status :pending}
   {:description
-   "Update lisa_watch to show tool usage from Claude session logs for current/last iteration",
-   :started "2026-01-28T15:28:02.463256443Z",
-   :completed "2026-01-28T15:31:07.509764290Z",
-   :gates ["repl:(require '[forj.mcp.tools] :reload) => ok"],
-   :file "packages/forj-mcp/src/forj/mcp/tools.clj",
-   :acceptance
-   "lisa_watch output includes tool call counts from Claude's session logs",
-   :status :done,
-   :id :integrate-lisa-watch,
-   :depends-on [:store-session-id :claude-session-reader]}
+   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
+   :id :wait-30s-4,
+   :acceptance "Waited 30 seconds",
+   :depends-on [:wait-30s-3],
+   :status :pending}
   {:description
-   "Remove redundant analytics/logging code - keep orchestrator events, remove duplicate tool parsing",
-   :started "2026-01-28T15:31:12.539037036Z",
-   :completed "2026-01-28T15:35:32.598370194Z",
-   :gates ["repl:(require '[forj.lisa.analytics] :reload) => ok"],
-   :file "packages/forj-mcp/src/forj/lisa/analytics.clj",
-   :acceptance
-   "No duplicate tool call parsing in analytics.clj, orchestrator uses claude-sessions for tool data",
-   :status :done,
-   :id :cleanup-legacy,
-   :depends-on [:integrate-lisa-watch]}
+   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
+   :id :wait-30s-5,
+   :acceptance "Waited 30 seconds",
+   :depends-on [:wait-30s-4],
+   :status :pending}
   {:description
-   "Test claude-logs-dir path generation, JSONL parsing, tool extraction, and end-to-end flow",
-   :started "2026-01-28T15:35:37.632838333Z",
-   :completed "2026-01-28T15:37:44.260504980Z",
-   :gates
-   ["repl:(require '[forj.lisa.claude-sessions-test] :reload) => ok"
-    "repl:(clojure.test/run-tests 'forj.lisa.claude-sessions-test) => passes"],
-   :file "packages/forj-mcp/test/forj/lisa/claude_sessions_test.clj",
-   :acceptance "bb test passes with new claude_sessions tests",
-   :status :done,
-   :id :integration-tests,
-   :depends-on [:cleanup-legacy]}],
+   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
+   :id :wait-30s-6,
+   :acceptance "Waited 30 seconds",
+   :depends-on [:wait-30s-5],
+   :status :pending}
+  {:description
+   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
+   :id :wait-30s-7,
+   :acceptance "Waited 30 seconds",
+   :depends-on [:wait-30s-6],
+   :status :pending}
+  {:description
+   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
+   :id :wait-30s-8,
+   :acceptance "Waited 30 seconds",
+   :depends-on [:wait-30s-7],
+   :status :pending}
+  {:description
+   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. We are testing the lisa_watch notification feature.",
+   :id :wait-30s-9,
+   :acceptance "Waited 30 seconds",
+   :depends-on [:wait-30s-8],
+   :status :pending}
+  {:description
+   "TEST: Sleep 30 seconds using Bash, then mark this checkpoint done. This is the final checkpoint - the test is complete!",
+   :id :wait-30s-10,
+   :acceptance "Waited 30 seconds, test complete",
+   :depends-on [:wait-30s-9],
+   :status :pending}],
  :signs [],
- :created "2026-01-28T15:23:16.421183134Z"}
+ :created "2026-01-28T16:01:29.941090958Z"}
