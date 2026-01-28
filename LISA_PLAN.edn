@@ -13,13 +13,14 @@
    :completed "2026-01-28T15:24:47.251955947Z"}
   {:description
    "Store session ID in iteration metadata written to .forj/logs/lisa/*.json",
-   :id :store-session-id,
+   :started "2026-01-28T15:25:57.378529045Z",
+   :completed "2026-01-28T15:27:57.434279954Z",
+   :gates ["repl:(require '[forj.lisa.orchestrator] :reload) => ok"],
    :file "packages/forj-mcp/src/forj/lisa/orchestrator.clj",
    :acceptance "Iteration JSON files contain :session-id field",
-   :gates ["repl:(require '[forj.lisa.orchestrator] :reload) => ok"],
-   :depends-on [:session-id-generation],
-   :status :in-progress,
-   :started "2026-01-28T15:24:40.896142251Z"}
+   :status :done,
+   :id :store-session-id,
+   :depends-on [:session-id-generation]}
   {:description
    "Add functions to read Claude session logs: claude-logs-dir, read-session-jsonl, extract-tool-calls",
    :id :claude-session-reader,
@@ -38,7 +39,8 @@
    "lisa_watch output includes tool call counts from Claude's session logs",
    :gates ["repl:(require '[forj.mcp.tools] :reload) => ok"],
    :depends-on [:store-session-id :claude-session-reader],
-   :status :pending}
+   :status :in-progress,
+   :started "2026-01-28T15:27:49.574949171Z"}
   {:description
    "Remove redundant analytics/logging code - keep orchestrator events, remove duplicate tool parsing",
    :id :cleanup-legacy,
