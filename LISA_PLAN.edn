@@ -1,86 +1,54 @@
-{:title "Iteration Inspection MCP Tools and Log Cleanup",
- :status :complete,
+{:title "Remove markdown Lisa plan support - EDN only",
+ :status :in-progress,
  :checkpoints
  [{:description
-   "Update orchestrator to write enhanced meta files with completed-at, success, and error fields",
-   :id :enhance-meta-files,
-   :file "packages/forj-mcp/src/forj/lisa/orchestrator.clj",
-   :acceptance
-   "Meta files include :completed-at, :success, and :error fields",
-   :gates ["repl:(require '[forj.lisa.orchestrator] :reload) => ok"],
+   "Delete packages/forj-mcp/src/forj/lisa/plan.clj (markdown plan implementation)",
+   :id :delete-plan-clj,
+   :file "packages/forj-mcp/src/forj/lisa/plan.clj",
+   :acceptance "File no longer exists",
    :status :done,
-   :started "2026-01-28T16:31:55.584853564Z",
-   :completed "2026-01-28T16:34:15.617770234Z"}
+   :started "2026-01-28T17:00:40.519029901Z",
+   :completed "2026-01-28T17:01:10.549171100Z"}
   {:description
-   "Add lisa_inspect_iteration MCP tool - returns tool counts, success/fail, duration, error summary for a checkpoint/iteration",
-   :started "2026-01-28T16:34:20.652948622Z",
-   :completed "2026-01-28T16:37:45.685590906Z",
-   :gates ["repl:(require '[forj.mcp.tools] :reload) => ok"],
+   "Delete packages/forj-mcp/src/forj/lisa/signs.clj (markdown signs implementation - EDN embeds signs)",
+   :id :delete-signs-clj,
+   :file "packages/forj-mcp/src/forj/lisa/signs.clj",
+   :acceptance "File no longer exists",
+   :status :in-progress,
+   :started "2026-01-28T17:00:40.535146540Z"}
+  {:description
+   "Update tools.clj: remove lisa-plan/lisa-signs requires, remove markdown fallbacks in lisa-get-plan, lisa-mark-checkpoint-done, lisa-append-sign, lisa-get-signs, lisa-clear-signs, lisa-watch. Update error messages to only mention LISA_PLAN.edn",
+   :id :update-tools-clj,
    :file "packages/forj-mcp/src/forj/mcp/tools.clj",
-   :acceptance
-   "lisa_inspect_iteration returns structured data about an iteration",
-   :status :done,
-   :id :inspect-iteration-tool,
-   :depends-on [:enhance-meta-files]}
+   :gates ["repl:(require '[forj.mcp.tools :reload]) => nil"],
+   :depends-on [:delete-plan-clj :delete-signs-clj],
+   :status :pending}
   {:description
-   "Add lisa_get_iteration_transcript MCP tool - returns raw conversation/tool calls from Claude's session JSONL",
-   :started "2026-01-28T16:37:50.714203030Z",
-   :completed "2026-01-28T16:40:05.745597674Z",
-   :gates ["repl:(require '[forj.mcp.tools] :reload) => ok"],
-   :file "packages/forj-mcp/src/forj/mcp/tools.clj",
-   :acceptance
-   "lisa_get_iteration_transcript returns conversation data from Claude's logs",
-   :status :done,
-   :id :get-transcript-tool,
-   :depends-on [:inspect-iteration-tool]}
-  {:description
-   "Update orchestrator to stop writing the big parallel-*.json output files (keep only meta files)",
-   :started "2026-01-28T16:40:10.775720184Z",
-   :completed "2026-01-28T16:42:10.799580644Z",
-   :gates ["repl:(require '[forj.lisa.orchestrator] :reload) => ok"],
+   "Update orchestrator.clj: remove lisa.plan require, remove use-edn-format? function (always EDN now), remove markdown fallbacks in read-signs, append-sign!, read-plan, build-iteration-prompt, run-loop!, generate-plan!",
+   :id :update-orchestrator,
    :file "packages/forj-mcp/src/forj/lisa/orchestrator.clj",
-   :acceptance
-   "Orchestrator no longer writes parallel-*.json, only parallel-*-meta.json",
-   :status :done,
-   :id :remove-redundant-logs,
-   :depends-on [:get-transcript-tool]}
+   :gates ["repl:(require '[forj.lisa.orchestrator :reload]) => nil"],
+   :depends-on [:delete-plan-clj :delete-signs-clj],
+   :status :pending}
   {:description
-   "Add tests for lisa_inspect_iteration and lisa_get_iteration_transcript tools",
-   :started "2026-01-28T16:47:15.903085107Z",
-   :completed "2026-01-28T16:48:30.924107937Z",
-   :gates
-   ["repl:(clojure.test/run-tests 'forj.mcp.tools-test) => passes"],
-   :file "packages/forj-mcp/test/forj/mcp/tools_test.clj",
-   :acceptance "bb test passes with new tool tests",
-   :status :done,
-   :id :tests,
-   :depends-on [:remove-redundant-logs]}
+   "Update SKILL.md: change all references from LISA_PLAN.md to LISA_PLAN.edn, update format examples",
+   :id :update-skill-docs,
+   :file "packages/forj-skill/lisa-loop/SKILL.md",
+   :depends-on [:update-tools-clj :update-orchestrator],
+   :status :pending}
   {:description
    "Code review: Check for DRY violations, unused code, and code smells. Add follow-up checkpoints for any issues found.",
    :id :code-review,
-   :file "packages/forj-mcp/src/forj",
    :acceptance
-   "Code review complete, any issues documented as new checkpoints",
-   :depends-on [:tests],
-   :status :done,
-   :started "2026-01-28T16:48:35.956744381Z",
-   :completed "2026-01-28T16:50:10.980466033Z"}
-  {:status :done,
-   :id :cleanup-unused-safe-execute,
-   :description
-   "Remove or make private the unused safe-execute function in tools.clj (flagged by LSP as unused-public-var)",
-   :file "packages/forj-mcp/src/forj/mcp/tools.clj",
-   :acceptance
-   "LSP diagnostic for unused-public-var on safe-execute is resolved",
+   "No remaining references to LISA_PLAN.md, plan.clj, signs.clj, or markdown plan format",
+   :depends-on
+   [:update-tools-clj :update-orchestrator :update-skill-docs],
+   :status :pending}
+  {:description "Run tests to verify nothing is broken: bb test",
+   :id :tests,
+   :gates
+   ["repl:(do (require '[babashka.tasks]) (babashka.tasks/run 'test) :pass) => :pass"],
    :depends-on [:code-review],
-   :started "2026-01-28T16:50:16.011946311Z",
-   :completed "2026-01-28T16:51:16.713993049Z"}],
- :signs
- [{:iteration 0,
-   :checkpoint nil,
-   :issue
-   "Checkpoint :tests timed out - may need smaller scope or different approach",
-   :fix "Consider breaking into smaller tasks",
-   :severity :error,
-   :timestamp "2026-01-28T16:47:15.893655159Z"}],
- :created "2026-01-28T16:28:32.133980060Z"}
+   :status :pending}],
+ :signs [],
+ :created "2026-01-28T17:00:32.588046551Z"}
