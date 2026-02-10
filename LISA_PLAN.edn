@@ -35,8 +35,9 @@
    :acceptance
    "Function returns checkpoint-specific prompt with file, description, and validation instructions",
    :depends-on [:agent-teams-namespace],
-   :status :in-progress,
-   :started "2026-02-10T03:08:35.926442242Z"}
+   :status :done,
+   :started "2026-02-10T03:08:35.926442242Z",
+   :completed "2026-02-10T03:10:00.973889165Z"}
   {:description
    "Implement sync-tasks-to-plan! to read Agent Team task completion status and update LISA_PLAN.edn checkpoint statuses accordingly",
    :id :task-sync,

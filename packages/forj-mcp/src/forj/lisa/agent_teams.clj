@@ -147,6 +147,55 @@
                         checkpoints)]
     results))
 
+(defn build-teammate-prompt
+  "Build the spawn prompt for a checkpoint teammate.
+
+   Generates a focused prompt that instructs the teammate to:
+   1. Work on exactly one checkpoint
+   2. Validate via REPL before reporting completion
+   3. Message the team lead when done or blocked
+
+   The prompt includes checkpoint-specific details (file, description,
+   acceptance criteria, gates) and REPL validation workflow instructions.
+
+   Args:
+   - checkpoint: A Lisa checkpoint map with :id, :description, etc.
+   - plan-context: A map with optional context:
+     - :plan-title - The Lisa plan title (for context)
+     - :signs-content - Recent signs/learnings to avoid repeating mistakes"
+  [checkpoint {:keys [plan-title signs-content]}]
+  (let [cp-id (name (:id checkpoint))
+        cp-desc (:description checkpoint)
+        cp-file (:file checkpoint)
+        cp-acceptance (:acceptance checkpoint)
+        cp-gates (:gates checkpoint)
+        cp-deps (:depends-on checkpoint)]
+    (str/join "\n\n"
+              (filter some?
+                      [(str "# Checkpoint: " cp-id)
+                       (when plan-title
+                         (str "Part of plan: **" plan-title "**"))
+                       (str "**Task:** " cp-desc)
+                       (when cp-file (str "**File:** " cp-file))
+                       (when cp-acceptance (str "**Acceptance Criteria:** " cp-acceptance))
+                       (when (seq cp-gates) (str "**Gates:** " (str/join " | " cp-gates)))
+                       (when (seq cp-deps) (str "**Depends on:** " (str/join ", " (map name cp-deps))))
+                       "## Workflow"
+                       "1. Read the target file and understand existing code"
+                       (when cp-file (str "2. Implement changes in `" cp-file "`"))
+                       (str (if cp-file "3" "2") ". Validate via REPL before reporting completion:")
+                       "   - `reload_namespace` to pick up your edits"
+                       "   - `eval_comment_block` to run examples in (comment ...) blocks"
+                       "   - `repl_eval` to test specific expressions"
+                       "## Completion Protocol"
+                       "- When checkpoint is complete and validated, message the team lead with:"
+                       (str "  `CHECKPOINT_COMPLETE: " cp-id "`")
+                       "- If you are blocked or need help, message the team lead with:"
+                       (str "  `CHECKPOINT_BLOCKED: " cp-id " - <reason>`")
+                       "- Do NOT work on other checkpoints. Focus only on this one."
+                       (when (seq signs-content)
+                         (str "## Previous Learnings\n\n" signs-content))]))))
+
 (comment
   ;; Test team name generation
   (team-name-for-plan {:title "Build user authentication"})
@@ -195,4 +244,31 @@
      :task-ids (mapv :id tasks)
      :cleaned-up? (not (fs/exists? (team-tasks-dir team-name)))})
   ;; => {:team-name "lisa-...", :task-count 2, :task-ids ["a" "b"], :cleaned-up? true}
+
+  ;; Test build-teammate-prompt - basic checkpoint
+  (build-teammate-prompt
+   {:id :password-hashing
+    :description "Create password hashing module"
+    :file "src/auth/password.clj"
+    :status :pending}
+   {:plan-title "Build user authentication"})
+
+  ;; Test build-teammate-prompt - with gates and deps
+  (build-teammate-prompt
+   {:id :jwt-tokens
+    :description "Create JWT token module"
+    :file "src/auth/jwt.clj"
+    :status :pending
+    :acceptance "JWT tokens can be created and verified"
+    :gates ["repl:(verify-token (create-token {:user-id 1}))"]
+    :depends-on [:password-hashing]}
+   {:plan-title "Build user authentication"
+    :signs-content "### Sign\n**Issue:** Wrong namespace\n**Fix:** Use buddy.sign.jwt"})
+
+  ;; Test build-teammate-prompt - minimal (no file, no plan title)
+  (build-teammate-prompt
+   {:id :cleanup
+    :description "Remove deprecated code"
+    :status :pending}
+   {})
   )
