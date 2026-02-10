@@ -17,8 +17,9 @@
    :file "packages/forj-mcp/src/forj/lisa/orchestrator.clj",
    :acceptance "CLI accepts --agent-teams flag, dispatches correctly",
    :depends-on [:agent-teams-namespace],
-   :status :in-progress,
-   :started "2026-02-10T03:10:46.061471094Z"}
+   :status :done,
+   :started "2026-02-10T03:10:46.061471094Z",
+   :completed "2026-02-10T03:13:21.143601819Z"}
   {:description
    "Implement build-team-lead-prompt function that generates the system prompt for the Agent Team lead with Lisa plan context, checkpoint info, and completion protocol",
    :id :team-lead-prompt,
@@ -56,7 +57,8 @@
    :acceptance "Function orchestrates full agent teams workflow",
    :depends-on
    [:team-lead-prompt :teammate-prompt :task-sync :orchestrator-flag],
-   :status :pending}
+   :status :in-progress,
+   :started "2026-02-10T03:13:12.082620178Z"}
   {:description
    "Add FORJ_AGENT_TEAMS environment variable check and graceful fallback to parallel mode if Agent Teams unavailable",
    :id :feature-flag,
