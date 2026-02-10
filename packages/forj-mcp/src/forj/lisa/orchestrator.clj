@@ -1079,9 +1079,16 @@
    - :on-complete - Callback (fn [final-plan total-cost]) when done"
   [project-path & [{:keys [on-iteration on-complete _on-checkpoint-complete parallel agent-teams]
                     :as opts}]]
-  ;; Dispatch to agent-teams mode if requested
+  ;; Dispatch to agent-teams mode if requested (with feature flag check)
   (if agent-teams
-    (run-loop-agent-teams! project-path opts)
+    (let [{:keys [available reason]} (agent-teams/agent-teams-available?)]
+      (if available
+        (run-loop-agent-teams! project-path opts)
+        ;; Fallback to parallel mode with warning
+        (do
+          (println (str "[Lisa] ⚠ Agent Teams unavailable: " reason))
+          (println "[Lisa] Falling back to parallel execution mode")
+          (run-loop-parallel! project-path opts))))
     ;; Dispatch to parallel mode if requested
     (if parallel
       (run-loop-parallel! project-path opts)

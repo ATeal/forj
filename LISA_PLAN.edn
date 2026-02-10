@@ -67,8 +67,9 @@
    :acceptance
    "Missing env var or CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS causes fallback with warning",
    :depends-on [:run-loop-agent-teams],
-   :status :in-progress,
-   :started "2026-02-10T03:15:24.380597057Z"}
+   :status :done,
+   :started "2026-02-10T03:18:26.319803359Z",
+   :completed "2026-02-10T03:19:46.346629033Z"}
   {:description
    "Add lisa_run_agent_teams MCP tool that exposes the agent teams orchestrator mode",
    :id :mcp-tool,
@@ -85,6 +86,7 @@
    :file "packages/forj-skill/lisa-loop/SKILL.md",
    :acceptance "Documentation covers new feature with examples",
    :depends-on [:feature-flag :mcp-tool],
-   :status :pending}],
+   :status :in-progress,
+   :started "2026-02-10T03:19:38.832395538Z"}],
  :signs [],
  :created "2026-02-10T03:06:49.260941434Z"}

@@ -21,6 +21,38 @@
   "Base directory for Agent Team task files."
   (str (fs/path (fs/home) ".claude" "tasks")))
 
+(defn agent-teams-enabled?
+  "Check if Agent Teams mode is enabled via FORJ_AGENT_TEAMS env var.
+   Returns true when the env var is set to a truthy value (1, true, yes).
+   Returns false otherwise, with no warning (user simply didn't enable it)."
+  []
+  (let [val (System/getenv "FORJ_AGENT_TEAMS")]
+    (boolean (and val (#{"1" "true" "yes"} (str/lower-case val))))))
+
+(defn agent-teams-available?
+  "Check if Claude Code Agent Teams feature is available.
+   Looks for CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS env var which Claude Code
+   sets when the feature is enabled.
+
+   Returns a map with:
+   - :available - true if Agent Teams can be used
+   - :reason - explanation when not available (nil when available)"
+  []
+  (let [enabled? (agent-teams-enabled?)
+        experimental-flag (System/getenv "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS")]
+    (cond
+      (not enabled?)
+      {:available false
+       :reason "FORJ_AGENT_TEAMS env var not set. Set FORJ_AGENT_TEAMS=1 to enable Agent Teams mode."}
+
+      (not experimental-flag)
+      {:available false
+       :reason "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS not set. Agent Teams feature may not be available in your Claude Code version."}
+
+      :else
+      {:available true
+       :reason nil})))
+
 (defn- team-name-for-plan
   "Generate a stable team name from a plan title.
    Uses a hash to ensure uniqueness while keeping names readable."
@@ -495,6 +527,14 @@
      })
   ;; Expected: {:result {:synced 1, :unchanged 1, :details [{:id :step-a, :from :pending, :to :done}]},
   ;;            :step-a-status :done, :step-b-status :pending}
+
+  ;; Test agent-teams-enabled? - checks FORJ_AGENT_TEAMS env var
+  (agent-teams-enabled?)
+  ;; => false (unless FORJ_AGENT_TEAMS is set in your environment)
+
+  ;; Test agent-teams-available? - checks both env vars
+  (agent-teams-available?)
+  ;; => {:available false, :reason "FORJ_AGENT_TEAMS env var not set..."}
 
   ;; Test sync-tasks-to-plan! - no regression (completed stays completed)
   (let [test-dir "/tmp/test-sync-no-regress"
