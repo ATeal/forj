@@ -12,6 +12,7 @@
             [cheshire.core :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [forj.lisa.agent-teams :as agent-teams]
             [forj.lisa.analytics :as analytics]
             [forj.lisa.plan-edn :as plan-edn]))
 
@@ -901,6 +902,49 @@
                        (+ total-input (:input costs))
                        (+ total-output (:output costs)))))))))))
 
+(defn run-loop-agent-teams!
+  "Run Lisa Loop using Claude Code Agent Teams for parallel execution.
+
+   Instead of spawning separate Claude processes, this mode creates an
+   Agent Team where the team lead coordinates checkpoint execution via
+   teammates with inter-agent communication.
+
+   Requires Claude Code Agent Teams feature to be available.
+
+   Options:
+   - :max-iterations - Maximum iterations (default: 20)
+   - :on-complete - Callback (fn [final-plan total-cost]) when done"
+  [project-path & [{:keys [on-complete] :as opts}]]
+  (let [config (merge default-config opts)
+        plan (read-plan project-path)]
+    (cond
+      (nil? plan)
+      {:status :error
+       :error "No LISA_PLAN.edn found"
+       :iterations 0}
+
+      (plan-all-complete? plan)
+      (do
+        (when on-complete (on-complete plan 0.0))
+        {:status :complete
+         :iterations 0
+         :total-cost 0.0})
+
+      :else
+      ;; TODO: Full implementation in :run-loop-agent-teams checkpoint
+      ;; Will create team, spawn team lead, poll for completion, sync results
+      (do
+        (println "[Lisa] Agent Teams mode selected")
+        (println "[Lisa] Creating team for plan:" (:title plan))
+        (let [{:keys [team-name task-count]} (agent-teams/create-team-for-plan! project-path plan)]
+          (println (str "[Lisa] Team '" team-name "' created with " task-count " tasks"))
+          ;; Stub: clean up and return not-implemented status
+          (agent-teams/cleanup-team! team-name)
+          {:status :not-implemented
+           :error "Agent Teams execution not yet implemented - use parallel mode"
+           :team-name team-name
+           :task-count task-count})))))
+
 (defn run-loop!
   "Run the Lisa Loop orchestrator.
 
@@ -908,15 +952,19 @@
    - :max-iterations - Maximum iterations (default: 20)
    - :max-parallel - Max concurrent checkpoints for parallel mode (default: 3)
    - :parallel - Enable parallel execution (default: false)
+   - :agent-teams - Use Agent Teams for parallel execution (default: false)
    - :allowed-tools - Tools to allow (default: standard set)
    - :on-iteration - Callback (fn [iteration result]) for each iteration
    - :on-checkpoint-complete - Callback (fn [checkpoint]) for parallel mode
    - :on-complete - Callback (fn [final-plan total-cost]) when done"
-  [project-path & [{:keys [on-iteration on-complete _on-checkpoint-complete parallel]
+  [project-path & [{:keys [on-iteration on-complete _on-checkpoint-complete parallel agent-teams]
                     :as opts}]]
-  ;; Dispatch to parallel mode if requested
-  (if parallel
-    (run-loop-parallel! project-path opts)
+  ;; Dispatch to agent-teams mode if requested
+  (if agent-teams
+    (run-loop-agent-teams! project-path opts)
+    ;; Dispatch to parallel mode if requested
+    (if parallel
+      (run-loop-parallel! project-path opts)
     ;; Sequential mode (default)
     (let [config (merge default-config opts)
           log-dir (ensure-log-dir! project-path config)
@@ -1059,7 +1107,7 @@
                         (recur (inc iteration)
                                (+ total-cost iteration-cost)
                                (+ total-input-tokens iter-input)
-                               (+ total-output-tokens iter-output)))))))))))))))
+                               (+ total-output-tokens iter-output))))))))))))))))
 
 (defn generate-plan!
   "Generate a LISA_PLAN.edn by asking Claude to analyze the task and create checkpoints."
@@ -1111,20 +1159,25 @@
      --verbose              Use stream-json for detailed tool call logs
      --iteration-timeout N  Timeout per iteration in seconds (disabled by default)
      --idle-timeout N       Kill if no file activity for N seconds (default: 300 = 5 min)
-     --no-timeout           Disable all timeouts"
+     --no-timeout           Disable all timeouts
+     --agent-teams          Use Agent Teams for parallel checkpoint execution"
   [& args]
   (let [;; Parse args
         {:keys [project-path max-iterations parallel max-parallel verbose
-                iteration-timeout idle-timeout no-timeout]}
+                iteration-timeout idle-timeout no-timeout agent-teams]}
         (loop [args args
                opts {:project-path "." :max-iterations 20 :parallel true :max-parallel 3
-                     :verbose false :iteration-timeout nil :idle-timeout 300 :no-timeout false}]
+                     :verbose false :iteration-timeout nil :idle-timeout 300 :no-timeout false
+                     :agent-teams false}]
           (if (empty? args)
             opts
             (let [[arg & more] args]
               (cond
                 (= "--sequential" arg)
                 (recur more (assoc opts :parallel false))
+
+                (= "--agent-teams" arg)
+                (recur more (assoc opts :agent-teams true))
 
                 (= "--verbose" arg)
                 (recur more (assoc opts :verbose true))
@@ -1157,7 +1210,9 @@
     (println "[Lisa] Starting orchestrator")
     (println "[Lisa] Project:" project-path)
     (println "[Lisa] Max iterations:" max-iterations)
-    (when parallel
+    (when agent-teams
+      (println "[Lisa] Agent Teams mode enabled"))
+    (when (and parallel (not agent-teams))
       (println "[Lisa] Parallel mode enabled (max" max-parallel "concurrent)"))
     (when verbose
       (println "[Lisa] Verbose mode enabled (stream-json output)"))
@@ -1170,6 +1225,7 @@
                             {:max-iterations max-iterations
                              :parallel parallel
                              :max-parallel max-parallel
+                             :agent-teams agent-teams
                              :verbose verbose
                              ;; Convert seconds to milliseconds, nil disables timeout
                              :iteration-timeout-ms (when (and (not no-timeout) iteration-timeout)
@@ -1291,4 +1347,12 @@
        :success? (:success contents)
        :error (:error contents)}))
   ;; => {:has-completed-at? true, :success? false, :error "Iteration failed - timeout"}
+
+  ;; Test run-loop-agent-teams! stub - no plan
+  (run-loop-agent-teams! "/tmp/nonexistent-project")
+  ;; => {:status :error, :error "No LISA_PLAN.edn found", :iterations 0}
+
+  ;; Test run-loop! dispatches to agent-teams mode
+  ;; (run-loop! "." {:agent-teams true})
+  ;; => dispatches to run-loop-agent-teams!
   )
