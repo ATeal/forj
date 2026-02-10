@@ -26,8 +26,9 @@
    :acceptance
    "Function returns well-formatted prompt string with plan title and checkpoint details",
    :depends-on [:agent-teams-namespace],
-   :status :in-progress,
-   :started "2026-02-10T03:08:35.913486369Z"}
+   :status :done,
+   :started "2026-02-10T03:08:35.913486369Z",
+   :completed "2026-02-10T03:10:41.000830739Z"}
   {:description
    "Implement build-teammate-prompt function that generates spawn prompt for individual checkpoint teammates",
    :id :teammate-prompt,

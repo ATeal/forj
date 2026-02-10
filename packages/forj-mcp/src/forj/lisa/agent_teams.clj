@@ -147,6 +147,82 @@
                         checkpoints)]
     results))
 
+(defn- format-checkpoint-summary
+  "Format a single checkpoint as a summary line for the team lead prompt."
+  [checkpoint]
+  (let [cp-id (name (:id checkpoint))
+        status (name (:status checkpoint :pending))]
+    (str "- **" cp-id "** [" status "] — " (:description checkpoint)
+         (when (:file checkpoint) (str " (`" (:file checkpoint) "`)"))
+         (when (seq (:depends-on checkpoint))
+           (str " (depends on: " (str/join ", " (map name (:depends-on checkpoint))) ")"))
+         (when (seq (:gates checkpoint))
+           (str "\n  Gates: " (str/join " | " (:gates checkpoint)))))))
+
+(defn build-team-lead-prompt
+  "Build the system prompt for the Agent Team lead.
+
+   The team lead coordinates parallel checkpoint execution, spawning
+   teammates for ready checkpoints and synthesizing results. The prompt
+   includes the full plan context, checkpoint details, and the protocol
+   for marking checkpoints complete.
+
+   Parameters:
+   - plan: The Lisa plan map (from LISA_PLAN.edn)
+   - signs-content: Optional string of previous learnings (signs)"
+  [plan signs-content]
+  (let [checkpoints (:checkpoints plan)
+        done (filter #(= :done (:status %)) checkpoints)
+        pending (filter #(= :pending (:status %)) checkpoints)
+        in-progress (filter #(= :in-progress (:status %)) checkpoints)
+        ready (plan-edn/ready-checkpoints plan)]
+    (str/join "\n\n"
+              (filter some?
+                      [(str "# Lisa Loop Team Lead: " (:title plan))
+                       "You are coordinating parallel checkpoint execution for this Lisa plan. Your job is to spawn teammates for ready checkpoints, monitor their progress, and ensure quality through REPL validation."
+                       ;; Plan overview
+                       (str "## Plan Overview\n\n"
+                            "Total checkpoints: " (count checkpoints) "\n"
+                            "Completed: " (count done) "\n"
+                            "In progress: " (count in-progress) "\n"
+                            "Pending: " (count pending) "\n"
+                            "Ready to start: " (count ready))
+                       ;; Checkpoint details
+                       (str "## Checkpoints\n\n"
+                            (str/join "\n" (map format-checkpoint-summary checkpoints)))
+                       ;; Role instructions
+                       (str "## Your Role\n\n"
+                            "1. Spawn teammates for checkpoints that are ready (pending with all dependencies met)\n"
+                            "2. Each teammate works on ONE checkpoint independently\n"
+                            "3. Monitor progress via the task list\n"
+                            "4. When a teammate completes, verify their REPL validation results\n"
+                            "5. Handle failures by recording signs for future iterations")
+                       ;; Completion protocol
+                       (str "## Checkpoint Completion Protocol\n\n"
+                            "When a teammate reports their checkpoint is done:\n\n"
+                            "1. Verify their REPL validation passed (reload_namespace + eval_comment_block)\n"
+                            "2. Use the `lisa_mark_checkpoint_done` MCP tool with the checkpoint ID\n"
+                            "3. Check if completing this checkpoint unblocks new ones\n"
+                            "4. Spawn new teammates for any newly ready checkpoints")
+                       ;; REPL validation guidance
+                       (str "## REPL Validation Requirements\n\n"
+                            "Every checkpoint MUST be validated via REPL before completion:\n\n"
+                            "1. `reload_namespace` — Reload changed namespaces to pick up edits\n"
+                            "2. `eval_comment_block` — Run examples in (comment ...) blocks\n"
+                            "3. `repl_eval` — Test specific expressions to confirm correctness\n\n"
+                            "Do NOT accept a checkpoint as complete without REPL evidence.")
+                       ;; Failure handling
+                       (str "## Handling Failures\n\n"
+                            "If a teammate is blocked or encounters errors:\n\n"
+                            "1. Record a sign using `lisa_append_sign` with the issue and fix\n"
+                            "2. Signs persist across iterations so future runs avoid the same mistake\n"
+                            "3. If the checkpoint cannot proceed, report it as blocked")
+                       ;; Signs
+                       (when (seq signs-content)
+                         (str "## Previous Learnings (Signs)\n\n"
+                              "These are lessons from previous iterations. Apply them to avoid repeating mistakes:\n\n"
+                              signs-content))]))))
+
 (defn build-teammate-prompt
   "Build the spawn prompt for a checkpoint teammate.
 
@@ -244,6 +320,40 @@
      :task-ids (mapv :id tasks)
      :cleaned-up? (not (fs/exists? (team-tasks-dir team-name)))})
   ;; => {:team-name "lisa-...", :task-count 2, :task-ids ["a" "b"], :cleaned-up? true}
+
+  ;; Test build-team-lead-prompt - basic plan
+  (build-team-lead-prompt
+   {:title "Build user authentication"
+    :status :in-progress
+    :checkpoints [{:id :password-hashing
+                   :description "Create password hashing module"
+                   :file "src/auth/password.clj"
+                   :status :done}
+                  {:id :jwt-tokens
+                   :description "Create JWT token module"
+                   :file "src/auth/jwt.clj"
+                   :depends-on [:password-hashing]
+                   :status :pending
+                   :gates ["repl:(verify-token (create-token {:user-id 1}))"]}
+                  {:id :middleware
+                   :description "Auth middleware"
+                   :depends-on [:jwt-tokens]
+                   :status :pending}]}
+   nil)
+
+  ;; Test build-team-lead-prompt - with signs
+  (build-team-lead-prompt
+   {:title "Test plan"
+    :checkpoints [{:id :step-1 :description "Step one" :status :pending}]}
+   "### Sign\n**Issue:** Wrong namespace\n**Fix:** Use buddy.sign.jwt")
+
+  ;; Test format-checkpoint-summary
+  (format-checkpoint-summary {:id :jwt-tokens
+                              :description "Create JWT token module"
+                              :file "src/auth/jwt.clj"
+                              :depends-on [:password-hashing]
+                              :status :pending
+                              :gates ["repl:(verify-token (create-token {:user-id 1}))"]})
 
   ;; Test build-teammate-prompt - basic checkpoint
   (build-teammate-prompt
