@@ -1,73 +1,81 @@
-{:title "Remove markdown Lisa plan support - EDN only",
+{:title "Agent Teams Integration for Lisa Loop",
  :status :in-progress,
  :checkpoints
  [{:description
-   "Delete packages/forj-mcp/src/forj/lisa/plan.clj (markdown plan implementation)",
-   :id :delete-plan-clj,
-   :file "packages/forj-mcp/src/forj/lisa/plan.clj",
-   :acceptance "File no longer exists",
+   "Create forj.lisa.agent-teams namespace with core team lifecycle functions: create-team-for-plan!, cleanup-team!, and sync-plan-to-tasks!",
+   :id :agent-teams-namespace,
+   :file "packages/forj-mcp/src/forj/lisa/agent_teams.clj",
+   :acceptance
+   "Namespace loads without errors, functions exist and have docstrings",
+   :gates ["repl:(require '[forj.lisa.agent-teams :as at] :reload)"],
    :status :done,
-   :started "2026-01-28T17:00:40.519029901Z",
-   :completed "2026-01-28T17:01:10.549171100Z"}
+   :started "2026-02-10T03:07:00.874926772Z",
+   :completed "2026-02-10T03:08:40.941795452Z"}
   {:description
-   "Delete packages/forj-mcp/src/forj/lisa/signs.clj (markdown signs implementation - EDN embeds signs)",
-   :id :delete-signs-clj,
-   :file "packages/forj-mcp/src/forj/lisa/signs.clj",
-   :acceptance "File no longer exists",
-   :status :done,
-   :started "2026-01-28T17:00:40.535146540Z",
-   :completed "2026-01-28T17:01:25.581532525Z"}
-  {:description
-   "Update tools.clj: remove lisa-plan/lisa-signs requires, remove markdown fallbacks in lisa-get-plan, lisa-mark-checkpoint-done, lisa-append-sign, lisa-get-signs, lisa-clear-signs, lisa-watch. Update error messages to only mention LISA_PLAN.edn",
-   :id :update-tools-clj,
-   :file "packages/forj-mcp/src/forj/mcp/tools.clj",
-   :gates ["repl:(require '[forj.mcp.tools :reload]) => nil"],
-   :depends-on [:delete-plan-clj :delete-signs-clj],
-   :status :done,
-   :started "2026-01-28T17:04:20.651595342Z",
-   :completed "2026-01-28T17:07:15.685373605Z"}
-  {:description
-   "Update orchestrator.clj: remove lisa.plan require, remove use-edn-format? function (always EDN now), remove markdown fallbacks in read-signs, append-sign!, read-plan, build-iteration-prompt, run-loop!, generate-plan!",
-   :id :update-orchestrator,
+   "Add --agent-teams flag to orchestrator CLI and wire it to dispatch to run-loop-agent-teams! function (can be a stub initially)",
+   :id :orchestrator-flag,
    :file "packages/forj-mcp/src/forj/lisa/orchestrator.clj",
-   :gates ["repl:(require '[forj.lisa.orchestrator :reload]) => nil"],
-   :depends-on [:delete-plan-clj :delete-signs-clj],
-   :status :done,
-   :started "2026-01-28T17:01:20.570334150Z",
-   :completed "2026-01-28T17:04:15.622786558Z"}
-  {:description
-   "Update SKILL.md: change all references from LISA_PLAN.md to LISA_PLAN.edn, update format examples",
-   :id :update-skill-docs,
-   :file "packages/forj-skill/lisa-loop/SKILL.md",
-   :depends-on [:update-tools-clj :update-orchestrator],
-   :status :done,
-   :started "2026-01-28T17:07:20.712953539Z",
-   :completed "2026-01-28T17:08:45.733853594Z"}
-  {:status :done,
-   :id :remove-ralph-refs,
-   :description
-   "Remove all references to Ralph loops/Ralph Wiggum from the codebase. Search for and remove any ralph-related code, skills, or documentation.",
-   :acceptance
-   "No remaining references to ralph, ralph-loop, or ralph-wiggum in the codebase",
-   :depends-on [:update-skill-docs],
-   :started "2026-01-28T17:11:20.792777174Z",
-   :completed "2026-01-28T17:15:10.918138147Z"}
-  {:description
-   "Code review: Check for DRY violations, unused code, and code smells. Add follow-up checkpoints for any issues found.",
-   :id :code-review,
-   :acceptance
-   "No remaining references to LISA_PLAN.md, plan.clj, signs.clj, or markdown plan format",
-   :depends-on
-   [:update-tools-clj :update-orchestrator :update-skill-docs],
-   :status :done,
-   :started "2026-01-28T17:08:50.763452162Z",
-   :completed "2026-01-28T17:12:05.810596154Z"}
-  {:description "Run tests to verify nothing is broken: bb test",
-   :id :tests,
-   :gates
-   ["repl:(do (require '[babashka.tasks]) (babashka.tasks/run 'test) :pass) => :pass"],
-   :depends-on [:code-review :remove-ralph-refs],
+   :acceptance "CLI accepts --agent-teams flag, dispatches correctly",
+   :depends-on [:agent-teams-namespace],
    :status :in-progress,
-   :started "2026-01-28T17:14:59.415197321Z"}],
+   :started "2026-02-10T03:08:34.208608355Z"}
+  {:description
+   "Implement build-team-lead-prompt function that generates the system prompt for the Agent Team lead with Lisa plan context, checkpoint info, and completion protocol",
+   :id :team-lead-prompt,
+   :file "packages/forj-mcp/src/forj/lisa/agent_teams.clj",
+   :acceptance
+   "Function returns well-formatted prompt string with plan title and checkpoint details",
+   :depends-on [:agent-teams-namespace],
+   :status :in-progress,
+   :started "2026-02-10T03:08:35.913486369Z"}
+  {:description
+   "Implement build-teammate-prompt function that generates spawn prompt for individual checkpoint teammates",
+   :id :teammate-prompt,
+   :file "packages/forj-mcp/src/forj/lisa/agent_teams.clj",
+   :acceptance
+   "Function returns checkpoint-specific prompt with file, description, and validation instructions",
+   :depends-on [:agent-teams-namespace],
+   :status :in-progress,
+   :started "2026-02-10T03:08:35.926442242Z"}
+  {:description
+   "Implement sync-tasks-to-plan! to read Agent Team task completion status and update LISA_PLAN.edn checkpoint statuses accordingly",
+   :id :task-sync,
+   :file "packages/forj-mcp/src/forj/lisa/agent_teams.clj",
+   :acceptance
+   "Completed tasks result in updated checkpoint status in plan",
+   :depends-on [:agent-teams-namespace],
+   :status :in-progress,
+   :started "2026-02-10T03:08:40.941811929Z"}
+  {:description
+   "Implement run-loop-agent-teams! that creates team, spawns team lead, polls for completion, syncs results back to plan, and cleans up",
+   :id :run-loop-agent-teams,
+   :file "packages/forj-mcp/src/forj/lisa/agent_teams.clj",
+   :acceptance "Function orchestrates full agent teams workflow",
+   :depends-on
+   [:team-lead-prompt :teammate-prompt :task-sync :orchestrator-flag],
+   :status :pending}
+  {:description
+   "Add FORJ_AGENT_TEAMS environment variable check and graceful fallback to parallel mode if Agent Teams unavailable",
+   :id :feature-flag,
+   :file "packages/forj-mcp/src/forj/lisa/agent_teams.clj",
+   :acceptance
+   "Missing env var or CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS causes fallback with warning",
+   :depends-on [:run-loop-agent-teams],
+   :status :pending}
+  {:description
+   "Add lisa_run_agent_teams MCP tool that exposes the agent teams orchestrator mode",
+   :id :mcp-tool,
+   :file "packages/forj-mcp/src/forj/mcp/tools.clj",
+   :acceptance
+   "Tool is registered, callable, and invokes run-loop-agent-teams!",
+   :depends-on [:run-loop-agent-teams],
+   :status :pending}
+  {:description
+   "Update SKILL.md to document --agent-teams flag, FORJ_AGENT_TEAMS env var, and usage examples",
+   :id :update-docs,
+   :file "packages/forj-skill/lisa-loop/SKILL.md",
+   :acceptance "Documentation covers new feature with examples",
+   :depends-on [:feature-flag :mcp-tool],
+   :status :pending}],
  :signs [],
- :created "2026-01-28T17:00:32.588046551Z"}
+ :created "2026-02-10T03:06:49.260941434Z"}
