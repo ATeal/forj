@@ -147,6 +147,75 @@
                         checkpoints)]
     results))
 
+(defn- task-status->checkpoint-status
+  "Convert Agent Team task status string to Lisa checkpoint status keyword."
+  [task-status]
+  (case task-status
+    "completed" :done
+    "in_progress" :in-progress
+    "pending" :pending
+    ;; Default to pending for unknown statuses
+    :pending))
+
+(defn sync-tasks-to-plan!
+  "Read Agent Team task completion status and update LISA_PLAN.edn accordingly.
+
+   Reads task files from the team's tasks directory and compares their
+   statuses against the current plan. When a task is marked 'completed'
+   by the Agent Team, the corresponding checkpoint in LISA_PLAN.edn is
+   updated to :done.
+
+   Only transitions tasks forward (pending→in-progress→done). Does not
+   revert completed checkpoints.
+
+   Returns a map with:
+   - :synced - count of checkpoints whose status was updated
+   - :unchanged - count of checkpoints that didn't change
+   - :details - seq of {:id :from :to} for each change"
+  [project-path team-name]
+  (let [plan (plan-edn/read-plan project-path)
+        tasks (read-task-files team-name)
+        task-by-id (into {} (map (fn [t] [(:id t) t]) tasks))
+        ;; Status priority for forward-only transitions
+        status-priority {:pending 0, :in-progress 1, :done 2, :failed 2}
+        results (reduce
+                 (fn [acc checkpoint]
+                   (let [cp-id (name (:id checkpoint))
+                         task (get task-by-id cp-id)
+                         current-status (:status checkpoint)
+                         task-status (when task
+                                       (task-status->checkpoint-status (:status task)))]
+                     (if (and task-status
+                              (> (get status-priority task-status 0)
+                                 (get status-priority current-status 0)))
+                       ;; Task has progressed further than plan - update plan
+                       (-> acc
+                           (update :synced inc)
+                           (update :details conj {:id (:id checkpoint)
+                                                  :from current-status
+                                                  :to task-status}))
+                       ;; No change needed
+                       (update acc :unchanged inc))))
+                 {:synced 0 :unchanged 0 :details []}
+                 (:checkpoints plan))]
+    ;; Apply updates to plan
+    (when (pos? (:synced results))
+      (let [updated-plan (reduce
+                          (fn [p {:keys [id to]}]
+                            (let [updates (cond-> {:status to}
+                                            (= to :done) (assoc :completed (str (java.time.Instant/now)))
+                                            (= to :in-progress) (assoc :started (str (java.time.Instant/now))))]
+                              (plan-edn/update-checkpoint p id updates)))
+                          plan
+                          (:details results))
+            ;; Update overall plan status
+            final-plan (assoc updated-plan
+                              :status (if (plan-edn/all-complete? updated-plan)
+                                        :complete
+                                        :in-progress))]
+        (plan-edn/write-plan! project-path final-plan)))
+    results))
+
 (defn- format-checkpoint-summary
   "Format a single checkpoint as a summary line for the team lead prompt."
   [checkpoint]
@@ -381,4 +450,75 @@
     :description "Remove deprecated code"
     :status :pending}
    {})
+
+  ;; Test task-status->checkpoint-status conversion
+  [(task-status->checkpoint-status "completed")   ;; => :done
+   (task-status->checkpoint-status "in_progress")  ;; => :in-progress
+   (task-status->checkpoint-status "pending")       ;; => :pending
+   (task-status->checkpoint-status "unknown")]      ;; => :pending
+
+  ;; Test sync-tasks-to-plan! - full lifecycle
+  ;; 1. Create a plan with pending checkpoints
+  ;; 2. Create team from plan (tasks start as pending)
+  ;; 3. Manually update task file to "completed"
+  ;; 4. sync-tasks-to-plan! should update plan checkpoint to :done
+  (let [test-dir "/tmp/test-sync-tasks"
+        _ (babashka.fs/create-dirs test-dir)
+        plan {:title "Sync test"
+              :status :in-progress
+              :checkpoints [{:id :step-a
+                             :description "Step A"
+                             :status :pending}
+                            {:id :step-b
+                             :description "Step B"
+                             :depends-on [:step-a]
+                             :status :pending}]
+              :signs []}
+        _ (forj.lisa.plan-edn/write-plan! test-dir plan)
+        {:keys [team-name]} (create-team-for-plan! test-dir plan)
+        ;; Simulate agent completing step-a by writing task file with "completed"
+        _ (write-task-file! team-name {:id "step-a"
+                                       :subject "Checkpoint: step-a"
+                                       :description "Step A"
+                                       :status "completed"})
+        ;; Now sync tasks back to plan
+        result (sync-tasks-to-plan! test-dir team-name)
+        ;; Read plan back to verify
+        updated-plan (forj.lisa.plan-edn/read-plan test-dir)
+        step-a-status (:status (forj.lisa.plan-edn/checkpoint-by-id updated-plan :step-a))
+        step-b-status (:status (forj.lisa.plan-edn/checkpoint-by-id updated-plan :step-b))
+        _ (cleanup-team! team-name)
+        _ (babashka.fs/delete-tree test-dir)]
+    {:result result
+     :step-a-status step-a-status  ;; => :done
+     :step-b-status step-b-status  ;; => :pending (unchanged)
+     })
+  ;; Expected: {:result {:synced 1, :unchanged 1, :details [{:id :step-a, :from :pending, :to :done}]},
+  ;;            :step-a-status :done, :step-b-status :pending}
+
+  ;; Test sync-tasks-to-plan! - no regression (completed stays completed)
+  (let [test-dir "/tmp/test-sync-no-regress"
+        _ (babashka.fs/create-dirs test-dir)
+        plan {:title "No regress test"
+              :status :in-progress
+              :checkpoints [{:id :already-done
+                             :description "Already done"
+                             :status :done
+                             :completed "2024-01-01T00:00:00Z"}]
+              :signs []}
+        _ (forj.lisa.plan-edn/write-plan! test-dir plan)
+        {:keys [team-name]} (create-team-for-plan! test-dir plan)
+        ;; Task says "pending" but plan says :done — should NOT revert
+        _ (write-task-file! team-name {:id "already-done"
+                                       :subject "Checkpoint: already-done"
+                                       :description "Already done"
+                                       :status "pending"})
+        result (sync-tasks-to-plan! test-dir team-name)
+        updated-plan (forj.lisa.plan-edn/read-plan test-dir)
+        status (:status (forj.lisa.plan-edn/checkpoint-by-id updated-plan :already-done))
+        _ (cleanup-team! team-name)
+        _ (babashka.fs/delete-tree test-dir)]
+    {:result result
+     :status status})
+  ;; Expected: {:result {:synced 0, :unchanged 1, :details []}, :status :done}
   )
