@@ -76,8 +76,9 @@
    :acceptance
    "Tool is registered, callable, and invokes run-loop-agent-teams!",
    :depends-on [:run-loop-agent-teams],
-   :status :in-progress,
-   :started "2026-02-10T03:15:26.216399552Z"}
+   :status :done,
+   :started "2026-02-10T03:15:26.216399552Z",
+   :completed "2026-02-10T03:18:21.283272431Z"}
   {:description
    "Update SKILL.md to document --agent-teams flag, FORJ_AGENT_TEAMS env var, and usage examples",
    :id :update-docs,
