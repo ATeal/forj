@@ -331,7 +331,17 @@
                                :iteration {:type "integer"
                                            :description "Iteration number (e.g., 1, 2, 3). Omit for latest."}
                                :path {:type "string"
-                                      :description "Project path (defaults to current directory)"}}}}])
+                                      :description "Project path (defaults to current directory)"}}}}
+
+   {:name "lisa_run_agent_teams"
+    :description "Run the Lisa Loop orchestrator using Agent Teams mode. Creates an Agent Team where a team lead coordinates parallel checkpoint execution via teammates with inter-agent communication. Requires Claude Code Agent Teams feature."
+    :inputSchema {:type "object"
+                  :properties {:path {:type "string"
+                                      :description "Project path (defaults to current directory)"}
+                               :max_iterations {:type "integer"
+                                                :description "Maximum poll cycles before stopping (default: 20)"}
+                               :idle_timeout {:type "integer"
+                                              :description "Kill if no file activity for N seconds (default: 300 = 5 min)"}}}}])
 
 ;; =============================================================================
 ;; Input Validation
@@ -1713,6 +1723,40 @@
       {:success false
        :error (str "Failed to start orchestrator: " (.getMessage e))})))
 
+(defn lisa-run-agent-teams
+  "Run the Lisa Loop orchestrator in Agent Teams mode.
+   Spawns as a detached background process with --agent-teams flag."
+  [{:keys [path max_iterations idle_timeout]
+    :or {path "." max_iterations 20 idle_timeout 300}}]
+  (try
+    (let [project-path (fs/absolutize path)
+          log-dir (str (fs/path project-path ".forj/logs/lisa"))
+          _ (fs/create-dirs log-dir)
+          timestamp (-> (java.time.LocalDateTime/now)
+                        (.format (java.time.format.DateTimeFormatter/ofPattern "yyyyMMdd-HHmmss")))
+          log-file (str (fs/path log-dir (str "agent-teams-" timestamp ".log")))
+
+          cmd-args (cond-> ["bb" "-cp" (System/getProperty "java.class.path")
+                            "-m" "forj.lisa.orchestrator" (str project-path)
+                            "--agent-teams"
+                            "--max-iterations" (str max_iterations)]
+                     idle_timeout (into ["--idle-timeout" (str idle_timeout)]))
+
+          proc (apply p/process {:dir (str project-path)
+                                 :out (java.io.File. log-file)
+                                 :err :out}
+                      cmd-args)
+          pid (-> proc :proc .pid)]
+
+      {:success true
+       :message (str "Lisa Loop Agent Teams orchestrator started (max " max_iterations " poll cycles)")
+       :pid pid
+       :log-file log-file
+       :monitor-hint (str "tail -f " log-file)})
+    (catch Exception e
+      {:success false
+       :error (str "Failed to start agent teams orchestrator: " (.getMessage e))})))
+
 (defn repl-snapshot
   "Take a snapshot of REPL state."
   [{:keys [port namespace]}]
@@ -2111,6 +2155,7 @@
    "lisa_mark_checkpoint_done"  lisa-mark-checkpoint-done
    "lisa_add_checkpoint"        lisa-add-checkpoint
    "lisa_run_orchestrator"      lisa-run-orchestrator
+   "lisa_run_agent_teams"       lisa-run-agent-teams
    "repl_snapshot"              repl-snapshot
    ;; Signs (guardrails) tools
    "lisa_append_sign"   lisa-append-sign
