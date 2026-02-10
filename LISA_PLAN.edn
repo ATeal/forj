@@ -57,8 +57,9 @@
    :acceptance "Function orchestrates full agent teams workflow",
    :depends-on
    [:team-lead-prompt :teammate-prompt :task-sync :orchestrator-flag],
-   :status :in-progress,
-   :started "2026-02-10T03:13:12.082620178Z"}
+   :status :done,
+   :started "2026-02-10T03:13:26.186688040Z",
+   :completed "2026-02-10T03:15:36.234952994Z"}
   {:description
    "Add FORJ_AGENT_TEAMS environment variable check and graceful fallback to parallel mode if Agent Teams unavailable",
    :id :feature-flag,
@@ -66,7 +67,8 @@
    :acceptance
    "Missing env var or CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS causes fallback with warning",
    :depends-on [:run-loop-agent-teams],
-   :status :pending}
+   :status :in-progress,
+   :started "2026-02-10T03:15:24.380597057Z"}
   {:description
    "Add lisa_run_agent_teams MCP tool that exposes the agent teams orchestrator mode",
    :id :mcp-tool,
@@ -74,7 +76,8 @@
    :acceptance
    "Tool is registered, callable, and invokes run-loop-agent-teams!",
    :depends-on [:run-loop-agent-teams],
-   :status :pending}
+   :status :in-progress,
+   :started "2026-02-10T03:15:26.216399552Z"}
   {:description
    "Update SKILL.md to document --agent-teams flag, FORJ_AGENT_TEAMS env var, and usage examples",
    :id :update-docs,

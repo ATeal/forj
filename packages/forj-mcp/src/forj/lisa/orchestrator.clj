@@ -909,13 +909,25 @@
    Agent Team where the team lead coordinates checkpoint execution via
    teammates with inter-agent communication.
 
+   Workflow:
+   1. Create Agent Team with tasks from LISA_PLAN.edn
+   2. Spawn a Claude 'team lead' process with the team lead prompt
+   3. Poll for completion by monitoring task files for status changes
+   4. Sync task results back to the plan on each poll cycle
+   5. Clean up team resources when complete or on error
+
    Requires Claude Code Agent Teams feature to be available.
 
    Options:
-   - :max-iterations - Maximum iterations (default: 20)
-   - :on-complete - Callback (fn [final-plan total-cost]) when done"
-  [project-path & [{:keys [on-complete] :as opts}]]
+   - :max-iterations - Maximum poll cycles before giving up (default: 20)
+   - :on-checkpoint-complete - Callback (fn [checkpoint]) per completion
+   - :on-complete - Callback (fn [final-plan total-cost]) when done
+   - :idle-timeout-ms - Kill team lead if no file activity (default: 5 min)
+   - :poll-interval-ms - How often to poll for task completion (default: 5s)"
+  [project-path & [{:keys [on-complete on-checkpoint-complete] :as opts}]]
   (let [config (merge default-config opts)
+        log-dir (ensure-log-dir! project-path config)
+        _ (cleanup-previous-run! project-path config)
         plan (read-plan project-path)]
     (cond
       (nil? plan)
@@ -931,19 +943,127 @@
          :total-cost 0.0})
 
       :else
-      ;; TODO: Full implementation in :run-loop-agent-teams checkpoint
-      ;; Will create team, spawn team lead, poll for completion, sync results
-      (do
-        (println "[Lisa] Agent Teams mode selected")
-        (println "[Lisa] Creating team for plan:" (:title plan))
-        (let [{:keys [team-name task-count]} (agent-teams/create-team-for-plan! project-path plan)]
-          (println (str "[Lisa] Team '" team-name "' created with " task-count " tasks"))
-          ;; Stub: clean up and return not-implemented status
-          (agent-teams/cleanup-team! team-name)
-          {:status :not-implemented
-           :error "Agent Teams execution not yet implemented - use parallel mode"
-           :team-name team-name
-           :task-count task-count})))))
+      (let [_ (println "[Lisa] Agent Teams mode selected")
+            _ (println "[Lisa] Creating team for plan:" (:title plan))
+            {:keys [team-name task-count]} (agent-teams/create-team-for-plan! project-path plan)
+            _ (println (str "[Lisa] Team '" team-name "' created with " task-count " tasks"))
+
+            ;; Build the team lead prompt
+            signs-content (read-signs project-path)
+            team-lead-prompt (agent-teams/build-team-lead-prompt plan signs-content)
+
+            ;; Spawn team lead process
+            log-file (str (fs/path log-dir "agent-teams-lead.json"))
+            _ (println "[Lisa] Spawning team lead process...")
+            {:keys [process stream session-id]} (spawn-claude-iteration!
+                                                  project-path team-lead-prompt config log-file)
+            _ (write-iteration-metadata! log-file session-id nil 1)]
+
+        (println "[Lisa] Team lead spawned, polling for completion...")
+
+        ;; Poll loop: check team lead process status and sync task results
+        (try
+          (loop [poll-count 0
+                 prev-done-ids #{}]
+            (let [plan-now (plan-edn/read-plan project-path)]
+              (cond
+                ;; All checkpoints complete
+                (plan-edn/all-complete? plan-now)
+                (do
+                  (println "[Lisa] All checkpoints complete!")
+                  ;; Stop stream and wait for process cleanup
+                  (stop-stream! stream)
+                  (when (p/alive? process)
+                    (p/destroy-tree process))
+                  ;; Parse result for cost info
+                  (let [result (when (fs/exists? log-file)
+                                 (try (parse-iteration-result log-file) (catch Exception _ nil)))
+                        total-cost (or (:total_cost_usd result) 0.0)]
+                    ;; Update meta with success
+                    (update-iteration-metadata! log-file true nil)
+                    ;; Cleanup team
+                    (agent-teams/cleanup-team! team-name)
+                    (when on-complete (on-complete plan-now total-cost))
+                    {:status :complete
+                     :iterations poll-count
+                     :total-cost total-cost
+                     :team-name team-name}))
+
+                ;; Team lead process died
+                (not (p/alive? process))
+                (do
+                  (println "[Lisa] Team lead process exited")
+                  (stop-stream! stream)
+                  ;; Sync any final task results back to plan
+                  (let [sync-result (agent-teams/sync-tasks-to-plan! project-path team-name)
+                        _ (when (pos? (:synced sync-result))
+                            (println (str "[Lisa] Final sync: " (:synced sync-result) " checkpoint(s) updated")))
+                        ;; Auto-commit completed checkpoints
+                        final-plan (plan-edn/read-plan project-path)
+                        newly-done (remove prev-done-ids
+                                           (map :id (filter #(= :done (:status %)) (:checkpoints final-plan))))
+                        _ (doseq [cp-id newly-done]
+                            (let [cp (plan-edn/checkpoint-by-id final-plan cp-id)]
+                              (auto-commit-checkpoint! project-path (name cp-id) (:description cp))
+                              (when on-checkpoint-complete (on-checkpoint-complete cp))))
+                        result (when (fs/exists? log-file)
+                                 (try (parse-iteration-result log-file) (catch Exception _ nil)))
+                        total-cost (or (:total_cost_usd result) 0.0)
+                        all-done? (plan-edn/all-complete? final-plan)]
+                    (update-iteration-metadata! log-file all-done?
+                                                 (when-not all-done? "Team lead exited before all checkpoints complete"))
+                    (agent-teams/cleanup-team! team-name)
+                    (when (and all-done? on-complete)
+                      (on-complete final-plan total-cost))
+                    {:status (if all-done? :complete :partial)
+                     :iterations poll-count
+                     :total-cost total-cost
+                     :team-name team-name
+                     :synced (:synced sync-result)}))
+
+                ;; Max poll iterations reached
+                (>= poll-count (:max-iterations config))
+                (do
+                  (println "[Lisa] Max poll iterations reached, stopping team lead")
+                  (stop-stream! stream)
+                  (p/destroy-tree process)
+                  ;; Final sync
+                  (agent-teams/sync-tasks-to-plan! project-path team-name)
+                  (update-iteration-metadata! log-file false "Max iterations reached")
+                  (agent-teams/cleanup-team! team-name)
+                  {:status :max-iterations
+                   :iterations poll-count
+                   :team-name team-name})
+
+                ;; Continue polling
+                :else
+                (do
+                  (Thread/sleep (:poll-interval-ms config))
+                  ;; Sync task results to plan periodically
+                  (let [sync-result (agent-teams/sync-tasks-to-plan! project-path team-name)
+                        current-plan (plan-edn/read-plan project-path)
+                        done-ids (set (map :id (filter #(= :done (:status %)) (:checkpoints current-plan))))
+                        newly-done (remove prev-done-ids done-ids)]
+                    ;; Log and commit newly completed checkpoints
+                    (doseq [cp-id newly-done]
+                      (let [cp (plan-edn/checkpoint-by-id current-plan cp-id)]
+                        (println (str "[Lisa] ✓ Checkpoint " (name cp-id) " complete"))
+                        (auto-commit-checkpoint! project-path (name cp-id) (:description cp))
+                        (when on-checkpoint-complete (on-checkpoint-complete cp))))
+                    ;; Also sync plan changes back to task files so team lead sees updated state
+                    (when (pos? (:synced sync-result))
+                      (println (str "[Lisa] Synced " (:synced sync-result) " checkpoint(s) from tasks to plan"))
+                      (agent-teams/sync-plan-to-tasks! project-path team-name))
+                    (recur (inc poll-count) done-ids))))))
+          (catch Exception e
+            (println (str "[Lisa] Error in agent teams loop: " (.getMessage e)))
+            (stop-stream! stream)
+            (when (p/alive? process)
+              (p/destroy-tree process))
+            (agent-teams/cleanup-team! team-name)
+            {:status :error
+             :error (.getMessage e)
+             :team-name team-name}))))))
 
 (defn run-loop!
   "Run the Lisa Loop orchestrator.
