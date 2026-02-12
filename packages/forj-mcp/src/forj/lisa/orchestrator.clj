@@ -12,7 +12,6 @@
             [cheshire.core :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [forj.lisa.agent-teams :as agent-teams]
             [forj.lisa.analytics :as analytics]
             [forj.lisa.plan-edn :as plan-edn]))
 
@@ -345,31 +344,31 @@
           (cond
             ;; Process completed normally
             (not (p/alive? proc))
-          {:status :completed
-           :exit-code (:exit @proc)
-           :elapsed-ms elapsed}
+            {:status :completed
+             :exit-code (:exit @proc)
+             :elapsed-ms elapsed}
 
-          ;; Iteration timeout exceeded
-          (and iteration-timeout (> elapsed iteration-timeout))
-          (do
-            (println (str "[Lisa] ⚠ Iteration timed out after " (/ elapsed 60000) " minutes"))
-            (p/destroy-tree proc)
-            {:status :timeout
-             :exit-code -1
-             :elapsed-ms elapsed
-             :reason (str "Iteration exceeded " (/ iteration-timeout 60000) " minute timeout")})
+            ;; Iteration timeout exceeded
+            (and iteration-timeout (> elapsed iteration-timeout))
+            (do
+              (println (str "[Lisa] ⚠ Iteration timed out after " (/ elapsed 60000) " minutes"))
+              (p/destroy-tree proc)
+              {:status :timeout
+               :exit-code -1
+               :elapsed-ms elapsed
+               :reason (str "Iteration exceeded " (/ iteration-timeout 60000) " minute timeout")})
 
-          ;; Idle timeout - no file activity
-          (and idle-timeout
-               (> idle-elapsed idle-timeout)
-               (not file-changed?))
-          (do
-            (println (str "[Lisa] ⚠ No file activity for " (/ idle-elapsed 60000) " minutes, killing iteration"))
-            (p/destroy-tree proc)
-            {:status :idle
-             :exit-code -1
-             :elapsed-ms elapsed
-             :reason (str "No file activity for " (/ idle-timeout 60000) " minutes")})
+            ;; Idle timeout - no file activity
+            (and idle-timeout
+                 (> idle-elapsed idle-timeout)
+                 (not file-changed?))
+            (do
+              (println (str "[Lisa] ⚠ No file activity for " (/ idle-elapsed 60000) " minutes, killing iteration"))
+              (p/destroy-tree proc)
+              {:status :idle
+               :exit-code -1
+               :elapsed-ms elapsed
+               :reason (str "No file activity for " (/ idle-timeout 60000) " minutes")})
 
             ;; Continue waiting
             :else
@@ -652,8 +651,8 @@
                               "Iteration failed"))]
           ;; Update meta file with completion status
           (update-iteration-metadata! log-file
-                                       (and succeeded? checkpoint-complete?)
-                                       error-msg)
+                                      (and succeeded? checkpoint-complete?)
+                                      error-msg)
           ;; Delete the large parallel-*.json file - we have meta file + session logs
           (when (fs/exists? log-file)
             (fs/delete log-file))
@@ -902,169 +901,6 @@
                        (+ total-input (:input costs))
                        (+ total-output (:output costs)))))))))))
 
-(defn run-loop-agent-teams!
-  "Run Lisa Loop using Claude Code Agent Teams for parallel execution.
-
-   Instead of spawning separate Claude processes, this mode creates an
-   Agent Team where the team lead coordinates checkpoint execution via
-   teammates with inter-agent communication.
-
-   Workflow:
-   1. Create Agent Team with tasks from LISA_PLAN.edn
-   2. Spawn a Claude 'team lead' process with the team lead prompt
-   3. Poll for completion by monitoring task files for status changes
-   4. Sync task results back to the plan on each poll cycle
-   5. Clean up team resources when complete or on error
-
-   Requires Claude Code Agent Teams feature to be available.
-
-   Options:
-   - :max-iterations - Maximum poll cycles before giving up (default: 20)
-   - :on-checkpoint-complete - Callback (fn [checkpoint]) per completion
-   - :on-complete - Callback (fn [final-plan total-cost]) when done
-   - :idle-timeout-ms - Kill team lead if no file activity (default: 5 min)
-   - :poll-interval-ms - How often to poll for task completion (default: 5s)"
-  [project-path & [{:keys [on-complete on-checkpoint-complete] :as opts}]]
-  (let [config (merge default-config opts)
-        log-dir (ensure-log-dir! project-path config)
-        _ (cleanup-previous-run! project-path config)
-        plan (read-plan project-path)]
-    (cond
-      (nil? plan)
-      {:status :error
-       :error "No LISA_PLAN.edn found"
-       :iterations 0}
-
-      (plan-all-complete? plan)
-      (do
-        (when on-complete (on-complete plan 0.0))
-        {:status :complete
-         :iterations 0
-         :total-cost 0.0})
-
-      :else
-      (let [_ (println "[Lisa] Agent Teams mode selected")
-            _ (println "[Lisa] Creating team for plan:" (:title plan))
-            {:keys [team-name task-count]} (agent-teams/create-team-for-plan! project-path plan)
-            _ (println (str "[Lisa] Team '" team-name "' created with " task-count " tasks"))
-
-            ;; Build the team lead prompt
-            signs-content (read-signs project-path)
-            team-lead-prompt (agent-teams/build-team-lead-prompt plan signs-content)
-
-            ;; Spawn team lead process
-            log-file (str (fs/path log-dir "agent-teams-lead.json"))
-            _ (println "[Lisa] Spawning team lead process...")
-            {:keys [process stream session-id]} (spawn-claude-iteration!
-                                                  project-path team-lead-prompt config log-file)
-            _ (write-iteration-metadata! log-file session-id nil 1)]
-
-        (println "[Lisa] Team lead spawned, polling for completion...")
-
-        ;; Poll loop: check team lead process status and sync task results
-        (try
-          (loop [poll-count 0
-                 prev-done-ids #{}]
-            (let [plan-now (plan-edn/read-plan project-path)]
-              (cond
-                ;; All checkpoints complete
-                (plan-edn/all-complete? plan-now)
-                (do
-                  (println "[Lisa] All checkpoints complete!")
-                  ;; Stop stream and wait for process cleanup
-                  (stop-stream! stream)
-                  (when (p/alive? process)
-                    (p/destroy-tree process))
-                  ;; Parse result for cost info
-                  (let [result (when (fs/exists? log-file)
-                                 (try (parse-iteration-result log-file) (catch Exception _ nil)))
-                        total-cost (or (:total_cost_usd result) 0.0)]
-                    ;; Update meta with success
-                    (update-iteration-metadata! log-file true nil)
-                    ;; Cleanup team
-                    (agent-teams/cleanup-team! team-name)
-                    (when on-complete (on-complete plan-now total-cost))
-                    {:status :complete
-                     :iterations poll-count
-                     :total-cost total-cost
-                     :team-name team-name}))
-
-                ;; Team lead process died
-                (not (p/alive? process))
-                (do
-                  (println "[Lisa] Team lead process exited")
-                  (stop-stream! stream)
-                  ;; Sync any final task results back to plan
-                  (let [sync-result (agent-teams/sync-tasks-to-plan! project-path team-name)
-                        _ (when (pos? (:synced sync-result))
-                            (println (str "[Lisa] Final sync: " (:synced sync-result) " checkpoint(s) updated")))
-                        ;; Auto-commit completed checkpoints
-                        final-plan (plan-edn/read-plan project-path)
-                        newly-done (remove prev-done-ids
-                                           (map :id (filter #(= :done (:status %)) (:checkpoints final-plan))))
-                        _ (doseq [cp-id newly-done]
-                            (let [cp (plan-edn/checkpoint-by-id final-plan cp-id)]
-                              (auto-commit-checkpoint! project-path (name cp-id) (:description cp))
-                              (when on-checkpoint-complete (on-checkpoint-complete cp))))
-                        result (when (fs/exists? log-file)
-                                 (try (parse-iteration-result log-file) (catch Exception _ nil)))
-                        total-cost (or (:total_cost_usd result) 0.0)
-                        all-done? (plan-edn/all-complete? final-plan)]
-                    (update-iteration-metadata! log-file all-done?
-                                                 (when-not all-done? "Team lead exited before all checkpoints complete"))
-                    (agent-teams/cleanup-team! team-name)
-                    (when (and all-done? on-complete)
-                      (on-complete final-plan total-cost))
-                    {:status (if all-done? :complete :partial)
-                     :iterations poll-count
-                     :total-cost total-cost
-                     :team-name team-name
-                     :synced (:synced sync-result)}))
-
-                ;; Max poll iterations reached
-                (>= poll-count (:max-iterations config))
-                (do
-                  (println "[Lisa] Max poll iterations reached, stopping team lead")
-                  (stop-stream! stream)
-                  (p/destroy-tree process)
-                  ;; Final sync
-                  (agent-teams/sync-tasks-to-plan! project-path team-name)
-                  (update-iteration-metadata! log-file false "Max iterations reached")
-                  (agent-teams/cleanup-team! team-name)
-                  {:status :max-iterations
-                   :iterations poll-count
-                   :team-name team-name})
-
-                ;; Continue polling
-                :else
-                (do
-                  (Thread/sleep (:poll-interval-ms config))
-                  ;; Sync task results to plan periodically
-                  (let [sync-result (agent-teams/sync-tasks-to-plan! project-path team-name)
-                        current-plan (plan-edn/read-plan project-path)
-                        done-ids (set (map :id (filter #(= :done (:status %)) (:checkpoints current-plan))))
-                        newly-done (remove prev-done-ids done-ids)]
-                    ;; Log and commit newly completed checkpoints
-                    (doseq [cp-id newly-done]
-                      (let [cp (plan-edn/checkpoint-by-id current-plan cp-id)]
-                        (println (str "[Lisa] ✓ Checkpoint " (name cp-id) " complete"))
-                        (auto-commit-checkpoint! project-path (name cp-id) (:description cp))
-                        (when on-checkpoint-complete (on-checkpoint-complete cp))))
-                    ;; Also sync plan changes back to task files so team lead sees updated state
-                    (when (pos? (:synced sync-result))
-                      (println (str "[Lisa] Synced " (:synced sync-result) " checkpoint(s) from tasks to plan"))
-                      (agent-teams/sync-plan-to-tasks! project-path team-name))
-                    (recur (inc poll-count) done-ids))))))
-          (catch Exception e
-            (println (str "[Lisa] Error in agent teams loop: " (.getMessage e)))
-            (stop-stream! stream)
-            (when (p/alive? process)
-              (p/destroy-tree process))
-            (agent-teams/cleanup-team! team-name)
-            {:status :error
-             :error (.getMessage e)
-             :team-name team-name}))))))
-
 (defn run-loop!
   "Run the Lisa Loop orchestrator.
 
@@ -1072,26 +908,14 @@
    - :max-iterations - Maximum iterations (default: 20)
    - :max-parallel - Max concurrent checkpoints for parallel mode (default: 3)
    - :parallel - Enable parallel execution (default: false)
-   - :agent-teams - Use Agent Teams for parallel execution (default: false)
    - :allowed-tools - Tools to allow (default: standard set)
    - :on-iteration - Callback (fn [iteration result]) for each iteration
    - :on-checkpoint-complete - Callback (fn [checkpoint]) for parallel mode
    - :on-complete - Callback (fn [final-plan total-cost]) when done"
-  [project-path & [{:keys [on-iteration on-complete _on-checkpoint-complete parallel agent-teams]
+  [project-path & [{:keys [on-iteration on-complete _on-checkpoint-complete parallel]
                     :as opts}]]
-  ;; Dispatch to agent-teams mode if requested (with feature flag check)
-  (if agent-teams
-    (let [{:keys [available reason]} (agent-teams/agent-teams-available?)]
-      (if available
-        (run-loop-agent-teams! project-path opts)
-        ;; Fallback to parallel mode with warning
-        (do
-          (println (str "[Lisa] ⚠ Agent Teams unavailable: " reason))
-          (println "[Lisa] Falling back to parallel execution mode")
-          (run-loop-parallel! project-path opts))))
-    ;; Dispatch to parallel mode if requested
-    (if parallel
-      (run-loop-parallel! project-path opts)
+  (if parallel
+    (run-loop-parallel! project-path opts)
     ;; Sequential mode (default)
     (let [config (merge default-config opts)
           log-dir (ensure-log-dir! project-path config)
@@ -1101,7 +925,7 @@
              total-cost 0.0
              total-input-tokens 0
              total-output-tokens 0]
-        (let [plan (read-plan project-path)]
+        (let [plan (read-plan project-path)])
 
         (cond
           ;; No plan found
@@ -1234,7 +1058,7 @@
                         (recur (inc iteration)
                                (+ total-cost iteration-cost)
                                (+ total-input-tokens iter-input)
-                               (+ total-output-tokens iter-output))))))))))))))))
+                               (+ total-output-tokens iter-output))))))))))))))
 
 (defn generate-plan!
   "Generate a LISA_PLAN.edn by asking Claude to analyze the task and create checkpoints."
@@ -1286,25 +1110,20 @@
      --verbose              Use stream-json for detailed tool call logs
      --iteration-timeout N  Timeout per iteration in seconds (disabled by default)
      --idle-timeout N       Kill if no file activity for N seconds (default: 300 = 5 min)
-     --no-timeout           Disable all timeouts
-     --agent-teams          Use Agent Teams for parallel checkpoint execution"
+     --no-timeout           Disable all timeouts"
   [& args]
   (let [;; Parse args
         {:keys [project-path max-iterations parallel max-parallel verbose
-                iteration-timeout idle-timeout no-timeout agent-teams]}
+                iteration-timeout idle-timeout no-timeout]}
         (loop [args args
                opts {:project-path "." :max-iterations 20 :parallel true :max-parallel 3
-                     :verbose false :iteration-timeout nil :idle-timeout 300 :no-timeout false
-                     :agent-teams false}]
+                     :verbose false :iteration-timeout nil :idle-timeout 300 :no-timeout false}]
           (if (empty? args)
             opts
             (let [[arg & more] args]
               (cond
                 (= "--sequential" arg)
                 (recur more (assoc opts :parallel false))
-
-                (= "--agent-teams" arg)
-                (recur more (assoc opts :agent-teams true))
 
                 (= "--verbose" arg)
                 (recur more (assoc opts :verbose true))
@@ -1337,9 +1156,7 @@
     (println "[Lisa] Starting orchestrator")
     (println "[Lisa] Project:" project-path)
     (println "[Lisa] Max iterations:" max-iterations)
-    (when agent-teams
-      (println "[Lisa] Agent Teams mode enabled"))
-    (when (and parallel (not agent-teams))
+    (when parallel
       (println "[Lisa] Parallel mode enabled (max" max-parallel "concurrent)"))
     (when verbose
       (println "[Lisa] Verbose mode enabled (stream-json output)"))
@@ -1352,7 +1169,6 @@
                             {:max-iterations max-iterations
                              :parallel parallel
                              :max-parallel max-parallel
-                             :agent-teams agent-teams
                              :verbose verbose
                              ;; Convert seconds to milliseconds, nil disables timeout
                              :iteration-timeout-ms (when (and (not no-timeout) iteration-timeout)
@@ -1475,11 +1291,7 @@
        :error (:error contents)}))
   ;; => {:has-completed-at? true, :success? false, :error "Iteration failed - timeout"}
 
-  ;; Test run-loop-agent-teams! stub - no plan
-  (run-loop-agent-teams! "/tmp/nonexistent-project")
-  ;; => {:status :error, :error "No LISA_PLAN.edn found", :iterations 0}
-
-  ;; Test run-loop! dispatches to agent-teams mode
-  ;; (run-loop! "." {:agent-teams true})
-  ;; => dispatches to run-loop-agent-teams!
+  ;; Test run-loop! in parallel mode
+  ;; (run-loop! "." {:parallel true})
+  ;; => dispatches to run-loop-parallel!
   )

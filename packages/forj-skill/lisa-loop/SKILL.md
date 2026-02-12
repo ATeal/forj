@@ -4,7 +4,7 @@ description: REPL-driven autonomous development loops for Clojure. Spawns fresh 
 commands:
   - name: lisa-loop
     description: Start an autonomous development loop - spawns fresh Claude instances per checkpoint
-    args: "<prompt> [--max-iterations N]"
+    args: "<prompt> [--max-iterations N] [--agent-teams]"
   - name: lisa-loop watch
     description: Watch the active Lisa loop - spawns background monitor that notifies on completion
     args: "[--interval N]"
@@ -37,6 +37,7 @@ Start an autonomous development loop:
 - `<prompt>` - The task description (required)
 - `--max-iterations N` - Maximum iterations before stopping (default: 20)
 - `--prd <path>` - Path to PRD or specification document
+- `--agent-teams` - Use Agent Teams for parallel checkpoint execution (requires setup, see below)
 
 ### /cancel-lisa
 
@@ -214,6 +215,80 @@ Agent completes → "Status: 10/10 (100%) - COMPLETE!"
     All done? → COMPLETE
 ```
 
+## Agent Teams Mode (Experimental)
+
+Agent Teams mode uses Claude Code's native [Agent Teams](https://code.claude.com/docs/en/agent-teams) feature. You (the current session) become the **team lead**, creating and coordinating teammates via built-in tools. Teammates inherit all MCP servers (including forj's REPL tools), CLAUDE.md, and skills.
+
+### Prerequisites
+
+Two environment variables must be set:
+
+| Variable | Purpose | How to set |
+|----------|---------|------------|
+| `FORJ_AGENT_TEAMS` | forj opt-in | `export FORJ_AGENT_TEAMS=1` |
+| `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` | Claude Code feature flag | Add to `~/.claude/settings.json` under `env` |
+
+If either is missing, Lisa Loop falls back to parallel mode with a warning.
+
+### How to Run Agent Teams Mode
+
+When user passes `--agent-teams`, follow these steps **as team lead**:
+
+**Step 1: Plan as usual** (same as standard mode — propose checkpoints, get approval, create LISA_PLAN.edn)
+
+**Step 2: Get task descriptions from plan**
+```
+lisa_plan_to_tasks with:
+  path: "."
+```
+This returns structured task data with subjects, descriptions (including REPL validation workflow), and dependency info.
+
+**Step 3: Create team and tasks using native Agent Teams tools**
+```
+TeamCreate with:
+  name: <team-name from lisa_plan_to_tasks>
+
+For each task from lisa_plan_to_tasks:
+  TaskCreate with:
+    subject: <task subject>
+    description: <task description>
+    depends_on: <dependency subjects if any>
+```
+
+**Step 4: Coordinate as team lead**
+- Teammates work on checkpoints in parallel
+- Each teammate has access to forj MCP tools (reload_namespace, repl_eval, etc.)
+- The **TaskCompleted hook** automatically validates REPL gates (reloading namespaces first) and syncs completions to LISA_PLAN.edn
+- The **TeammateIdle hook** automatically redirects idle teammates to the next ready checkpoint
+
+**File conflict prevention:** When creating the team, tell teammates about shared files upfront. If multiple checkpoints touch the same file, use SendMessage to introduce workers to each other and establish who owns which sections. Instruct workers to always `reload_namespace` before editing to pick up changes from other workers. Task descriptions include coordination guidance automatically.
+
+**Step 5: Monitor and report**
+- Use `lisa_get_plan` or `lisa_watch` to check progress
+- When all checkpoints are done, report completion to user
+
+### Hook-Based Automation
+
+Two hooks handle the integration automatically:
+
+**TaskCompleted** — fires when a teammate marks a task complete:
+- Maps task subject back to LISA_PLAN.edn checkpoint
+- Runs checkpoint gates (REPL validation) if defined
+- Pass: marks checkpoint done in plan, allows completion
+- Fail: rejects completion, feeds error back to teammate as feedback
+
+**TeammateIdle** — fires when a teammate is about to go idle:
+- Checks for ready checkpoints (pending with deps met)
+- If found: suggests next checkpoint, keeps teammate working
+- If none: lets teammate go idle
+
+### Fallback Behavior
+
+When `--agent-teams` is passed but Agent Teams is unavailable:
+- Lisa Loop prints a warning with the specific reason
+- Automatically falls back to parallel execution mode
+- No manual intervention needed
+
 ## Quick Start Instructions
 
 When user runs `/lisa-loop`:
@@ -256,7 +331,7 @@ Does this plan look right? I can adjust before starting the loop.
 
 **Wait for user approval before proceeding.**
 
-### Step 3: Create Plan and Start Orchestrator
+### Step 3: Create Plan and Start Execution
 
 After approval, create the plan:
 
@@ -271,7 +346,17 @@ lisa_create_plan with:
   ]
 ```
 
-Then **start the orchestrator**:
+**Large plans (>10 checkpoints):** Create the plan with the first few checkpoints, then use `lisa_add_checkpoint` to add the rest individually. This avoids payload size issues with `lisa_create_plan`.
+
+**Now choose execution mode based on the user's flags:**
+
+#### If `--agent-teams` was passed → Use Native Agent Teams
+
+**Do NOT use lisa_run_orchestrator.** You (the current session) become the team lead.
+
+Follow the **Agent Teams Mode** section below — use `lisa_plan_to_tasks`, then `TeamCreate`, `TaskCreate`, and coordinate teammates directly.
+
+#### Otherwise → Use Standard Orchestrator
 
 ```
 lisa_run_orchestrator with:
@@ -332,6 +417,7 @@ Lisa Loop complete!
 | `lisa_get_plan` | Read current plan status |
 | `lisa_mark_checkpoint_done` | Mark checkpoint complete |
 | `lisa_run_orchestrator` | **Start the loop** (spawns fresh instances) |
+| `lisa_plan_to_tasks` | Convert plan to Agent Teams task descriptions |
 
 ### Signs (Learnings) Tools
 

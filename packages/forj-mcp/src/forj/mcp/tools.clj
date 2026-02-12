@@ -6,6 +6,7 @@
             [clojure.edn :as edn]
             [clojure.string :as str]
             [edamame.core :as edamame]
+            [forj.lisa.agent-teams :as agent-teams]
             [forj.lisa.claude-sessions :as claude-sessions]
             [forj.lisa.plan-edn :as plan-edn]
             [forj.lisa.validation :as lisa-validation]
@@ -161,7 +162,7 @@
 
    ;; Lisa Loop v2 tools (planning + orchestration)
    {:name "lisa_create_plan"
-    :description "Create a LISA_PLAN.edn with checkpoints for a task. Supports dependency graphs between checkpoints."
+    :description "Create a LISA_PLAN.edn with checkpoints for a task. Supports dependency graphs between checkpoints. IMPORTANT: Pass checkpoints as a native JSON array, not a stringified array. For large plans (>10 checkpoints), consider creating a minimal plan and adding checkpoints individually with lisa_add_checkpoint."
     :inputSchema {:type "object"
                   :properties {:title {:type "string"
                                        :description "Plan title (e.g., 'Build user authentication')"}
@@ -333,15 +334,11 @@
                                :path {:type "string"
                                       :description "Project path (defaults to current directory)"}}}}
 
-   {:name "lisa_run_agent_teams"
-    :description "Run the Lisa Loop orchestrator using Agent Teams mode. Creates an Agent Team where a team lead coordinates parallel checkpoint execution via teammates with inter-agent communication. Requires Claude Code Agent Teams feature."
+   {:name "lisa_plan_to_tasks"
+    :description "Convert LISA_PLAN.edn checkpoints into Agent Teams task descriptions. Returns structured task data for use with TaskCreate when setting up an Agent Team. Each task includes subject, description with REPL validation workflow, and dependency info."
     :inputSchema {:type "object"
                   :properties {:path {:type "string"
-                                      :description "Project path (defaults to current directory)"}
-                               :max_iterations {:type "integer"
-                                                :description "Maximum poll cycles before stopping (default: 20)"}
-                               :idle_timeout {:type "integer"
-                                              :description "Kill if no file activity for N seconds (default: 300 = 5 min)"}}}}])
+                                      :description "Project path (defaults to current directory)"}}}}])
 
 ;; =============================================================================
 ;; Input Validation
@@ -1562,17 +1559,21 @@
   "Create a LISA_PLAN.edn with checkpoints (supports dependencies)."
   [{:keys [title checkpoints path] :or {path "."}}]
   (try
-    (let [checkpoint-data (mapv (fn [cp]
+    (let [;; Handle checkpoints arriving as JSON string (large payloads)
+          parsed-checkpoints (if (string? checkpoints)
+                               (json/parse-string checkpoints true)
+                               checkpoints)
+          checkpoint-data (mapv (fn [cp]
                                   (cond-> {:description (:description cp)}
                                     (:id cp) (assoc :id (keyword (:id cp)))
                                     (:file cp) (assoc :file (:file cp))
                                     (:acceptance cp) (assoc :acceptance (:acceptance cp))
                                     (:gates cp) (assoc :gates (vec (:gates cp)))
                                     (:depends_on cp) (assoc :depends-on (mapv keyword (:depends_on cp)))))
-                                checkpoints)]
+                                parsed-checkpoints)]
       (plan-edn/create-plan! path {:title title :checkpoints checkpoint-data})
       {:success true
-       :message (str "Created LISA_PLAN.edn with " (count checkpoints) " checkpoints")
+       :message (str "Created LISA_PLAN.edn with " (count checkpoint-data) " checkpoints")
        :path (str (fs/path path "LISA_PLAN.edn"))})
     (catch Exception e
       {:success false
@@ -1723,39 +1724,37 @@
       {:success false
        :error (str "Failed to start orchestrator: " (.getMessage e))})))
 
-(defn lisa-run-agent-teams
-  "Run the Lisa Loop orchestrator in Agent Teams mode.
-   Spawns as a detached background process with --agent-teams flag."
-  [{:keys [path max_iterations idle_timeout]
-    :or {path "." max_iterations 20 idle_timeout 300}}]
-  (try
-    (let [project-path (fs/absolutize path)
-          log-dir (str (fs/path project-path ".forj/logs/lisa"))
-          _ (fs/create-dirs log-dir)
-          timestamp (-> (java.time.LocalDateTime/now)
-                        (.format (java.time.format.DateTimeFormatter/ofPattern "yyyyMMdd-HHmmss")))
-          log-file (str (fs/path log-dir (str "agent-teams-" timestamp ".log")))
-
-          cmd-args (cond-> ["bb" "-cp" (System/getProperty "java.class.path")
-                            "-m" "forj.lisa.orchestrator" (str project-path)
-                            "--agent-teams"
-                            "--max-iterations" (str max_iterations)]
-                     idle_timeout (into ["--idle-timeout" (str idle_timeout)]))
-
-          proc (apply p/process {:dir (str project-path)
-                                 :out (java.io.File. log-file)
-                                 :err :out}
-                      cmd-args)
-          pid (-> proc :proc .pid)]
-
-      {:success true
-       :message (str "Lisa Loop Agent Teams orchestrator started (max " max_iterations " poll cycles)")
-       :pid pid
-       :log-file log-file
-       :monitor-hint (str "tail -f " log-file)})
-    (catch Exception e
+(defn lisa-plan-to-tasks
+  "Convert LISA_PLAN.edn checkpoints into Agent Teams task descriptions.
+   Returns structured data for Claude (as team lead) to use with TaskCreate."
+  [{:keys [path] :or {path "."}}]
+  (let [project-path (str (fs/absolutize path))
+        available (agent-teams/agent-teams-available?)]
+    (cond
+      (not (:available available))
       {:success false
-       :error (str "Failed to start agent teams orchestrator: " (.getMessage e))})))
+       :error (:reason available)}
+
+      (not (plan-edn/plan-exists? project-path))
+      {:success false
+       :error "No LISA_PLAN.edn found. Create a plan first with lisa_create_plan."}
+
+      :else
+      (if-let [config (agent-teams/plan->team-config project-path)]
+        {:success true
+         :team-name (:team-name config)
+         :plan-title (:plan-title config)
+         :total-checkpoints (:total config)
+         :completed (:completed config)
+         :tasks (:tasks config)
+         :instructions (str "Use these tasks with Agent Teams:\n"
+                            "1. TeamCreate with name '" (:team-name config) "'\n"
+                            "2. For each task, use TaskCreate with the subject and description\n"
+                            "3. Set up dependencies using the depends-on fields\n"
+                            "4. The TaskCompleted hook will auto-validate gates and sync to LISA_PLAN.edn\n"
+                            "5. The TeammateIdle hook will redirect idle teammates to ready checkpoints")}
+        {:success false
+         :error "Failed to generate team configuration from plan."}))))
 
 (defn repl-snapshot
   "Take a snapshot of REPL state."
@@ -2155,7 +2154,7 @@
    "lisa_mark_checkpoint_done"  lisa-mark-checkpoint-done
    "lisa_add_checkpoint"        lisa-add-checkpoint
    "lisa_run_orchestrator"      lisa-run-orchestrator
-   "lisa_run_agent_teams"       lisa-run-agent-teams
+   "lisa_plan_to_tasks"         lisa-plan-to-tasks
    "repl_snapshot"              repl-snapshot
    ;; Signs (guardrails) tools
    "lisa_append_sign"   lisa-append-sign

@@ -15,7 +15,7 @@ REPL-driven LLM development for Clojure. Provides seamless Claude Code integrati
 | Component | Status | Description |
 |-----------|--------|-------------|
 | forj-mcp | ✅ Complete | MCP server with 29 tools |
-| forj-hooks | ✅ Complete | SessionStart + UserPromptSubmit + PreToolUse |
+| forj-hooks | ✅ Complete | SessionStart + UserPromptSubmit + PreToolUse + TaskCompleted + TeammateIdle |
 | forj-skill | ✅ Complete | `/clj-repl` + `/clj-init` + `/lisa-loop` |
 
 ## Prerequisites
@@ -82,6 +82,7 @@ Then restart Claude Code. The tools will be available automatically in any Cloju
 | `lisa_get_plan` | Read current plan and progress |
 | `lisa_mark_checkpoint_done` | Mark a checkpoint complete |
 | `lisa_run_orchestrator` | Run the autonomous loop |
+| `lisa_plan_to_tasks` | Convert plan to Agent Teams task descriptions |
 | `lisa_watch` | Monitor loop progress |
 | `validate_changed_files` | Validate changed files via REPL |
 | `lisa_run_validation` | Run validation checks (REPL/Chrome/Judge) |
@@ -102,6 +103,8 @@ Automatically routes code to the right REPL based on file type:
 - **SessionStart**: Detects Clojure projects, injects context about tasks/aliases/REPLs
 - **UserPromptSubmit**: Reminds Claude to use REPL-first workflow
 - **PreToolUse**: Auto-fixes Clojure delimiter errors before file writes (via `clj-paren-repair-claude-hook`)
+- **TaskCompleted**: Validates REPL gates and syncs Agent Teams task completions to LISA_PLAN.edn
+- **TeammateIdle**: Redirects idle Agent Teams teammates to next ready checkpoint
 
 ### Skills
 
@@ -137,10 +140,18 @@ Autonomous development loops with REPL validation:
 **Features:**
 - **EDN plans** with checkpoint dependencies and acceptance criteria
 - **Parallel execution** - independent checkpoints run concurrently
+- **Agent Teams mode** - native [Claude Code Agent Teams](https://code.claude.com/docs/en/agent-teams) integration with hook-based validation
 - **Fresh context** per iteration (no context bloat)
 - **Signs system** - failures are recorded to prevent repeating mistakes
 - **Chrome/Playwright support** for UI checkpoints
 - **Auto-commit** - each completed checkpoint creates a git rollback point
+
+**Agent Teams mode** (experimental):
+```bash
+export FORJ_AGENT_TEAMS=1
+/lisa-loop "Build a REST API for users" --agent-teams
+```
+Uses Claude Code's native Agent Teams — you become the team lead, teammates inherit forj's REPL tools. `TaskCompleted` hook auto-validates REPL gates, `TeammateIdle` hook redirects teammates to ready checkpoints. Requires `FORJ_AGENT_TEAMS=1` and `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` (add to `~/.claude/settings.json` under `env`). Falls back to parallel mode if unavailable.
 
 ## Project Structure
 
