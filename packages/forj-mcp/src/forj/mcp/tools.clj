@@ -1572,9 +1572,18 @@
                                     (:depends_on cp) (assoc :depends-on (mapv keyword (:depends_on cp)))))
                                 parsed-checkpoints)]
       (plan-edn/create-plan! path {:title title :checkpoints checkpoint-data})
-      {:success true
-       :message (str "Created LISA_PLAN.edn with " (count checkpoint-data) " checkpoints")
-       :path (str (fs/path path "LISA_PLAN.edn"))})
+      (let [missing-gitignore (plan-edn/check-gitignore path)]
+        (cond-> {:success true
+                 :message (str "Created LISA_PLAN.edn with " (count checkpoint-data) " checkpoints")
+                 :path (str (fs/path path "LISA_PLAN.edn"))}
+          (seq missing-gitignore)
+          (assoc :gitignore-warning
+                 (str "The following forj artifacts are not in .gitignore: "
+                      (clojure.string/join ", " missing-gitignore)
+                      ". Ask the user if they'd like to add them to .gitignore "
+                      "to prevent accidental commits. If yes, append these lines:\n\n"
+                      "# forj (Lisa Loop runtime)\n"
+                      (clojure.string/join "\n" missing-gitignore))))))
     (catch Exception e
       {:success false
        :error (str "Failed to create plan: " (.getMessage e))})))
