@@ -150,11 +150,28 @@
                              ;; Paren repair with graceful error handling
                              :PreToolUse [{:matcher "Edit|Write|NotebookEdit"
                                            :hooks [{:type "command"
-                                                    :command (str "bb -cp " cp " -m forj.hooks.paren-repair")}]}]}
-               new-config (update existing :hooks merge hooks-config)]
+                                                    :command (str "bb -cp " cp " -m forj.hooks.paren-repair")}]}]
+                             ;; Agent Teams hooks
+                             :TaskCompleted [{:hooks [{:type "command"
+                                                       :command (str "bb -cp " cp " -m forj.hooks.task-completed")}]}]
+                             :TeammateIdle [{:hooks [{:type "command"
+                                                      :command (str "bb -cp " cp " -m forj.hooks.teammate-idle")}]}]}
+               ;; Pre-approve forj MCP tools and common operations for Agent Teams
+               forj-permissions ["mcp__forj__*"
+                                 "Bash(bb nrepl *)"
+                                 "Bash(bb test *)"
+                                 "Bash(clj-nrepl-eval *)"
+                                 "Bash(clj-paren-repair *)"]
+               existing-allow (get-in existing [:permissions :allow] [])
+               ;; Merge without duplicates
+               merged-allow (vec (distinct (concat existing-allow forj-permissions)))
+               new-config (-> existing
+                              (update :hooks merge hooks-config)
+                              (assoc-in [:permissions :allow] merged-allow))]
            (fs/create-dirs claude-dir)
            (spit settings-file (json/generate-string new-config {:pretty true}))
-           (println "✓ Hooks config installed to" settings-file))}
+           (println "✓ Hooks config installed to" settings-file)
+           (println "✓ forj MCP tools pre-approved (mcp__forj__*)"))}
 
   install:skill
   {:doc "Install forj skills (/clj-repl, /clj-init, /lisa-loop) to ~/.claude/skills/"
@@ -216,7 +233,7 @@
            ;; Remove hooks
            (when (fs/exists? settings-file)
              (let [config (json/parse-string (slurp settings-file) true)
-                   new-config (update config :hooks dissoc :SessionStart :UserPromptSubmit :PreToolUse)]
+                   new-config (update config :hooks dissoc :SessionStart :UserPromptSubmit :PreToolUse :TaskCompleted :TeammateIdle)]
                (spit settings-file (json/generate-string new-config {:pretty true}))
                (println "✓ Removed hooks from" settings-file)))
            ;; Remove skills
