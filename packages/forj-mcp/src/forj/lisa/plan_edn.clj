@@ -381,6 +381,51 @@
      :recent-signs signs}))
 
 ;;; =============================================================================
+;;; Gitignore Management
+;;; =============================================================================
+
+(def ^:private forj-gitignore-entries
+  "Files forj generates that shouldn't be committed to user projects."
+  ["LISA_PLAN.edn" ".forj/"])
+
+(defn- gitignore-contains?
+  "Check if a .gitignore file already contains an entry (exact line match)."
+  [gitignore-content entry]
+  (some #(= (str/trim %) entry) (str/split-lines gitignore-content)))
+
+(defn check-gitignore
+  "Check which forj artifacts are missing from the project's .gitignore.
+   Returns a seq of missing entry strings, or nil if all are covered.
+   Returns nil if not a git repo (nothing to worry about)."
+  [project-path]
+  (let [git-dir (fs/path project-path ".git")]
+    (when (fs/directory? git-dir)
+      (let [gitignore-path (str (fs/path project-path ".gitignore"))
+            current (if (fs/exists? gitignore-path)
+                      (slurp gitignore-path)
+                      "")
+            missing (seq (remove #(gitignore-contains? current %) forj-gitignore-entries))]
+        missing))))
+
+(defn add-to-gitignore!
+  "Add forj artifact entries to the project's .gitignore.
+   Only adds entries from the provided list. No-op if not a git repo."
+  [project-path entries]
+  (let [git-dir (fs/path project-path ".git")]
+    (when (fs/directory? git-dir)
+      (let [gitignore-path (str (fs/path project-path ".gitignore"))
+            current (if (fs/exists? gitignore-path)
+                      (slurp gitignore-path)
+                      "")
+            needs-newline? (and (not (str/blank? current))
+                               (not (str/ends-with? current "\n")))
+            section (str (when needs-newline? "\n")
+                         "\n# forj (Lisa Loop runtime)\n"
+                         (str/join "\n" entries)
+                         "\n")]
+        (spit gitignore-path (str current section))))))
+
+;;; =============================================================================
 ;;; Plan Creation
 ;;; =============================================================================
 
