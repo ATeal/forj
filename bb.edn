@@ -114,16 +114,47 @@
 
   ;; Installation tasks
   install
-  {:doc "Install forj (MCP server, hooks, and skill). Use --agent-teams for experimental Agent Teams support."
-   :task (let [agent-teams? (some #{"--agent-teams"} *command-line-args*)]
-           (run 'install:mcp)
-           (run 'install:hooks)
-           (run 'install:skill)
-           (when agent-teams?
-             (run 'install:agent-teams))
-           (println (str "\n✓ forj installed"
+  {:doc "Install forj. Flags: --claude, --opencode, --agent-teams. No flags shows interactive menu."
+   :task (let [args (set *command-line-args*)
+              claude? (contains? args "--claude")
+              opencode? (contains? args "--opencode")
+              agent-teams? (contains? args "--agent-teams")
+              ;; Determine platform choice
+              choice (cond
+                       ;; Explicit flags - skip menu
+                       (and claude? opencode?) :both
+                       claude? :claude
+                       opencode? :opencode
+                       ;; No platform flag - show interactive menu
+                       :else (do
+                               (println "\n  forj - REPL-driven LLM development for Clojure\n")
+                               (println "  Select your platform:\n")
+                               (println "    [1] Claude Code (default)")
+                               (println "    [2] OpenCode")
+                               (println "    [3] Both")
+                               (print "\n  Choice [1]: ")
+                               (flush)
+                               (let [input (str/trim (or (read-line) ""))]
+                                 (case input
+                                   "" :claude
+                                   "1" :claude
+                                   "2" :opencode
+                                   "3" :both
+                                   (do (println "  Invalid choice, defaulting to Claude Code.")
+                                       :claude)))))]
+           ;; Dispatch based on choice
+           (when (#{:claude :both} choice)
+             (run 'install:mcp)
+             (run 'install:hooks)
+             (run 'install:skill)
+             (when agent-teams?
+               (run 'install:agent-teams)))
+           (when (#{:opencode :both} choice)
+             (run 'install:opencode))
+           (println (str "\n✓ forj installed for "
+                         (case choice :claude "Claude Code" :opencode "OpenCode" :both "Claude Code + OpenCode")
                          (when agent-teams? " (with Agent Teams)")
-                         "! Restart Claude Code to activate.")))}
+                         "! Restart your editor to activate.")))}
 
   install:mcp
   {:doc "Install MCP server config via claude CLI (user scope)"
@@ -243,6 +274,10 @@
              (fs/copy (str (fs/path at-source "SKILL.md"))
                       (str (fs/path at-dir "SKILL.md")) {:replace-existing true})
              (println "✓ /lisa-agent-teams skill installed to" at-dir)))}
+
+  install:opencode
+  {:doc "Install forj for OpenCode (stub - will be implemented in later checkpoints)"
+   :task (println "⚠ OpenCode support is coming soon. MCP, skills, and plugin installation will be added in a future update.")}
 
   check-versions
   {:doc "Check template dependency versions against latest available"
