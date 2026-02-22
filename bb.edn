@@ -339,6 +339,28 @@
                     (str (fs/path lisa-loop-dir "SKILL.md")) {:replace-existing true})
            (println "✓ /lisa-loop skill installed to" lisa-loop-dir))}
 
+  install:opencode:hooks
+  {:doc "Install OpenCode plugin (hooks) to ~/.config/opencode/plugins/forj/"
+   :task (let [forj-path (System/getProperty "user.dir")
+               opencode-dir (str (fs/path (System/getProperty "user.home") ".config" "opencode"))
+               plugin-dir (str (fs/path opencode-dir "plugins" "forj"))
+               plugin-source (str (fs/path forj-path "packages" "forj-opencode" "plugin.mjs"))
+               config-file (str (fs/path opencode-dir "opencode.json"))
+               existing (when (fs/exists? config-file)
+                          (json/parse-string (slurp config-file) true))
+               ;; Ensure 'forj' is in the plugins array
+               existing-plugins (get (or existing {}) :plugins [])
+               merged-plugins (vec (distinct (conj existing-plugins "forj")))
+               new-config (-> (or existing {})
+                              (assoc :plugins merged-plugins))]
+           ;; Copy plugin file
+           (fs/create-dirs plugin-dir)
+           (fs/copy plugin-source (str (fs/path plugin-dir "plugin.mjs")) {:replace-existing true})
+           (println "✓ Plugin copied to" plugin-dir)
+           ;; Update config with plugins array
+           (spit config-file (json/generate-string new-config {:pretty true}))
+           (println "✓ 'forj' registered in plugins array in" config-file))}
+
   check-versions
   {:doc "Check template dependency versions against latest available"
    :task (shell "bb" "-f" "scripts/check_versions.clj")}
