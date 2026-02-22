@@ -8,7 +8,14 @@
   <em>Forge your code in the REPL fire. Iterate, shape, refine.</em>
 </p>
 
-REPL-driven LLM development for Clojure. Provides seamless Claude Code integration with automatic project detection, REPL connectivity, and context injection.
+REPL-driven LLM development for Clojure. Provides seamless integration with automatic project detection, REPL connectivity, and context injection.
+
+## Supported Platforms
+
+| Platform | MCP Tools | Hooks/Plugin | Skills | Install |
+|----------|-----------|-------------|--------|---------|
+| [Claude Code](https://claude.com/claude-code) | ✅ | ✅ Hooks | ✅ | `bb install` |
+| [OpenCode](https://opencode.ai) | ✅ | ✅ Plugin | ✅ | `bb install` |
 
 ## Status
 
@@ -16,6 +23,7 @@ REPL-driven LLM development for Clojure. Provides seamless Claude Code integrati
 |-----------|--------|-------------|
 | forj-mcp | ✅ Complete | MCP server with 29 tools |
 | forj-hooks | ✅ Complete | SessionStart + UserPromptSubmit + PreToolUse + TaskCompleted + TeammateIdle |
+| forj-opencode | ✅ Complete | OpenCode plugin (session, REPL guidance, paren repair) |
 | forj-skill | ✅ Complete | `/clj-repl` + `/clj-init` + `/lisa-loop` |
 
 ## Prerequisites
@@ -37,10 +45,20 @@ bbin install io.github.bhauman/clojure-mcp-light
 ```bash
 git clone https://github.com/ATeal/forj.git
 cd forj
-bb install    # Installs MCP, hooks, and skill to ~/.claude/
+bb install    # Interactive wizard - choose Claude Code, OpenCode, or both
 ```
 
-Then restart Claude Code. The tools will be available automatically in any Clojure project.
+The installer presents a platform menu:
+```
+forj installer
+==============
+Choose platform:
+  [1] Claude Code (default)
+  [2] OpenCode
+  [3] Both
+```
+
+Then restart your editor. The tools will be available automatically in any Clojure project.
 
 ## MCP Tools
 
@@ -165,6 +183,8 @@ forj/
 │   ├── forj-hooks/          # Claude Code hooks
 │   │   ├── src/forj/hooks/
 │   │   └── test/forj/hooks/
+│   ├── forj-opencode/       # OpenCode plugin
+│   │   └── plugin.mjs
 │   └── forj-skill/          # Skills
 │       ├── SKILL.md         # /clj-repl skill
 │       ├── clj-init/        # /clj-init skill
@@ -190,8 +210,10 @@ bb test:skill         # Validate skill definition
 bb mcp:dev            # Run MCP server for testing
 bb logs               # View forj logs
 bb cleanup:sessions   # Remove old session files (>7 days)
-bb install            # Install to ~/.claude/
-bb uninstall          # Remove from ~/.claude/
+bb install            # Interactive wizard (Claude Code / OpenCode / Both)
+bb uninstall          # Remove all integrations (Claude Code + OpenCode)
+bb uninstall --claude # Remove Claude Code only
+bb uninstall --opencode # Remove OpenCode only
 ```
 
 ## Manual Configuration
@@ -223,6 +245,28 @@ Add to `~/.claude/settings.json`:
   }
 }
 ```
+
+### OpenCode
+
+`bb install` handles everything, but for manual setup see [examples/README.md](examples/README.md).
+
+**What gets installed:**
+
+| Component | Location | Description |
+|-----------|----------|-------------|
+| MCP server | `~/.config/opencode/opencode.json` | Same REPL tools as Claude Code |
+| Plugin | `~/.config/opencode/plugins/forj/plugin.mjs` | Session context, REPL-first guidance, paren repair |
+| Skills | `~/.config/opencode/skills/` | `/clj-repl`, `/clj-init`, `/lisa-loop` |
+
+The OpenCode plugin provides equivalent functionality to Claude Code hooks:
+
+| Claude Code Hook | OpenCode Plugin Hook | Purpose | Notes |
+|-----------------|---------------------|---------|-------|
+| SessionStart | `session.created` | Detect Clojure project, inject context | |
+| UserPromptSubmit | `tool.execute.before` | REPL-first workflow reminder | Debounced (30s) since it fires per tool call |
+| PreToolUse (Write/Edit) | `tool.execute.after` | Auto-fix Clojure delimiters | Runs after write (vs before in Claude Code) |
+
+**Uninstall:** `bb uninstall` or `bb uninstall --opencode`
 
 ## Architecture
 
