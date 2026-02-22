@@ -313,7 +313,10 @@
                clj-init-dir (str (fs/path skills-base "clj-init"))
                clj-init-source (str (fs/path forj-path "packages" "forj-skill" "clj-init"))
                _ (fs/create-dirs clj-init-dir)
-               _ (fs/copy (str (fs/path clj-init-source "SKILL.md"))
+               ;; Prefer SKILL.opencode.md for OpenCode, fall back to SKILL.md
+               clj-init-skill (let [oc (str (fs/path clj-init-source "SKILL.opencode.md"))]
+                                (if (fs/exists? oc) oc (str (fs/path clj-init-source "SKILL.md"))))
+               _ (fs/copy clj-init-skill
                           (str (fs/path clj-init-dir "SKILL.md")) {:replace-existing true})
                ;; Copy modules directory
                modules-source (str (fs/path clj-init-source "modules"))
@@ -334,9 +337,12 @@
                _ (println "✓ /clj-init skill installed to" clj-init-dir)
                ;; Install lisa-loop skill
                lisa-loop-dir (str (fs/path skills-base "lisa-loop"))
-               lisa-loop-source (str (fs/path forj-path "packages" "forj-skill" "lisa-loop"))]
+               lisa-loop-source (str (fs/path forj-path "packages" "forj-skill" "lisa-loop"))
+               ;; Prefer SKILL.opencode.md for OpenCode, fall back to SKILL.md
+               lisa-loop-skill (let [oc (str (fs/path lisa-loop-source "SKILL.opencode.md"))]
+                                 (if (fs/exists? oc) oc (str (fs/path lisa-loop-source "SKILL.md"))))]
            (fs/create-dirs lisa-loop-dir)
-           (fs/copy (str (fs/path lisa-loop-source "SKILL.md"))
+           (fs/copy lisa-loop-skill
                     (str (fs/path lisa-loop-dir "SKILL.md")) {:replace-existing true})
            (println "✓ /lisa-loop skill installed to" lisa-loop-dir))}
 
