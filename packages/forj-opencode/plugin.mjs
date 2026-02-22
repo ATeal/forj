@@ -1,6 +1,5 @@
 import { execSync } from "node:child_process";
-import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 
 /**
  * forj OpenCode plugin - REPL-driven LLM development for Clojure.
@@ -12,12 +11,12 @@ import { fileURLToPath } from "node:url";
  * Requires FORJ_HOME env var pointing to the forj installation directory.
  */
 
+const CLOJURE_EXTENSIONS = [".clj", ".cljs", ".cljc", ".edn", ".bb"];
+
 function getForjHome() {
   if (process.env.FORJ_HOME) {
     return process.env.FORJ_HOME;
   }
-  // Fallback: assume plugin is at ~/.config/opencode/plugins/forj/plugin.mjs
-  // and FORJ_HOME wasn't set - this won't work, but gives a clear error.
   return null;
 }
 
@@ -28,8 +27,15 @@ function getClasspath(forjHome) {
   ].join(":");
 }
 
+function isClojureFile(filePath) {
+  if (!filePath) return false;
+  const lower = filePath.toLowerCase();
+  return CLOJURE_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
 export const forjPlugin = async ({ project, directory, $ }) => {
   const forjHome = getForjHome();
+  const cwd = directory || process.cwd();
 
   return {
     "session.created": async (input, output) => {
@@ -41,12 +47,12 @@ export const forjPlugin = async ({ project, directory, $ }) => {
       try {
         const cp = getClasspath(forjHome);
         const result = execSync(`bb -cp "${cp}" -m forj.hooks.session-start`, {
-          cwd: directory || process.cwd(),
+          cwd,
           encoding: "utf-8",
           timeout: 15000,
           env: {
             ...process.env,
-            CLAUDE_PROJECT_DIR: directory || process.cwd(),
+            CLAUDE_PROJECT_DIR: cwd,
           },
         });
 
@@ -54,8 +60,59 @@ export const forjPlugin = async ({ project, directory, $ }) => {
           console.log("[forj] Session context injected");
         }
       } catch (err) {
-        // Log but don't fail - hooks should be resilient
         console.error("[forj] session.created hook error:", err.message);
+      }
+    },
+
+    "tool.execute.before": async (input, output) => {
+      if (!forjHome) return;
+
+      try {
+        const cp = getClasspath(forjHome);
+        const promptJson = JSON.stringify({ prompt: "" });
+        const result = execSync(
+          `bb -cp "${cp}" -m forj.hooks.user-prompt`,
+          {
+            cwd,
+            encoding: "utf-8",
+            timeout: 10000,
+            input: promptJson,
+            env: {
+              ...process.env,
+              CLAUDE_PROJECT_DIR: cwd,
+            },
+          },
+        );
+
+        if (result && result.trim()) {
+          console.log("[forj] REPL-first guidance injected");
+        }
+      } catch (err) {
+        console.error("[forj] tool.execute.before hook error:", err.message);
+      }
+    },
+
+    "tool.execute.after": async (input, output) => {
+      if (!forjHome) return;
+
+      try {
+        const toolName = input?.tool || input?.name || "";
+        if (!/edit|write/i.test(toolName)) return;
+
+        const filePath =
+          input?.input?.file_path || input?.input?.path || "";
+        if (!isClojureFile(filePath)) return;
+
+        execSync(`clj-paren-repair "${filePath}"`, {
+          cwd,
+          encoding: "utf-8",
+          timeout: 10000,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+
+        console.log(`[forj] Paren repair ran on ${filePath}`);
+      } catch (err) {
+        console.error("[forj] tool.execute.after hook error:", err.message);
       }
     },
   };
