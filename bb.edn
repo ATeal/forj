@@ -354,10 +354,12 @@
                merged-plugins (vec (distinct (conj existing-plugins "forj")))
                new-config (-> (or existing {})
                               (assoc :plugins merged-plugins))]
-           ;; Copy plugin file
+           ;; Copy plugin file and write forj-home.txt
            (fs/create-dirs plugin-dir)
            (fs/copy plugin-source (str (fs/path plugin-dir "plugin.mjs")) {:replace-existing true})
+           (spit (str (fs/path plugin-dir "forj-home.txt")) forj-path)
            (println "✓ Plugin copied to" plugin-dir)
+           (println "✓ FORJ_HOME written to" (str (fs/path plugin-dir "forj-home.txt")))
            ;; Update config with plugins array
            (spit config-file (json/generate-string new-config {:pretty true}))
            (println "✓ 'forj' registered in plugins array in" config-file))}

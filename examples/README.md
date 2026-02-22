@@ -6,7 +6,7 @@ Copy these files to set up forj for your LLM coding environment.
 
 ```bash
 # Clone forj
-git clone https://github.com/your-org/forj.git
+git clone https://github.com/ATeal/forj.git
 cd forj
 
 # Interactive install - detects your platform
@@ -53,7 +53,7 @@ for skill in clj-repl clj-init lisa-loop; do
 done
 ```
 
-**Note:** The OpenCode plugin requires `FORJ_HOME` environment variable pointing to your forj directory. The `bb install` command sets this automatically.
+**Note:** The OpenCode plugin needs to know where forj is installed. `bb install` writes a `forj-home.txt` file next to the plugin automatically. For manual setup, either create that file or set the `FORJ_HOME` environment variable.
 
 ## Files
 

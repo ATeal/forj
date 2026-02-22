@@ -1,5 +1,7 @@
 import { execSync } from "node:child_process";
-import { resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * forj OpenCode plugin - REPL-driven LLM development for Clojure.
@@ -8,12 +10,25 @@ import { resolve } from "node:path";
  * into OpenCode sessions. Shells out to babashka for the actual logic,
  * sharing implementation with the Claude Code hooks.
  *
- * Requires FORJ_HOME env var pointing to the forj installation directory.
+ * FORJ_HOME is resolved from (in order):
+ *   1. forj-home.txt next to this plugin (written by bb install)
+ *   2. FORJ_HOME environment variable
  */
 
 const CLOJURE_EXTENSIONS = [".clj", ".cljs", ".cljc", ".edn", ".bb"];
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
 function getForjHome() {
+  // Try config file first (written by installer)
+  try {
+    const configPath = resolve(__dirname, "forj-home.txt");
+    const home = readFileSync(configPath, "utf-8").trim();
+    if (home) return home;
+  } catch {
+    // fall through
+  }
+  // Fall back to env var
   if (process.env.FORJ_HOME) {
     return process.env.FORJ_HOME;
   }
@@ -32,6 +47,11 @@ function isClojureFile(filePath) {
   const lower = filePath.toLowerCase();
   return CLOJURE_EXTENSIONS.some((ext) => lower.endsWith(ext));
 }
+
+// Debounce: only run REPL-first guidance once per 30s
+// (tool.execute.before fires per tool call, not per user message)
+const GUIDANCE_DEBOUNCE_MS = 30_000;
+let lastGuidanceTime = 0;
 
 export const forjPlugin = async ({ project, directory, $ }) => {
   const forjHome = getForjHome();
@@ -66,6 +86,10 @@ export const forjPlugin = async ({ project, directory, $ }) => {
 
     "tool.execute.before": async (input, output) => {
       if (!forjHome) return;
+
+      const now = Date.now();
+      if (now - lastGuidanceTime < GUIDANCE_DEBOUNCE_MS) return;
+      lastGuidanceTime = now;
 
       try {
         const cp = getClasspath(forjHome);
