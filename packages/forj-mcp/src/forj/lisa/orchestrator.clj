@@ -925,9 +925,9 @@
              total-cost 0.0
              total-input-tokens 0
              total-output-tokens 0]
-        (let [plan (read-plan project-path)])
+        (let [plan (read-plan project-path)]
 
-        (cond
+          (cond
           ;; No plan found
           (nil? plan)
           {:status :error
@@ -1058,7 +1058,7 @@
                         (recur (inc iteration)
                                (+ total-cost iteration-cost)
                                (+ total-input-tokens iter-input)
-                               (+ total-output-tokens iter-output))))))))))))))
+                               (+ total-output-tokens iter-output)))))))))))))))
 
 (defn generate-plan!
   "Generate a LISA_PLAN.edn by asking Claude to analyze the task and create checkpoints."
