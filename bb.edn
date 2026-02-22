@@ -276,8 +276,68 @@
              (println "✓ /lisa-agent-teams skill installed to" at-dir)))}
 
   install:opencode
-  {:doc "Install forj for OpenCode (stub - will be implemented in later checkpoints)"
-   :task (println "⚠ OpenCode support is coming soon. MCP, skills, and plugin installation will be added in a future update.")}
+  {:doc "Install forj for OpenCode (runs MCP, skills, and plugin tasks)"
+   :task (do
+           (run 'install:opencode:mcp)
+           (println "⚠ OpenCode skills and plugin install coming soon."))}
+
+  install:opencode:mcp
+  {:doc "Install MCP server config into ~/.config/opencode/opencode.json"
+   :task (let [forj-path (System/getProperty "user.dir")
+               launcher (str forj-path "/bin/forj-mcp")
+               opencode-dir (str (fs/path (System/getProperty "user.home") ".config" "opencode"))
+               config-file (str (fs/path opencode-dir "opencode.json"))
+               existing (when (fs/exists? config-file)
+                          (json/parse-string (slurp config-file) true))
+               forj-mcp-entry {:type "local"
+                                :command [launcher]
+                                :enabled true}
+               new-config (-> (or existing {})
+                              (assoc-in [:mcp :forj] forj-mcp-entry))]
+           (fs/create-dirs opencode-dir)
+           (spit config-file (json/generate-string new-config {:pretty true}))
+           (println "✓ MCP server 'forj' installed to" config-file))}
+
+  install:opencode:skills
+  {:doc "Install forj skills to ~/.config/opencode/skills/"
+   :task (let [forj-path (System/getProperty "user.dir")
+               skills-base (str (fs/path (System/getProperty "user.home") ".config" "opencode" "skills"))
+               ;; Install clj-repl skill
+               clj-repl-dir (str (fs/path skills-base "clj-repl"))
+               clj-repl-source (str (fs/path forj-path "packages" "forj-skill" "SKILL.md"))
+               _ (fs/create-dirs clj-repl-dir)
+               _ (fs/copy clj-repl-source (str (fs/path clj-repl-dir "SKILL.md")) {:replace-existing true})
+               _ (println "✓ /clj-repl skill installed to" clj-repl-dir)
+               ;; Install clj-init skill (SKILL.md + modules + versions.edn + templates)
+               clj-init-dir (str (fs/path skills-base "clj-init"))
+               clj-init-source (str (fs/path forj-path "packages" "forj-skill" "clj-init"))
+               _ (fs/create-dirs clj-init-dir)
+               _ (fs/copy (str (fs/path clj-init-source "SKILL.md"))
+                          (str (fs/path clj-init-dir "SKILL.md")) {:replace-existing true})
+               ;; Copy modules directory
+               modules-source (str (fs/path clj-init-source "modules"))
+               modules-dest (str (fs/path clj-init-dir "modules"))
+               _ (when (fs/exists? modules-dest)
+                   (fs/delete-tree modules-dest))
+               _ (fs/copy-tree modules-source modules-dest)
+               ;; Copy versions.edn
+               _ (fs/copy (str (fs/path clj-init-source "versions.edn"))
+                          (str (fs/path clj-init-dir "versions.edn")) {:replace-existing true})
+               ;; Copy templates directory (legacy, may remove later)
+               templates-source (str (fs/path clj-init-source "templates"))
+               templates-dest (str (fs/path clj-init-dir "templates"))
+               _ (when (fs/exists? templates-dest)
+                   (fs/delete-tree templates-dest))
+               _ (when (fs/exists? templates-source)
+                   (fs/copy-tree templates-source templates-dest))
+               _ (println "✓ /clj-init skill installed to" clj-init-dir)
+               ;; Install lisa-loop skill
+               lisa-loop-dir (str (fs/path skills-base "lisa-loop"))
+               lisa-loop-source (str (fs/path forj-path "packages" "forj-skill" "lisa-loop"))]
+           (fs/create-dirs lisa-loop-dir)
+           (fs/copy (str (fs/path lisa-loop-source "SKILL.md"))
+                    (str (fs/path lisa-loop-dir "SKILL.md")) {:replace-existing true})
+           (println "✓ /lisa-loop skill installed to" lisa-loop-dir))}
 
   check-versions
   {:doc "Check template dependency versions against latest available"
