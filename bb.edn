@@ -279,7 +279,8 @@
   {:doc "Install forj for OpenCode (runs MCP, skills, and plugin tasks)"
    :task (do
            (run 'install:opencode:mcp)
-           (println "⚠ OpenCode skills and plugin install coming soon."))}
+           (run 'install:opencode:skills)
+           (run 'install:opencode:hooks))}
 
   install:opencode:mcp
   {:doc "Install MCP server config into ~/.config/opencode/opencode.json"
@@ -366,6 +367,25 @@
    :task (shell "bb" "-f" "scripts/check_versions.clj")}
 
   uninstall
+  {:doc "Remove forj from all platforms. Flags: --claude, --opencode. No flags removes both."
+   :task (let [args (set *command-line-args*)
+               claude? (contains? args "--claude")
+               opencode? (contains? args "--opencode")
+               ;; If no flags, uninstall both
+               do-claude? (or claude? (and (not claude?) (not opencode?)))
+               do-opencode? (or opencode? (and (not claude?) (not opencode?)))]
+           (when do-claude?
+             (run 'uninstall:claude))
+           (when do-opencode?
+             (run 'uninstall:opencode))
+           (println (str "\n✓ forj uninstalled"
+                         (cond
+                           (and do-claude? do-opencode?) " from Claude Code + OpenCode."
+                           do-claude? " from Claude Code."
+                           do-opencode? " from OpenCode.")
+                         " Restart your editor to complete.")))}
+
+  uninstall:claude
   {:doc "Remove forj from Claude Code config"
    :task (let [claude-dir (str (fs/path (System/getProperty "user.home") ".claude"))
                settings-file (str (fs/path claude-dir "settings.json"))
@@ -374,7 +394,7 @@
            ;; Remove MCP server via claude CLI
            (let [result (shell {:continue true} "claude" "mcp" "remove" "forj" "--scope" "user")]
              (if (zero? (:exit result))
-               (println "✓ Removed forj MCP server")
+               (println "✓ Removed forj MCP server from Claude Code")
                (println "⚠ forj MCP server not found or already removed")))
            ;; Remove hooks and agent-teams env vars
            (when (fs/exists? settings-file)
@@ -389,5 +409,31 @@
              (let [dir (str (fs/path skills-dir name))]
                (when (fs/exists? dir)
                  (fs/delete-tree dir)
-                 (println (str "✓ Removed /" name " skill")))))
-           (println "\n✓ forj uninstalled. Restart Claude Code to complete."))}}}
+                 (println (str "✓ Removed /" name " skill from Claude Code"))))))}
+
+  uninstall:opencode
+  {:doc "Remove forj from OpenCode config"
+   :task (let [opencode-dir (str (fs/path (System/getProperty "user.home") ".config" "opencode"))
+               config-file (str (fs/path opencode-dir "opencode.json"))
+               skills-dir (str (fs/path opencode-dir "skills"))
+               plugin-dir (str (fs/path opencode-dir "plugins" "forj"))
+               skill-names ["clj-repl" "clj-init" "lisa-loop"]]
+           ;; Remove forj from opencode.json (MCP entry + plugins array entry)
+           (when (fs/exists? config-file)
+             (let [config (json/parse-string (slurp config-file) true)
+                   new-config (-> config
+                                  (update :mcp dissoc :forj)
+                                  (update :plugins (fn [plugins]
+                                                     (vec (remove (fn [p] (= p "forj")) (or plugins []))))))]
+               (spit config-file (json/generate-string new-config {:pretty true}))
+               (println "✓ Removed forj MCP and plugin entries from" config-file)))
+           ;; Remove skills
+           (doseq [name skill-names]
+             (let [dir (str (fs/path skills-dir name))]
+               (when (fs/exists? dir)
+                 (fs/delete-tree dir)
+                 (println (str "✓ Removed /" name " skill from OpenCode")))))
+           ;; Remove plugin directory
+           (when (fs/exists? plugin-dir)
+             (fs/delete-tree plugin-dir)
+             (println "✓ Removed forj plugin from" plugin-dir)))}}}
