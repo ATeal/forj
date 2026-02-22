@@ -114,12 +114,16 @@
 
   ;; Installation tasks
   install
-  {:doc "Install forj (MCP server, hooks, and skill)"
-   :task (do
+  {:doc "Install forj (MCP server, hooks, and skill). Use --agent-teams for experimental Agent Teams support."
+   :task (let [agent-teams? (some #{"--agent-teams"} *command-line-args*)]
            (run 'install:mcp)
            (run 'install:hooks)
            (run 'install:skill)
-           (println "\n✓ forj installed! Restart Claude Code to activate."))}
+           (when agent-teams?
+             (run 'install:agent-teams))
+           (println (str "\n✓ forj installed"
+                         (when agent-teams? " (with Agent Teams)")
+                         "! Restart Claude Code to activate.")))}
 
   install:mcp
   {:doc "Install MCP server config via claude CLI (user scope)"
@@ -136,7 +140,7 @@
                  (System/exit 1)))))}
 
   install:hooks
-  {:doc "Install hooks config to ~/.claude/settings.json"
+  {:doc "Install base hooks config to ~/.claude/settings.json"
    :task (let [forj-path (System/getProperty "user.dir")
                claude-dir (str (fs/path (System/getProperty "user.home") ".claude"))
                settings-file (str (fs/path claude-dir "settings.json"))
@@ -147,23 +151,15 @@
                                                       :command (str "bb -cp " cp " -m forj.hooks.session-start")}]}]
                              :UserPromptSubmit [{:hooks [{:type "command"
                                                           :command (str "bb -cp " cp " -m forj.hooks.user-prompt")}]}]
-                             ;; Paren repair with graceful error handling
                              :PreToolUse [{:matcher "Edit|Write|NotebookEdit"
                                            :hooks [{:type "command"
-                                                    :command (str "bb -cp " cp " -m forj.hooks.paren-repair")}]}]
-                             ;; Agent Teams hooks
-                             :TaskCompleted [{:hooks [{:type "command"
-                                                       :command (str "bb -cp " cp " -m forj.hooks.task-completed")}]}]
-                             :TeammateIdle [{:hooks [{:type "command"
-                                                      :command (str "bb -cp " cp " -m forj.hooks.teammate-idle")}]}]}
-               ;; Pre-approve forj MCP tools and common operations for Agent Teams
+                                                    :command (str "bb -cp " cp " -m forj.hooks.paren-repair")}]}]}
                forj-permissions ["mcp__forj__*"
                                  "Bash(bb nrepl *)"
                                  "Bash(bb test *)"
                                  "Bash(clj-nrepl-eval *)"
                                  "Bash(clj-paren-repair *)"]
                existing-allow (get-in existing [:permissions :allow] [])
-               ;; Merge without duplicates
                merged-allow (vec (distinct (concat existing-allow forj-permissions)))
                new-config (-> existing
                               (update :hooks merge hooks-config)
@@ -214,6 +210,40 @@
                     (str (fs/path lisa-loop-dir "SKILL.md")) {:replace-existing true})
            (println "✓ /lisa-loop skill installed to" lisa-loop-dir))}
 
+  install:agent-teams
+  {:doc "Install Agent Teams support (experimental): hooks, skill, and env vars"
+   :task (let [forj-path (System/getProperty "user.dir")
+               claude-dir (str (fs/path (System/getProperty "user.home") ".claude"))
+               settings-file (str (fs/path claude-dir "settings.json"))
+               existing (when (fs/exists? settings-file)
+                          (json/parse-string (slurp settings-file) true))
+               cp (str forj-path "/packages/forj-mcp/src:" forj-path "/packages/forj-hooks/src")
+               ;; Agent Teams hooks
+               at-hooks {:TaskCompleted [{:hooks [{:type "command"
+                                                    :command (str "bb -cp " cp " -m forj.hooks.task-completed")}]}]
+                         :TeammateIdle [{:hooks [{:type "command"
+                                                   :command (str "bb -cp " cp " -m forj.hooks.teammate-idle")}]}]}
+               ;; Agent Teams env vars
+               existing-env (get existing :env {})
+               at-env (merge existing-env
+                              {"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS" "1"
+                               "FORJ_AGENT_TEAMS" "1"})
+               new-config (-> existing
+                              (update :hooks merge at-hooks)
+                              (assoc :env at-env))]
+           ;; Update settings.json with hooks + env
+           (spit settings-file (json/generate-string new-config {:pretty true}))
+           (println "✓ Agent Teams hooks installed (TaskCompleted, TeammateIdle)")
+           (println "✓ Agent Teams env vars set (FORJ_AGENT_TEAMS, CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS)")
+           ;; Install agent-teams skill
+           (let [skills-base (str (fs/path claude-dir "skills"))
+                 at-dir (str (fs/path skills-base "lisa-agent-teams"))
+                 at-source (str (fs/path forj-path "packages" "forj-skill" "lisa-agent-teams"))]
+             (fs/create-dirs at-dir)
+             (fs/copy (str (fs/path at-source "SKILL.md"))
+                      (str (fs/path at-dir "SKILL.md")) {:replace-existing true})
+             (println "✓ /lisa-agent-teams skill installed to" at-dir)))}
+
   check-versions
   {:doc "Check template dependency versions against latest available"
    :task (shell "bb" "-f" "scripts/check_versions.clj")}
@@ -222,28 +252,25 @@
   {:doc "Remove forj from Claude Code config"
    :task (let [claude-dir (str (fs/path (System/getProperty "user.home") ".claude"))
                settings-file (str (fs/path claude-dir "settings.json"))
-               clj-repl-dir (str (fs/path claude-dir "skills" "clj-repl"))
-               clj-init-dir (str (fs/path claude-dir "skills" "clj-init"))
-               lisa-loop-dir (str (fs/path claude-dir "skills" "lisa-loop"))]
+               skills-dir (str (fs/path claude-dir "skills"))
+               skill-names ["clj-repl" "clj-init" "lisa-loop" "lisa-agent-teams"]]
            ;; Remove MCP server via claude CLI
            (let [result (shell {:continue true} "claude" "mcp" "remove" "forj" "--scope" "user")]
              (if (zero? (:exit result))
                (println "✓ Removed forj MCP server")
                (println "⚠ forj MCP server not found or already removed")))
-           ;; Remove hooks
+           ;; Remove hooks and agent-teams env vars
            (when (fs/exists? settings-file)
              (let [config (json/parse-string (slurp settings-file) true)
-                   new-config (update config :hooks dissoc :SessionStart :UserPromptSubmit :PreToolUse :TaskCompleted :TeammateIdle)]
+                   new-config (-> config
+                                  (update :hooks dissoc :SessionStart :UserPromptSubmit :PreToolUse :TaskCompleted :TeammateIdle)
+                                  (update :env dissoc "FORJ_AGENT_TEAMS" "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"))]
                (spit settings-file (json/generate-string new-config {:pretty true}))
-               (println "✓ Removed hooks from" settings-file)))
-           ;; Remove skills
-           (when (fs/exists? clj-repl-dir)
-             (fs/delete-tree clj-repl-dir)
-             (println "✓ Removed /clj-repl skill"))
-           (when (fs/exists? clj-init-dir)
-             (fs/delete-tree clj-init-dir)
-             (println "✓ Removed /clj-init skill"))
-           (when (fs/exists? lisa-loop-dir)
-             (fs/delete-tree lisa-loop-dir)
-             (println "✓ Removed /lisa-loop skill"))
+               (println "✓ Removed hooks and env vars from" settings-file)))
+           ;; Remove all forj skills
+           (doseq [name skill-names]
+             (let [dir (str (fs/path skills-dir name))]
+               (when (fs/exists? dir)
+                 (fs/delete-tree dir)
+                 (println (str "✓ Removed /" name " skill")))))
            (println "\n✓ forj uninstalled. Restart Claude Code to complete."))}}}
