@@ -347,28 +347,26 @@
            (println "✓ /lisa-loop skill installed to" lisa-loop-dir))}
 
   install:opencode:hooks
-  {:doc "Install OpenCode plugin (hooks) to ~/.config/opencode/plugins/forj/"
+  {:doc "Install OpenCode plugin (hooks) to ~/.opencode/plugins/"
    :task (let [forj-path (System/getProperty "user.dir")
-               opencode-dir (str (fs/path (System/getProperty "user.home") ".config" "opencode"))
-               plugin-dir (str (fs/path opencode-dir "plugins" "forj"))
-               plugin-source (str (fs/path forj-path "packages" "forj-opencode" "plugin.mjs"))
-               config-file (str (fs/path opencode-dir "opencode.json"))
-               existing (when (fs/exists? config-file)
-                          (json/parse-string (slurp config-file) true))
-               ;; Ensure 'forj' is in the plugins array
-               existing-plugins (get (or existing {}) :plugins [])
-               merged-plugins (vec (distinct (conj existing-plugins "forj")))
-               new-config (-> (or existing {})
-                              (assoc :plugins merged-plugins))]
-           ;; Copy plugin file and write forj-home.txt
-           (fs/create-dirs plugin-dir)
-           (fs/copy plugin-source (str (fs/path plugin-dir "plugin.mjs")) {:replace-existing true})
-           (spit (str (fs/path plugin-dir "forj-home.txt")) forj-path)
-           (println "✓ Plugin copied to" plugin-dir)
-           (println "✓ FORJ_HOME written to" (str (fs/path plugin-dir "forj-home.txt")))
-           ;; Update config with plugins array
-           (spit config-file (json/generate-string new-config {:pretty true}))
-           (println "✓ 'forj' registered in plugins array in" config-file))}
+               home (System/getProperty "user.home")
+               plugins-dir (str (fs/path home ".opencode" "plugins"))
+               plugin-source (str (fs/path forj-path "packages" "forj-opencode" "plugin.js"))
+               link-path (str (fs/path plugins-dir "forj.js"))]
+           ;; OpenCode scans ~/.opencode/plugins/*.{ts,js} for local plugins
+           ;; (NOT ~/.config/opencode/plugins/ - that dir is not scanned)
+           (fs/create-dirs plugins-dir)
+           (fs/delete-if-exists link-path)
+           ;; Clean up old locations
+           (doseq [old [(str (fs/path home ".config" "opencode" "plugins" "forj"))
+                        (str (fs/path home ".config" "opencode" "plugins" "forj.js"))]]
+             (when (fs/exists? old)
+               (if (fs/directory? old)
+                 (fs/delete-tree old)
+                 (fs/delete-if-exists old))
+               (println "✓ Removed old plugin at" old)))
+           (fs/create-sym-link link-path plugin-source)
+           (println "✓ Plugin symlinked to" link-path))}
 
   check-versions
   {:doc "Check template dependency versions against latest available"
@@ -421,27 +419,33 @@
 
   uninstall:opencode
   {:doc "Remove forj from OpenCode config"
-   :task (let [opencode-dir (str (fs/path (System/getProperty "user.home") ".config" "opencode"))
+   :task (let [home (System/getProperty "user.home")
+               opencode-dir (str (fs/path home ".config" "opencode"))
                config-file (str (fs/path opencode-dir "opencode.json"))
                skills-dir (str (fs/path opencode-dir "skills"))
-               plugin-dir (str (fs/path opencode-dir "plugins" "forj"))
                skill-names ["clj-repl" "clj-init" "lisa-loop"]]
-           ;; Remove forj from opencode.json (MCP entry + plugins array entry)
+           ;; Remove forj MCP entry from opencode.json
            (when (fs/exists? config-file)
              (let [config (json/parse-string (slurp config-file) true)
-                   new-config (-> config
-                                  (update :mcp dissoc :forj)
-                                  (update :plugins (fn [plugins]
-                                                     (vec (remove (fn [p] (= p "forj")) (or plugins []))))))]
+                   new-config (update config :mcp dissoc :forj)]
                (spit config-file (json/generate-string new-config {:pretty true}))
-               (println "✓ Removed forj MCP and plugin entries from" config-file)))
+               (println "✓ Removed forj MCP entry from" config-file)))
            ;; Remove skills
            (doseq [name skill-names]
              (let [dir (str (fs/path skills-dir name))]
                (when (fs/exists? dir)
                  (fs/delete-tree dir)
                  (println (str "✓ Removed /" name " skill from OpenCode")))))
-           ;; Remove plugin directory
-           (when (fs/exists? plugin-dir)
-             (fs/delete-tree plugin-dir)
-             (println "✓ Removed forj plugin from" plugin-dir)))}}}
+           ;; Remove plugin symlink from ~/.opencode/plugins/
+           (let [link-path (str (fs/path home ".opencode" "plugins" "forj.js"))]
+             (when (fs/exists? link-path)
+               (fs/delete-if-exists link-path)
+               (println "✓ Removed forj plugin from" link-path)))
+           ;; Clean up old locations
+           (doseq [old [(str (fs/path opencode-dir "plugins" "forj"))
+                        (str (fs/path opencode-dir "plugins" "forj.js"))]]
+             (when (fs/exists? old)
+               (if (fs/directory? old)
+                 (fs/delete-tree old)
+                 (fs/delete-if-exists old))
+               (println "✓ Removed old plugin at" old))))}}}

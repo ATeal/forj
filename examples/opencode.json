@@ -7,7 +7,5 @@
       "command": ["FORJ_PATH/bin/forj-mcp"],
       "enabled": true
     }
-  },
-
-  "plugins": ["forj"]
+  }
 }

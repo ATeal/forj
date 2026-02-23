@@ -13,22 +13,24 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [forj.lisa.analytics :as analytics]
-            [forj.lisa.plan-edn :as plan-edn]))
+            [forj.lisa.plan-edn :as plan-edn]
+            [forj.lisa.platform :as platform]))
 
 (def default-config
-  {:max-iterations 20
+  {:platform :claude  ;; :claude or :opencode
+   :max-iterations 20
    :max-parallel 3  ;; Max concurrent checkpoints (EDN format only)
-   :verbose false   ;; Use stream-json for full tool call logs
-   :allowed-tools "Bash,Edit,Read,Write,Glob,Grep,mcp__forj__*,mcp__claude-in-chrome__*"
+   :verbose false   ;; Use stream-json for full tool call logs (Claude only; OpenCode always streams)
    :log-dir ".forj/logs/lisa"
    :poll-interval-ms 5000
    ;; Timeout settings (in milliseconds)
    ;; nil = disabled, idle timeout is the primary stuck detector
    :iteration-timeout-ms nil             ;; Disabled by default (use --iteration-timeout to enable)
    :idle-timeout-ms (* 5 60 1000)        ;; 5 minutes with no file activity
-   :max-checkpoint-failures 3            ;; Skip checkpoint after N consecutive failures
-   ;; Pass user's MCP config so Chrome MCP is available for visual validation
-   :mcp-config (str (fs/home) "/.claude.json")})
+   :max-checkpoint-failures 3}           ;; Skip checkpoint after N consecutive failures
+  ;; Platform-specific keys (:cli, :mcp-config, :allowed-tools, :agent) are
+  ;; merged from platform/platform-config at runtime
+  )
 
 (defn- ensure-log-dir!
   "Create the log directory if it doesn't exist."
@@ -75,7 +77,7 @@
 
 (defn- build-iteration-prompt
   "Build the prompt for a single iteration focused on the current checkpoint."
-  [plan checkpoint signs-content]
+  [config plan checkpoint signs-content]
   (let [plan-title (:title plan)
         cp-id (:id checkpoint)
         cp-desc (:description checkpoint)
@@ -126,24 +128,7 @@
                        ""
                        "**DO** verify by actually evaluating code in the REPL."
                        (when is-ui?
-                         (str "\n### Step 4: Visual Validation - DO NOT SKIP\n"
-                              "**For UI checkpoints, you MUST take a screenshot:**\n\n"
-                              "**Chrome MCP Workflow** (use these exact steps):\n"
-                              "```\n"
-                              "1. mcp__claude-in-chrome__tabs_context_mcp with createIfEmpty=true\n"
-                              "2. mcp__claude-in-chrome__tabs_create_mcp (creates a fresh tab, returns tabId)\n"
-                              "3. mcp__claude-in-chrome__navigate with url and tabId\n"
-                              "4. mcp__claude-in-chrome__browser_wait_for with time=3 (wait for render)\n"
-                              "5. mcp__claude-in-chrome__computer with action='screenshot' and tabId\n"
-                              "```\n\n"
-                              "**Alternative - Playwright MCP**:\n"
-                              "```\n"
-                              "1. mcp__playwright__browser_navigate to the app URL\n"
-                              "2. mcp__playwright__browser_wait_for with time=3\n"
-                              "3. mcp__playwright__browser_take_screenshot\n"
-                              "```\n\n"
-                              "Check shadow-cljs.edn :dev-http, package.json scripts, or LISA_PLAN.edn for the correct URL/port.\n\n"
-                              "CHECKPOINT WILL BE REJECTED if you mark complete without screenshot verification."))
+                         (platform/browser-tools-prompt config))
                        ""
                        (str "### Step " (if is-ui? "5" "4") ": Mark Complete")
                        (str "When acceptance criteria are verified via REPL" (when is-ui? " and screenshot") ":")
@@ -267,34 +252,26 @@
 ;;; Process Spawning
 ;;; =============================================================================
 
-(defn- spawn-claude-iteration!
-  "Spawn a Claude instance for one iteration.
+(defn- spawn-iteration!
+  "Spawn a platform instance for one iteration.
    Uses stdin to pass prompt, avoiding shell quoting issues.
 
-   When :verbose true in config, uses stream-json format for detailed tool call logs
-   and starts a real-time stream of tool calls to the console.
+   When :verbose true in config (Claude), uses stream-json format for detailed
+   tool call logs and starts a real-time stream of tool calls to the console.
+   OpenCode always streams JSONL regardless of verbose setting.
 
-   Returns {:process <proc> :stream <stream-info> :session-id <uuid>} where:
+   Returns {:process <proc> :stream <stream-info> :session-id <uuid-or-nil>} where:
    - stream-info has :stop-fn to call when the process completes (nil in non-verbose mode)
-   - session-id is the UUID used for Claude's session logs"
+   - session-id is the UUID for Claude (pre-generated), nil for OpenCode (extracted from output later)"
   [project-path prompt config log-file]
-  ;; Pass prompt via stdin to avoid shell escaping issues
-  ;; --dangerously-skip-permissions is REQUIRED for non-interactive mode
-  ;; --mcp-config passes user config so Chrome MCP is available for visual validation
-  ;; --session-id allows us to correlate iteration with Claude's session logs
-  ;; NOTE: stream-json requires --verbose flag when using -p (print mode)
   (let [verbose? (:verbose config)
-        session-id (str (java.util.UUID/randomUUID))
-        base-args ["claude" "-p"
-                   "--output-format" (if verbose? "stream-json" "json")
-                   "--dangerously-skip-permissions"
-                   "--mcp-config" (:mcp-config config)
-                   "--session-id" session-id]
-        args (if verbose?
-               (conj base-args "--verbose")
-               base-args)
+        ;; Claude uses pre-generated session IDs; OpenCode generates them internally
+        session-id (when (= :claude (:platform config))
+                     (str (java.util.UUID/randomUUID)))
+        args (platform/build-spawn-args config project-path session-id)
         ;; Start the stream before spawning process so it's ready to catch output
-        stream (when verbose? (stream-tool-calls! log-file))
+        stream (when (and verbose? (= :claude (:platform config)))
+                 (stream-tool-calls! log-file))
         proc (apply p/process
                     {:dir project-path
                      :in prompt
@@ -389,45 +366,9 @@
       (:exit @proc))))
 
 (defn- parse-iteration-result
-  "Parse the JSON output from a Claude iteration.
-   Handles both json (single object) and stream-json (JSONL) formats.
-
-   For stream-json, finds the result message and extracts cost/token info."
-  [log-file]
-  (try
-    (when-not (fs/exists? log-file)
-      (throw (ex-info "Log file does not exist" {:file log-file})))
-    (let [content (slurp log-file)]
-      ;; Handle empty log files (process failed to start or crashed immediately)
-      (when (str/blank? content)
-        (throw (ex-info "Log file is empty - process may have failed to start" {:file log-file})))
-      ;; Check if it's JSONL (stream-json) by looking for newlines between JSON objects
-      (if (and (str/includes? content "\n{")
-               (str/starts-with? (str/trim content) "{"))
-        ;; stream-json format: parse each line, find result message
-        (let [lines (str/split-lines content)
-              parsed (keep (fn [line]
-                             (when (not (str/blank? line))
-                               (try
-                                 (json/parse-string line true)
-                                 (catch Exception _ nil))))
-                           lines)
-              ;; Find the result message (type: result)
-              result-msg (first (filter #(= "result" (:type %)) parsed))
-              ;; Also look for any message with cost info
-              cost-msg (first (filter :total_cost_usd parsed))]
-          (if result-msg
-            (merge result-msg
-                   (when cost-msg
-                     (select-keys cost-msg [:total_cost_usd :usage])))
-            ;; Fallback: return last parsed message
-            (or (last parsed)
-                {:is_error true :error "No result message found in stream"})))
-        ;; Standard json format: single object
-        (json/parse-string content true)))
-    (catch Exception e
-      {:is_error true
-       :error (str "Failed to parse output: " (.getMessage e))})))
+  "Parse the output from a spawned iteration. Delegates to platform layer."
+  [config log-file]
+  (platform/parse-iteration-output config log-file))
 
 (defn- iteration-succeeded?
   "Check if an iteration succeeded based on output."
@@ -578,8 +519,8 @@
       (mark-checkpoint-in-progress! project-path cp-id)
       (let [plan (plan-edn/read-plan project-path)
             signs (read-signs project-path)
-            prompt (build-iteration-prompt plan checkpoint signs)
-            {:keys [process stream session-id]} (spawn-claude-iteration! project-path prompt config log-file)
+            prompt (build-iteration-prompt config plan checkpoint signs)
+            {:keys [process stream session-id]} (spawn-iteration! project-path prompt config log-file)
             ;; Write metadata file with session-id for later correlation
             _ (write-iteration-metadata! log-file session-id cp-id iteration-base)]
         {:checkpoint-id cp-id
@@ -642,7 +583,7 @@
         ;; Stop the tool call stream
         (stop-stream! (:stream proc-info))
         (let [log-file (:log-file proc-info)
-              result (parse-iteration-result log-file)
+              result (parse-iteration-result config log-file)
               succeeded? (iteration-succeeded? result)
               checkpoint-complete? (checkpoint-completed? result)
               error-msg (when-not succeeded?
@@ -790,7 +731,9 @@
    - :on-complete - Callback (fn [final-plan total-cost]) when all done"
   [project-path & [{:keys [on-checkpoint-complete on-complete]
                     :as opts}]]
-  (let [config (merge default-config opts)
+  (let [config (merge default-config
+                      (platform/platform-config (or (:platform opts) (:platform default-config)))
+                      opts)
         log-dir (ensure-log-dir! project-path config)
         _ (cleanup-previous-run! project-path config)
         ;; Reset any orphaned in-progress checkpoints from previous crashed runs
@@ -917,7 +860,9 @@
   (if parallel
     (run-loop-parallel! project-path opts)
     ;; Sequential mode (default)
-    (let [config (merge default-config opts)
+    (let [config (merge default-config
+                        (platform/platform-config (or (:platform opts) (:platform default-config)))
+                        opts)
           log-dir (ensure-log-dir! project-path config)
           _ (cleanup-previous-run! project-path config)]
 
@@ -975,13 +920,13 @@
 
               ;; Normal iteration
               (let [signs (read-signs project-path)
-                    prompt (build-iteration-prompt plan checkpoint signs)
+                    prompt (build-iteration-prompt config plan checkpoint signs)
                     log-file (str (fs/path log-dir (str "iter-" iteration ".json")))
 
                     _ (println (str "[Lisa] Iteration " iteration ": Checkpoint " cp-display
                                     " - " (:description checkpoint)))
 
-                    {:keys [process stream session-id]} (spawn-claude-iteration! project-path prompt config log-file)
+                    {:keys [process stream session-id]} (spawn-iteration! project-path prompt config log-file)
                     ;; Write metadata file with session-id for later correlation
                     _ (write-iteration-metadata! log-file session-id cp-id iteration)
                     wait-result (wait-for-process-with-timeout process project-path config)
@@ -1000,7 +945,7 @@
                     (recur (inc iteration) total-cost total-input-tokens total-output-tokens))
 
                   ;; Normal completion - parse result
-                  (let [result (parse-iteration-result log-file)
+                  (let [result (parse-iteration-result config log-file)
                         iteration-cost (or (:total_cost_usd result) 0.0)
                         usage (:usage result)
                         iter-input (+ (or (:input_tokens usage) 0)
@@ -1062,8 +1007,10 @@
 
 (defn generate-plan!
   "Generate a LISA_PLAN.edn by asking Claude to analyze the task and create checkpoints."
-  [project-path task-description & [{:keys [max-checkpoints] :or {max-checkpoints 10}}]]
-  (let [log-dir (ensure-log-dir! project-path default-config)
+  [project-path task-description & [{:keys [max-checkpoints platform] :or {max-checkpoints 10}}]]
+  (let [plat (or platform (:platform default-config))
+        config (merge default-config (platform/platform-config plat) {:platform plat})
+        log-dir (ensure-log-dir! project-path config)
         log-file (str (fs/path log-dir "planning.json"))
 
         prompt (str "# Lisa Loop Planning\n\n"
@@ -1085,11 +1032,10 @@
                     "   :acceptance \"Expected result\"\n"
                     "   :status :pending}]\n"
                     " :signs []}\n")
-
-        {:keys [process stream]} (spawn-claude-iteration! project-path prompt default-config log-file)
-        _exit-code (wait-for-process process (:poll-interval-ms default-config))
+        {:keys [process stream]} (spawn-iteration! project-path prompt config log-file)
+        _exit-code (wait-for-process process (:poll-interval-ms config))
         _ (stop-stream! stream)
-        result (parse-iteration-result log-file)]
+        result (parse-iteration-result config log-file)]
 
     (if (and (iteration-succeeded? result)
              (plan-edn/plan-exists? project-path))
@@ -1108,16 +1054,17 @@
      --sequential           Disable parallel execution (parallel is default for EDN plans)
      --max-parallel N       Max concurrent checkpoints (default: 3)
      --verbose              Use stream-json for detailed tool call logs
+     --platform PLATFORM    Platform: claude or opencode (default: auto-detect)
      --iteration-timeout N  Timeout per iteration in seconds (disabled by default)
      --idle-timeout N       Kill if no file activity for N seconds (default: 300 = 5 min)
      --no-timeout           Disable all timeouts"
   [& args]
   (let [;; Parse args
-        {:keys [project-path max-iterations parallel max-parallel verbose
+        {:keys [project-path max-iterations parallel max-parallel verbose platform
                 iteration-timeout idle-timeout no-timeout]}
         (loop [args args
                opts {:project-path "." :max-iterations 20 :parallel true :max-parallel 3
-                     :verbose false :iteration-timeout nil :idle-timeout 300 :no-timeout false}]
+                     :verbose false :platform nil :iteration-timeout nil :idle-timeout 300 :no-timeout false}]
           (if (empty? args)
             opts
             (let [[arg & more] args]
@@ -1130,6 +1077,9 @@
 
                 (= "--no-timeout" arg)
                 (recur more (assoc opts :no-timeout true))
+
+                (= "--platform" arg)
+                (recur (rest more) (assoc opts :platform (keyword (first more))))
 
                 (= "--max-iterations" arg)
                 (recur (rest more) (assoc opts :max-iterations (parse-long (first more))))
@@ -1153,41 +1103,46 @@
     ;; Without this, OS block buffering delays log output significantly
     (alter-var-root #'*flush-on-newline* (constantly true))
 
-    (println "[Lisa] Starting orchestrator")
-    (println "[Lisa] Project:" project-path)
-    (println "[Lisa] Max iterations:" max-iterations)
-    (when parallel
-      (println "[Lisa] Parallel mode enabled (max" max-parallel "concurrent)"))
-    (when verbose
-      (println "[Lisa] Verbose mode enabled (stream-json output)"))
-    (if no-timeout
-      (println "[Lisa] Timeouts disabled")
-      (println "[Lisa] Timeouts: idle=" idle-timeout "s"
-               (if iteration-timeout (str ", iteration=" iteration-timeout "s") ", iteration=disabled")))
+    ;; Resolve platform: explicit flag > auto-detect
+    (let [resolved-platform (platform/resolve-platform platform)]
 
-    (let [result (run-loop! project-path
-                            {:max-iterations max-iterations
-                             :parallel parallel
-                             :max-parallel max-parallel
-                             :verbose verbose
-                             ;; Convert seconds to milliseconds, nil disables timeout
-                             :iteration-timeout-ms (when (and (not no-timeout) iteration-timeout)
-                                                     (* iteration-timeout 1000))
-                             :idle-timeout-ms (when-not no-timeout (* idle-timeout 1000))
-                             :on-iteration (fn [i _r]
-                                             (println (str "[Lisa] Iteration " i " complete")))
-                             :on-checkpoint-complete (fn [cp]
-                                                       (println (str "[Lisa] Checkpoint " (:id cp) " complete")))
-                             :on-complete (fn [_plan cost]
-                                            (println (str "[Lisa] All checkpoints complete! Total cost: $" cost)))})]
-      (println "[Lisa] Final status:" (:status result))
-      (println "[Lisa] Total iterations:" (:iterations result))
-      (println "[Lisa] Total tokens:" (:total-input-tokens result) "in /" (:total-output-tokens result) "out")
-      (println "[Lisa] Total cost: $" (format "%.2f" (or (:total-cost result) 0.0)))
-      ;; Terminal bell on completion
-      (print "\u0007")
-      (flush)
-      (System/exit (if (= :complete (:status result)) 0 1)))))
+      (println "[Lisa] Starting orchestrator")
+      (println "[Lisa] Platform:" (name resolved-platform))
+      (println "[Lisa] Project:" project-path)
+      (println "[Lisa] Max iterations:" max-iterations)
+      (when parallel
+        (println "[Lisa] Parallel mode enabled (max" max-parallel "concurrent)"))
+      (when verbose
+        (println "[Lisa] Verbose mode enabled (stream-json output)"))
+      (if no-timeout
+        (println "[Lisa] Timeouts disabled")
+        (println "[Lisa] Timeouts: idle=" idle-timeout "s"
+                 (if iteration-timeout (str ", iteration=" iteration-timeout "s") ", iteration=disabled")))
+
+      (let [result (run-loop! project-path
+                              {:max-iterations max-iterations
+                               :parallel parallel
+                               :max-parallel max-parallel
+                               :verbose verbose
+                               :platform resolved-platform
+                               ;; Convert seconds to milliseconds, nil disables timeout
+                               :iteration-timeout-ms (when (and (not no-timeout) iteration-timeout)
+                                                       (* iteration-timeout 1000))
+                               :idle-timeout-ms (when-not no-timeout (* idle-timeout 1000))
+                               :on-iteration (fn [i _r]
+                                               (println (str "[Lisa] Iteration " i " complete")))
+                               :on-checkpoint-complete (fn [cp]
+                                                         (println (str "[Lisa] Checkpoint " (:id cp) " complete")))
+                               :on-complete (fn [_plan cost]
+                                              (println (str "[Lisa] All checkpoints complete! Total cost: $" cost)))})]
+        (println "[Lisa] Final status:" (:status result))
+        (println "[Lisa] Total iterations:" (:iterations result))
+        (println "[Lisa] Total tokens:" (:total-input-tokens result) "in /" (:total-output-tokens result) "out")
+        (println "[Lisa] Total cost: $" (format "%.2f" (or (:total-cost result) 0.0)))
+        ;; Terminal bell on completion
+        (print "\u0007")
+        (flush)
+        (System/exit (if (= :complete (:status result)) 0 1))))))
 
 (comment
   ;; Test expressions
@@ -1240,8 +1195,8 @@
   (maybe-append-compliance-sign! "." 5 {:score :good :used-repl-tools ["reload_namespace"] :anti-patterns []} "Test checkpoint")
   ;; => nil (no sign appended for non-poor compliance)
 
-  ;; Test session-id generation in spawn-claude-iteration!
-  ;; Generate a UUID - this is what spawn-claude-iteration! does internally
+  ;; Test session-id generation in spawn-iteration!
+  ;; Generate a UUID - this is what spawn-iteration! does internally
   (str (java.util.UUID/randomUUID))
   ;; => "550e8400-e29b-41d4-a716-446655440000" (example)
 

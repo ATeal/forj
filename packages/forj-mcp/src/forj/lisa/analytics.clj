@@ -1,15 +1,38 @@
 (ns forj.lisa.analytics
   "Analytics for Lisa Loop iterations - tool usage and REPL compliance.
 
-   Tool extraction is delegated to forj.lisa.claude-sessions.
+   Tool extraction supports both Claude and OpenCode JSONL formats.
    This namespace focuses on compliance scoring and formatting."
   (:require [clojure.string :as str]
             [forj.lisa.claude-sessions :as claude-sessions]))
 
+(defn- extract-tool-calls-opencode
+  "Extract tool calls from OpenCode JSONL event log.
+   OpenCode events have type 'tool_use' with tool name in part.tool."
+  [lines]
+  (->> lines
+       (filter #(= "tool_use" (:type %)))
+       (map (fn [evt]
+              {:name (get-in evt [:part :tool])
+               :input (get-in evt [:part :state :input])
+               :id (get-in evt [:part :callID])}))
+       (filter :name)))
+
+(defn- detect-log-format
+  "Detect whether a JSONL file is Claude or OpenCode format.
+   OpenCode events have top-level :type of 'step_start', 'text', 'tool_use', etc.
+   Claude events have top-level :type of 'user', 'assistant', 'result'."
+  [first-entry]
+  (when first-entry
+    (let [t (:type first-entry)]
+      (if (#{"step_start" "text" "tool_use" "step_finish" "error"} t)
+        :opencode
+        :claude))))
+
 (defn extract-tool-calls
   "Extract tool calls from a log file or session.
 
-   Delegates to claude-sessions for actual parsing.
+   Auto-detects format (Claude vs OpenCode JSONL).
    Accepts either:
    - A file path (string or path) to a JSONL log file
    - A session-id string (will look up in Claude's projects dir)
@@ -18,7 +41,9 @@
    or nil if the file doesn't exist or is empty."
   [log-file-or-session-id]
   (when-let [entries (seq (claude-sessions/read-session-jsonl log-file-or-session-id))]
-    (claude-sessions/extract-tool-calls entries)))
+    (case (detect-log-format (first entries))
+      :opencode (extract-tool-calls-opencode entries)
+      (claude-sessions/extract-tool-calls entries))))
 
 (def ^:private repl-tools
   "Set of forj MCP tools that indicate proper REPL-driven development."
