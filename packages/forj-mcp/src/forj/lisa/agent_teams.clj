@@ -20,28 +20,37 @@
     (boolean (and val (#{"1" "true" "yes"} (str/lower-case val))))))
 
 (defn agent-teams-available?
-  "Check if Claude Code Agent Teams feature is available.
-   Looks for CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS env var which Claude Code
-   sets when the feature is enabled.
+  "Check if Agent Teams feature is available for the current platform.
+   For Claude: checks FORJ_AGENT_TEAMS and CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS env vars.
+   For OpenCode: not yet supported.
+
+   Accepts optional platform keyword (:claude or :opencode). Defaults to :claude.
 
    Returns a map with:
    - :available - true if Agent Teams can be used
    - :reason - explanation when not available (nil when available)"
-  []
-  (let [enabled? (agent-teams-enabled?)
-        experimental-flag (System/getenv "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS")]
-    (cond
-      (not enabled?)
-      {:available false
-       :reason "FORJ_AGENT_TEAMS env var not set. Set FORJ_AGENT_TEAMS=1 to enable Agent Teams mode."}
+  ([] (agent-teams-available? :claude))
+  ([platform]
+   (case platform
+     :opencode
+     {:available false
+      :reason "Agent Teams is not yet supported in OpenCode. Use sequential or parallel Lisa Loop instead."}
 
-      (not experimental-flag)
-      {:available false
-       :reason "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS not set. Enable Agent Teams in ~/.claude/settings.json under env."}
+     ;; Claude (default)
+     (let [enabled? (agent-teams-enabled?)
+           experimental-flag (System/getenv "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS")]
+       (cond
+         (not enabled?)
+         {:available false
+          :reason "FORJ_AGENT_TEAMS env var not set. Set FORJ_AGENT_TEAMS=1 to enable Agent Teams mode."}
 
-      :else
-      {:available true
-       :reason nil})))
+         (not experimental-flag)
+         {:available false
+          :reason "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS not set. Enable Agent Teams in ~/.claude/settings.json under env."}
+
+         :else
+         {:available true
+          :reason nil})))))
 
 (defn team-name-for-plan
   "Generate a stable team name from a plan title.

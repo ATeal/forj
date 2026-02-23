@@ -9,6 +9,7 @@
             [forj.lisa.agent-teams :as agent-teams]
             [forj.lisa.claude-sessions :as claude-sessions]
             [forj.lisa.plan-edn :as plan-edn]
+            [forj.lisa.platform :as platform]
             [forj.lisa.validation :as lisa-validation]
             [forj.scaffold :as scaffold]))
 
@@ -227,10 +228,13 @@
                   :required ["id" "description"]}}
 
    {:name "lisa_run_orchestrator"
-    :description "Run the Lisa Loop orchestrator. Spawns fresh Claude instances for each iteration until all checkpoints complete. Includes timeout detection (15 min per iteration, 5 min idle) to recover from stuck iterations."
+    :description "Run the Lisa Loop orchestrator. Spawns fresh instances (Claude or OpenCode) for each iteration until all checkpoints complete. Includes timeout detection (15 min per iteration, 5 min idle) to recover from stuck iterations."
     :inputSchema {:type "object"
                   :properties {:path {:type "string"
                                       :description "Project path (defaults to current directory)"}
+                               :platform {:type "string"
+                                          :enum ["claude" "opencode"]
+                                          :description "Platform to spawn iterations with (default: auto-detect from environment)"}
                                :max_iterations {:type "integer"
                                                 :description "Maximum iterations before stopping (default: 20)"}
                                :parallel {:type "boolean"
@@ -1683,23 +1687,28 @@
        :error (str "Failed to add checkpoint: " (.getMessage e))})))
 
 (defn lisa-run-orchestrator
-  "Run the Lisa Loop orchestrator (spawns Claude instances).
-   Spawns as a detached background process and returns immediately."
-  [{:keys [path max_iterations parallel max_parallel verbose
+  "Run the Lisa Loop orchestrator (spawns Claude or OpenCode instances).
+   Spawns as a detached background process and returns immediately.
+   Auto-detects platform from process tree if not specified.
+   Tracks the orchestrator process for cleanup via stop_project."
+  [{:keys [path platform max_iterations parallel max_parallel verbose
            iteration_timeout idle_timeout no_timeout]
     :or {path "." max_iterations 20 parallel true max_parallel 3 verbose false
          iteration_timeout nil idle_timeout 300 no_timeout false}}]
   (try
     (let [project-path (fs/absolutize path)
+          ;; Auto-detect platform if not explicitly provided
+          resolved-platform (platform/resolve-platform platform)
           log-dir (str (fs/path project-path ".forj/logs/lisa"))
           _ (fs/create-dirs log-dir)
           timestamp (-> (java.time.LocalDateTime/now)
                         (.format (java.time.format.DateTimeFormatter/ofPattern "yyyyMMdd-HHmmss")))
           log-file (str (fs/path log-dir (str "orchestrator-" timestamp ".log")))
 
-          ;; Build command args (parallel is default, use --sequential to disable)
+          ;; Build command args - always pass --platform to be explicit
           cmd-args (cond-> ["bb" "-cp" (System/getProperty "java.class.path")
                             "-m" "forj.lisa.orchestrator" (str project-path)
+                            "--platform" (name resolved-platform)
                             "--max-iterations" (str max_iterations)]
                      (not parallel) (into ["--sequential"])
                      (and parallel max_parallel) (into ["--max-parallel" (str max_parallel)])
@@ -1715,12 +1724,20 @@
                       cmd-args)
           pid (-> proc :proc .pid)]
 
+      ;; Track the orchestrator for cleanup via stop_project
+      (track-process {:pid pid
+                      :name "lisa-orchestrator"
+                      :command (str/join " " (take 6 cmd-args))})
+
       {:success true
-       :message (cond
-                  (and parallel verbose) (str "Lisa Loop orchestrator started (parallel mode, max " max_parallel " concurrent, verbose)")
-                  parallel (str "Lisa Loop orchestrator started (parallel mode, max " max_parallel " concurrent)")
-                  verbose "Lisa Loop orchestrator started (sequential mode, verbose)"
-                  :else "Lisa Loop orchestrator started (sequential mode)")
+       :message (str "Lisa Loop orchestrator started ("
+                     (name resolved-platform) " platform, "
+                     (if parallel
+                       (str "parallel mode, max " max_parallel " concurrent")
+                       "sequential mode")
+                     (when verbose ", verbose")
+                     ")")
+       :platform (name resolved-platform)
        :pid pid
        :log-file log-file
        :parallel parallel
@@ -1738,7 +1755,8 @@
    Returns structured data for Claude (as team lead) to use with TaskCreate."
   [{:keys [path] :or {path "."}}]
   (let [project-path (str (fs/absolutize path))
-        available (agent-teams/agent-teams-available?)]
+        available (agent-teams/agent-teams-available?
+                   (if (System/getenv "OPENCODE_DIR") :opencode :claude))]
     (cond
       (not (:available available))
       {:success false

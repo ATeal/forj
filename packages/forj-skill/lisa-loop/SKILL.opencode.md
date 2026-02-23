@@ -244,10 +244,13 @@ Then **start the orchestrator**:
 
 ```
 lisa_run_orchestrator with:
+  platform: "opencode"
   max_iterations: 20
 ```
 
-This spawns fresh instances for each iteration. The orchestrator:
+**IMPORTANT:** Always pass `platform: "opencode"` so the orchestrator spawns OpenCode instances (not Claude).
+
+This spawns fresh OpenCode instances for each iteration. The orchestrator:
 1. Reads LISA_PLAN.edn to find current checkpoint
 2. Spawns a focused instance for that checkpoint
 3. Waits for completion

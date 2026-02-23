@@ -41,19 +41,25 @@ export FORJ_PATH=$(pwd)
 mkdir -p ~/.config/opencode
 cat examples/opencode.json | sed "s|FORJ_PATH|$FORJ_PATH|g" > ~/.config/opencode/opencode.json
 
-# Install plugin
-mkdir -p ~/.config/opencode/plugins/forj
-cp packages/forj-opencode/plugin.mjs ~/.config/opencode/plugins/forj/
+# Install plugin (symlink so it can auto-detect forj root)
+# OpenCode scans ~/.opencode/plugins/*.{ts,js} for local plugins
+mkdir -p ~/.opencode/plugins
+ln -sf "$FORJ_PATH/packages/forj-opencode/plugin.js" ~/.opencode/plugins/forj.js
 
-# Install skills
+# Install skills (prefer OpenCode-specific variants)
 for skill in clj-repl clj-init lisa-loop; do
   mkdir -p ~/.config/opencode/skills/$skill
-  cp packages/forj-skill/$skill/SKILL.md ~/.config/opencode/skills/$skill/ 2>/dev/null || \
-  cp packages/forj-skill/SKILL.md ~/.config/opencode/skills/$skill/
+  if [ -f "packages/forj-skill/$skill/SKILL.opencode.md" ]; then
+    cp "packages/forj-skill/$skill/SKILL.opencode.md" ~/.config/opencode/skills/$skill/SKILL.md
+  elif [ -f "packages/forj-skill/$skill/SKILL.md" ]; then
+    cp "packages/forj-skill/$skill/SKILL.md" ~/.config/opencode/skills/$skill/
+  else
+    cp packages/forj-skill/SKILL.md ~/.config/opencode/skills/$skill/
+  fi
 done
 ```
 
-**Note:** The OpenCode plugin needs to know where forj is installed. `bb install` writes a `forj-home.txt` file next to the plugin automatically. For manual setup, either create that file or set the `FORJ_HOME` environment variable.
+**Note:** The plugin is symlinked (not copied) so it can auto-detect the forj root via `realpathSync`. OpenCode auto-discovers `*.{ts,js}` files directly in the `plugins/` directory. If you can't use symlinks, set the `FORJ_HOME` environment variable instead.
 
 ## Files
 
@@ -131,9 +137,10 @@ Install these before using forj:
 - Verify project has `deps.edn`, `bb.edn`, or `shadow-cljs.edn`
 
 **Plugin not loading (OpenCode):**
-- Ensure `FORJ_HOME` env var is set to forj directory
-- Check plugin.mjs exists in `~/.config/opencode/plugins/forj/`
-- Verify `"forj"` is in the `plugins` array in opencode.json
+- Plugin must be at `~/.opencode/plugins/forj.js` (NOT `~/.config/opencode/plugins/`)
+- OpenCode only scans `~/.opencode/` and `.opencode/` for local plugin files
+- File must be `.js` or `.ts` (not `.mjs`) — OpenCode glob matches `*.{ts,js}`
+- If symlinks aren't possible, set `FORJ_HOME` env var to your forj clone path
 
 **REPL not connecting:**
 - Start REPL: `bb nrepl-server localhost:1667`
