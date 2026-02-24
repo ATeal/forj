@@ -60,6 +60,13 @@ Choose platform:
 
 Then restart your editor. The tools will be available automatically in any Clojure project.
 
+To uninstall:
+```bash
+bb uninstall          # Remove all integrations (Claude Code + OpenCode)
+bb uninstall --claude # Remove Claude Code only
+bb uninstall --opencode # Remove OpenCode only
+```
+
 ## MCP Tools
 
 ### Core REPL Tools
@@ -190,7 +197,9 @@ forj/
     └── settings.json        # Hook registration
 ```
 
-## Development
+## Contributing / Developing forj
+
+These tasks are for working on forj itself, not for using it in your projects.
 
 ```bash
 bb tasks              # List available tasks
@@ -202,10 +211,6 @@ bb test:skill         # Validate skill definition
 bb mcp:dev            # Run MCP server for testing
 bb logs               # View forj logs
 bb cleanup:sessions   # Remove old session files (>7 days)
-bb install            # Interactive wizard (Claude Code / OpenCode / Both)
-bb uninstall          # Remove all integrations (Claude Code + OpenCode)
-bb uninstall --claude # Remove Claude Code only
-bb uninstall --opencode # Remove OpenCode only
 ```
 
 ## Manual Configuration
