@@ -17,14 +17,14 @@
 | [Claude Code](https://claude.com/claude-code) | ✅ | ✅ Hooks | ✅ | `bb install` |
 | [OpenCode](https://opencode.ai) | ✅ | ✅ Plugin | ✅ | `bb install` |
 
-## Status
+## Components
 
-| Component | Status | Description |
-|-----------|--------|-------------|
-| forj-mcp | ✅ Complete | MCP server with 29 tools |
-| forj-hooks | ✅ Complete | SessionStart + UserPromptSubmit + PreToolUse + TaskCompleted + TeammateIdle |
-| forj-opencode | ✅ Complete | OpenCode plugin (session, REPL guidance, paren repair) |
-| forj-skill | ✅ Complete | `/clj-repl` + `/clj-init` + `/lisa-loop` |
+| Package | What it does |
+|---------|-------------|
+| forj-mcp | MCP server — 29 tools for REPL eval, testing, scaffolding, process management |
+| forj-hooks | Claude Code hooks (session context, REPL guidance, paren repair, Lisa Loop sync) |
+| forj-opencode | OpenCode plugin (same hooks, adapted for OpenCode's plugin API) |
+| forj-skill | Skills: `/clj-repl`, `/clj-init`, `/lisa-loop` |
 
 ## Prerequisites
 
@@ -140,36 +140,28 @@ Automatically routes code to the right REPL based on file type:
 - **Mobile** - Expo + ClojureScript (Reagent/Re-frame)
 - **Flutter** - ClojureDart + Flutter (experimental)
 
-#### /lisa-loop - REPL-Driven Autonomous Loops
-Autonomous development loops with REPL validation:
+#### /lisa-loop
+
+Breaks a task into checkpoints, then runs them in a loop — each iteration gets a fresh Claude instance with REPL access. Failed attempts are recorded in `LISA_SIGNS.md` so the next iteration doesn't repeat the same mistakes.
 
 ```bash
 /lisa-loop "Build a REST API for users" --max-iterations 20
 ```
 
-**How it works:**
-1. You describe the task, Claude proposes checkpoints for approval
-2. Creates `LISA_PLAN.edn` with checkpoints and dependency graph
-3. Orchestrator spawns fresh Claude instances for each checkpoint
-4. Each instance is instructed to use REPL-driven validation
-5. Learnings from failures persist in `LISA_SIGNS.md` across iterations
-6. Supports parallel execution for independent checkpoints
+You describe the task, approve the proposed checkpoints, and the orchestrator takes over. Independent checkpoints run in parallel. Each completed checkpoint auto-commits as a rollback point. Plans are EDN with a dependency graph, so checkpoints can express ordering constraints and acceptance criteria.
 
-**Features:**
-- **EDN plans** with checkpoint dependencies and acceptance criteria
-- **Parallel execution** - independent checkpoints run concurrently
-- **Agent Teams mode** - native [Claude Code Agent Teams](https://code.claude.com/docs/en/agent-teams) integration with hook-based validation
-- **Fresh context** per iteration (no context bloat)
-- **Signs system** - failures are recorded to prevent repeating mistakes
-- **Chrome/Playwright support** for UI checkpoints
-- **Auto-commit** - each completed checkpoint creates a git rollback point
+UI-heavy checkpoints can use Chrome/Playwright for validation instead of (or alongside) the REPL.
 
 **Agent Teams mode** (experimental):
+
 ```bash
 export FORJ_AGENT_TEAMS=1
 /lisa-loop "Build a REST API for users" --agent-teams
 ```
-Uses Claude Code's native Agent Teams — you become the team lead, teammates inherit forj's REPL tools. `TaskCompleted` hook auto-validates REPL gates, `TeammateIdle` hook redirects teammates to ready checkpoints. Requires `FORJ_AGENT_TEAMS=1` and `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` (add to `~/.claude/settings.json` under `env`). Falls back to parallel mode if unavailable.
+
+Uses [Claude Code Agent Teams](https://code.claude.com/docs/en/agent-teams) natively — you're the team lead, teammates inherit forj's REPL tools. The `TaskCompleted` hook validates REPL gates on completion, and `TeammateIdle` redirects idle teammates to the next ready checkpoint.
+
+Requires `FORJ_AGENT_TEAMS=1` and `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` (add to `~/.claude/settings.json` under `env`). Falls back to parallel mode if Agent Teams isn't available.
 
 ## Project Structure
 
