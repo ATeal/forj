@@ -1,14 +1,18 @@
 <p align="center">
-  <img src="forj-logo.png" alt="forj logo" width="400">
+  <picture>
+    <source srcset="assets/forj-logo-2x.webp" type="image/webp">
+    <img src="assets/forj-logo-2x.png" alt="forj — Forge your code in the REPL fire" width="600">
+  </picture>
 </p>
-
-<h1 align="center">forj</h1>
 
 <p align="center">
-  <em>Forge your code in the REPL fire. Iterate, shape, refine.</em>
+  Give your AI coding agent a Clojure REPL.<br>
+  MCP server with eval, reload, test, and scaffolding tools.
 </p>
 
-REPL-driven LLM development for Clojure. Provides seamless Claude Code integration with automatic project detection, REPL connectivity, and context injection.
+<p align="center">
+  Works with <a href="https://claude.ai/code">Claude Code</a>, <a href="https://opencode.ai">Open Code</a>, and any MCP-compatible client.
+</p>
 
 ## Status
 
