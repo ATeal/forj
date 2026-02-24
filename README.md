@@ -269,7 +269,7 @@ The OpenCode plugin provides equivalent functionality to Claude Code hooks:
 
 Built entirely in Babashka for fast startup (~10ms). Uses:
 - `clj-nrepl-eval` for nREPL communication
-- `edamame` for Clojure parsing with location metadata
+- `edamame` for Clojure parsing (line/column tracking for `eval_at`)
 - Path-based routing for multi-REPL projects
 
 ## License
