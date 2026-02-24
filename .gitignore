@@ -1,6 +1,6 @@
 # Clojure/Babashka
 .clj-kondo/
-.lsp/.cache/
+**/.lsp/.cache/
 .nrepl-port
 .cpcache/
 target/

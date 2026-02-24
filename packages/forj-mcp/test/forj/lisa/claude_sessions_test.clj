@@ -27,8 +27,8 @@
            (sessions/encode-project-path "/home/user/projects/foo"))))
 
   (testing "Handles paths with multiple levels"
-    (is (= "-home-user-Projects-github-forj"
-           (sessions/encode-project-path "/home/user/Projects/github/forj"))))
+    (is (= "-home-dev-Projects-github-my-project"
+           (sessions/encode-project-path "/home/dev/Projects/github/my-project"))))
 
   (testing "Handles single directory"
     (is (= "-tmp"

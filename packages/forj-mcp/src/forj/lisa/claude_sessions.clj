@@ -211,12 +211,12 @@
 
 (comment
   ;; Test path encoding
-  (encode-project-path "/home/user/Projects/github/forj")
-  ;; => "-home-user-Projects-github-forj"
+  (encode-project-path "/home/user/Projects/github/my-project")
+  ;; => "-home-user-Projects-github-my-project"
 
   ;; Get session log path
   (str (session-log-path "fdf605bc-e601-41c7-89be-0c24bfeebb04"))
-  ;; => "/home/user/.claude/projects/-home-user-Projects-github-forj/fdf605bc-e601-41c7-89be-0c24bfeebb04.jsonl"
+  ;; => "/home/user/.claude/projects/-home-user-Projects-github-my-project/fdf605bc-e601-41c7-89be-0c24bfeebb04.jsonl"
 
   ;; Read a session
   (def entries (read-session-jsonl

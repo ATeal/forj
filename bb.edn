@@ -114,16 +114,47 @@
 
   ;; Installation tasks
   install
-  {:doc "Install forj (MCP server, hooks, and skill). Use --agent-teams for experimental Agent Teams support."
-   :task (let [agent-teams? (some #{"--agent-teams"} *command-line-args*)]
-           (run 'install:mcp)
-           (run 'install:hooks)
-           (run 'install:skill)
-           (when agent-teams?
-             (run 'install:agent-teams))
-           (println (str "\n✓ forj installed"
+  {:doc "Install forj. Flags: --claude, --opencode, --agent-teams. No flags shows interactive menu."
+   :task (let [args (set *command-line-args*)
+              claude? (contains? args "--claude")
+              opencode? (contains? args "--opencode")
+              agent-teams? (contains? args "--agent-teams")
+              ;; Determine platform choice
+              choice (cond
+                       ;; Explicit flags - skip menu
+                       (and claude? opencode?) :both
+                       claude? :claude
+                       opencode? :opencode
+                       ;; No platform flag - show interactive menu
+                       :else (do
+                               (println "\n  forj - REPL-driven LLM development for Clojure\n")
+                               (println "  Select your platform:\n")
+                               (println "    [1] Claude Code (default)")
+                               (println "    [2] OpenCode")
+                               (println "    [3] Both")
+                               (print "\n  Choice [1]: ")
+                               (flush)
+                               (let [input (str/trim (or (read-line) ""))]
+                                 (case input
+                                   "" :claude
+                                   "1" :claude
+                                   "2" :opencode
+                                   "3" :both
+                                   (do (println "  Invalid choice, defaulting to Claude Code.")
+                                       :claude)))))]
+           ;; Dispatch based on choice
+           (when (#{:claude :both} choice)
+             (run 'install:mcp)
+             (run 'install:hooks)
+             (run 'install:skill)
+             (when agent-teams?
+               (run 'install:agent-teams)))
+           (when (#{:opencode :both} choice)
+             (run 'install:opencode))
+           (println (str "\n✓ forj installed for "
+                         (case choice :claude "Claude Code" :opencode "OpenCode" :both "Claude Code + OpenCode")
                          (when agent-teams? " (with Agent Teams)")
-                         "! Restart Claude Code to activate.")))}
+                         "! Restart your editor to activate.")))}
 
   install:mcp
   {:doc "Install MCP server config via claude CLI (user scope)"
@@ -244,11 +275,123 @@
                       (str (fs/path at-dir "SKILL.md")) {:replace-existing true})
              (println "✓ /lisa-agent-teams skill installed to" at-dir)))}
 
+  install:opencode
+  {:doc "Install forj for OpenCode (runs MCP, skills, and plugin tasks)"
+   :task (do
+           (run 'install:opencode:mcp)
+           (run 'install:opencode:skills)
+           (run 'install:opencode:hooks))}
+
+  install:opencode:mcp
+  {:doc "Install MCP server config into ~/.config/opencode/opencode.json"
+   :task (let [forj-path (System/getProperty "user.dir")
+               launcher (str forj-path "/bin/forj-mcp")
+               opencode-dir (str (fs/path (System/getProperty "user.home") ".config" "opencode"))
+               config-file (str (fs/path opencode-dir "opencode.json"))
+               existing (when (fs/exists? config-file)
+                          (json/parse-string (slurp config-file) true))
+               forj-mcp-entry {:type "local"
+                                :command [launcher]
+                                :enabled true}
+               new-config (-> (or existing {})
+                              (assoc-in [:mcp :forj] forj-mcp-entry))]
+           (fs/create-dirs opencode-dir)
+           (spit config-file (json/generate-string new-config {:pretty true}))
+           (println "✓ MCP server 'forj' installed to" config-file))}
+
+  install:opencode:skills
+  {:doc "Install forj skills to ~/.config/opencode/skills/"
+   :task (let [forj-path (System/getProperty "user.dir")
+               skills-base (str (fs/path (System/getProperty "user.home") ".config" "opencode" "skills"))
+               ;; Install clj-repl skill
+               clj-repl-dir (str (fs/path skills-base "clj-repl"))
+               clj-repl-source (str (fs/path forj-path "packages" "forj-skill" "SKILL.md"))
+               _ (fs/create-dirs clj-repl-dir)
+               _ (fs/copy clj-repl-source (str (fs/path clj-repl-dir "SKILL.md")) {:replace-existing true})
+               _ (println "✓ /clj-repl skill installed to" clj-repl-dir)
+               ;; Install clj-init skill (SKILL.md + modules + versions.edn + templates)
+               clj-init-dir (str (fs/path skills-base "clj-init"))
+               clj-init-source (str (fs/path forj-path "packages" "forj-skill" "clj-init"))
+               _ (fs/create-dirs clj-init-dir)
+               ;; Prefer SKILL.opencode.md for OpenCode, fall back to SKILL.md
+               clj-init-skill (let [oc (str (fs/path clj-init-source "SKILL.opencode.md"))]
+                                (if (fs/exists? oc) oc (str (fs/path clj-init-source "SKILL.md"))))
+               _ (fs/copy clj-init-skill
+                          (str (fs/path clj-init-dir "SKILL.md")) {:replace-existing true})
+               ;; Copy modules directory
+               modules-source (str (fs/path clj-init-source "modules"))
+               modules-dest (str (fs/path clj-init-dir "modules"))
+               _ (when (fs/exists? modules-dest)
+                   (fs/delete-tree modules-dest))
+               _ (fs/copy-tree modules-source modules-dest)
+               ;; Copy versions.edn
+               _ (fs/copy (str (fs/path clj-init-source "versions.edn"))
+                          (str (fs/path clj-init-dir "versions.edn")) {:replace-existing true})
+               ;; Copy templates directory (legacy, may remove later)
+               templates-source (str (fs/path clj-init-source "templates"))
+               templates-dest (str (fs/path clj-init-dir "templates"))
+               _ (when (fs/exists? templates-dest)
+                   (fs/delete-tree templates-dest))
+               _ (when (fs/exists? templates-source)
+                   (fs/copy-tree templates-source templates-dest))
+               _ (println "✓ /clj-init skill installed to" clj-init-dir)
+               ;; Install lisa-loop skill
+               lisa-loop-dir (str (fs/path skills-base "lisa-loop"))
+               lisa-loop-source (str (fs/path forj-path "packages" "forj-skill" "lisa-loop"))
+               ;; Prefer SKILL.opencode.md for OpenCode, fall back to SKILL.md
+               lisa-loop-skill (let [oc (str (fs/path lisa-loop-source "SKILL.opencode.md"))]
+                                 (if (fs/exists? oc) oc (str (fs/path lisa-loop-source "SKILL.md"))))]
+           (fs/create-dirs lisa-loop-dir)
+           (fs/copy lisa-loop-skill
+                    (str (fs/path lisa-loop-dir "SKILL.md")) {:replace-existing true})
+           (println "✓ /lisa-loop skill installed to" lisa-loop-dir))}
+
+  install:opencode:hooks
+  {:doc "Install OpenCode plugin (hooks) to ~/.opencode/plugins/"
+   :task (let [forj-path (System/getProperty "user.dir")
+               home (System/getProperty "user.home")
+               plugins-dir (str (fs/path home ".opencode" "plugins"))
+               plugin-source (str (fs/path forj-path "packages" "forj-opencode" "plugin.js"))
+               link-path (str (fs/path plugins-dir "forj.js"))]
+           ;; OpenCode scans ~/.opencode/plugins/*.{ts,js} for local plugins
+           ;; (NOT ~/.config/opencode/plugins/ - that dir is not scanned)
+           (fs/create-dirs plugins-dir)
+           (fs/delete-if-exists link-path)
+           ;; Clean up old locations
+           (doseq [old [(str (fs/path home ".config" "opencode" "plugins" "forj"))
+                        (str (fs/path home ".config" "opencode" "plugins" "forj.js"))]]
+             (when (fs/exists? old)
+               (if (fs/directory? old)
+                 (fs/delete-tree old)
+                 (fs/delete-if-exists old))
+               (println "✓ Removed old plugin at" old)))
+           (fs/create-sym-link link-path plugin-source)
+           (println "✓ Plugin symlinked to" link-path))}
+
   check-versions
   {:doc "Check template dependency versions against latest available"
    :task (shell "bb" "-f" "scripts/check_versions.clj")}
 
   uninstall
+  {:doc "Remove forj from all platforms. Flags: --claude, --opencode. No flags removes both."
+   :task (let [args (set *command-line-args*)
+               claude? (contains? args "--claude")
+               opencode? (contains? args "--opencode")
+               ;; If no flags, uninstall both
+               do-claude? (or claude? (and (not claude?) (not opencode?)))
+               do-opencode? (or opencode? (and (not claude?) (not opencode?)))]
+           (when do-claude?
+             (run 'uninstall:claude))
+           (when do-opencode?
+             (run 'uninstall:opencode))
+           (println (str "\n✓ forj uninstalled"
+                         (cond
+                           (and do-claude? do-opencode?) " from Claude Code + OpenCode."
+                           do-claude? " from Claude Code."
+                           do-opencode? " from OpenCode.")
+                         " Restart your editor to complete.")))}
+
+  uninstall:claude
   {:doc "Remove forj from Claude Code config"
    :task (let [claude-dir (str (fs/path (System/getProperty "user.home") ".claude"))
                settings-file (str (fs/path claude-dir "settings.json"))
@@ -257,7 +400,7 @@
            ;; Remove MCP server via claude CLI
            (let [result (shell {:continue true} "claude" "mcp" "remove" "forj" "--scope" "user")]
              (if (zero? (:exit result))
-               (println "✓ Removed forj MCP server")
+               (println "✓ Removed forj MCP server from Claude Code")
                (println "⚠ forj MCP server not found or already removed")))
            ;; Remove hooks and agent-teams env vars
            (when (fs/exists? settings-file)
@@ -272,5 +415,37 @@
              (let [dir (str (fs/path skills-dir name))]
                (when (fs/exists? dir)
                  (fs/delete-tree dir)
-                 (println (str "✓ Removed /" name " skill")))))
-           (println "\n✓ forj uninstalled. Restart Claude Code to complete."))}}}
+                 (println (str "✓ Removed /" name " skill from Claude Code"))))))}
+
+  uninstall:opencode
+  {:doc "Remove forj from OpenCode config"
+   :task (let [home (System/getProperty "user.home")
+               opencode-dir (str (fs/path home ".config" "opencode"))
+               config-file (str (fs/path opencode-dir "opencode.json"))
+               skills-dir (str (fs/path opencode-dir "skills"))
+               skill-names ["clj-repl" "clj-init" "lisa-loop"]]
+           ;; Remove forj MCP entry from opencode.json
+           (when (fs/exists? config-file)
+             (let [config (json/parse-string (slurp config-file) true)
+                   new-config (update config :mcp dissoc :forj)]
+               (spit config-file (json/generate-string new-config {:pretty true}))
+               (println "✓ Removed forj MCP entry from" config-file)))
+           ;; Remove skills
+           (doseq [name skill-names]
+             (let [dir (str (fs/path skills-dir name))]
+               (when (fs/exists? dir)
+                 (fs/delete-tree dir)
+                 (println (str "✓ Removed /" name " skill from OpenCode")))))
+           ;; Remove plugin symlink from ~/.opencode/plugins/
+           (let [link-path (str (fs/path home ".opencode" "plugins" "forj.js"))]
+             (when (fs/exists? link-path)
+               (fs/delete-if-exists link-path)
+               (println "✓ Removed forj plugin from" link-path)))
+           ;; Clean up old locations
+           (doseq [old [(str (fs/path opencode-dir "plugins" "forj"))
+                        (str (fs/path opencode-dir "plugins" "forj.js"))]]
+             (when (fs/exists? old)
+               (if (fs/directory? old)
+                 (fs/delete-tree old)
+                 (fs/delete-if-exists old))
+               (println "✓ Removed old plugin at" old))))}}}

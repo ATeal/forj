@@ -1,0 +1,11 @@
+{
+  "_comment": "forj OpenCode configuration - copy to ~/.config/opencode/opencode.json",
+
+  "mcp": {
+    "forj": {
+      "type": "local",
+      "command": ["FORJ_PATH/bin/forj-mcp"],
+      "enabled": true
+    }
+  }
+}
