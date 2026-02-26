@@ -10,6 +10,7 @@
             [forj.lisa.claude-sessions :as claude-sessions]
             [forj.lisa.plan-edn :as plan-edn]
             [forj.lisa.platform :as platform]
+            [forj.lisa.sessions :as sessions]
             [forj.lisa.validation :as lisa-validation]
             [forj.scaffold :as scaffold]))
 
@@ -342,7 +343,33 @@
     :description "Convert LISA_PLAN.edn checkpoints into Agent Teams task descriptions. Returns structured task data for use with TaskCreate when setting up an Agent Team. Each task includes subject, description with REPL validation workflow, and dependency info."
     :inputSchema {:type "object"
                   :properties {:path {:type "string"
-                                      :description "Project path (defaults to current directory)"}}}}])
+                                      :description "Project path (defaults to current directory)"}}}}
+
+   ;; Session introspection tools
+   {:name "list_sessions"
+    :description "List recent AI coding sessions from Claude CLI and/or OpenCode. Returns unified session data sorted by most recently updated."
+    :inputSchema {:type "object"
+                  :properties {:project {:type "string"
+                                         :description "Filter by project directory substring (case-insensitive)"}
+                               :since {:type "string"
+                                       :description "ISO-8601 date string (e.g., '2026-02-25T00:00:00Z'). Only sessions updated after this time."}
+                               :client {:type "string"
+                                        :enum ["claude-cli" "opencode"]
+                                        :description "Filter by client type. Omit for both."}
+                               :limit {:type "integer"
+                                       :description "Max results to return (default: 20)"}}}}
+
+   {:name "session_summary"
+    :description "Get a detailed summary of a specific AI coding session. Returns tool usage counts, turn count, duration, cost, and model info."
+    :inputSchema {:type "object"
+                  :properties {:id {:type "string"
+                                    :description "Session ID (e.g., UUID for Claude CLI, 'ses_...' for OpenCode)"}
+                               :source {:type "string"
+                                        :enum ["claude-cli" "opencode"]
+                                        :description "Which client the session belongs to"}
+                               :directory {:type "string"
+                                           :description "Project directory (optional, used for Claude CLI sessions to locate log files)"}}
+                  :required ["id" "source"]}}])
 
 ;; =============================================================================
 ;; Input Validation
@@ -2135,6 +2162,50 @@
        :error (str "Failed to get iteration transcript: " (.getMessage e))})))
 
 ;; =============================================================================
+;; Session Introspection Handlers
+;; =============================================================================
+
+(defn list-sessions-handler
+  "Handler for list_sessions tool. Lists recent sessions from Claude CLI and/or OpenCode."
+  [{:keys [project since client limit]}]
+  (try
+    (let [since-ms (when since
+                     (try
+                       (.toEpochMilli (java.time.Instant/parse since))
+                       (catch Exception _
+                         (throw (ex-info (str "Invalid ISO-8601 date: " since) {:since since})))))
+          client-kw (when client (keyword client))
+          opts (cond-> {}
+                 since-ms    (assoc :since since-ms)
+                 project     (assoc :project project)
+                 client-kw   (assoc :client client-kw)
+                 limit       (assoc :limit limit))
+          results (sessions/list-recent-sessions opts)]
+      {:success true
+       :count (count results)
+       :sessions results})
+    (catch Exception e
+      {:success false
+       :error (str "Failed to list sessions: " (.getMessage e))})))
+
+(defn session-summary-handler
+  "Handler for session_summary tool. Gets detailed summary for a specific session."
+  [{:keys [id source directory]}]
+  (try
+    (when-not id
+      (throw (ex-info "Missing required parameter: id" {})))
+    (when-not source
+      (throw (ex-info "Missing required parameter: source" {})))
+    (let [source-kw (keyword source)
+          summary (sessions/session-summary
+                    (cond-> {:id id :source source-kw}
+                      directory (assoc :directory directory)))]
+      (assoc summary :success true))
+    (catch Exception e
+      {:success false
+       :error (str "Failed to get session summary: " (.getMessage e))})))
+
+;; =============================================================================
 ;; Tool Dispatch
 ;; =============================================================================
 
@@ -2193,7 +2264,10 @@
    ;; Monitoring
    "lisa_watch" lisa-watch
    "lisa_inspect_iteration" lisa-inspect-iteration
-   "lisa_get_iteration_transcript" lisa-get-iteration-transcript})
+   "lisa_get_iteration_transcript" lisa-get-iteration-transcript
+   ;; Session introspection
+   "list_sessions"    list-sessions-handler
+   "session_summary"  session-summary-handler})
 
 (defn call-tool
   "Dispatch tool call to appropriate handler."
