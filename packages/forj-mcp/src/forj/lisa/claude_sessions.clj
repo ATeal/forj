@@ -2,7 +2,8 @@
   "Read and parse Claude Code session logs from ~/.claude/projects/."
   (:require [babashka.fs :as fs]
             [cheshire.core :as json]
-            [clojure.string :as str]))
+            [clojure.string :as str])
+  (:import [java.time Instant]))
 
 (defn claude-projects-dir
   "Return the path to Claude's projects directory.
@@ -209,6 +210,77 @@
         :exists? false
         :path (str path)}))))
 
+(defn decode-project-path
+  "Best-effort decode of a Claude project directory name back to a filesystem path.
+   Reverses encode-project-path by replacing leading - with / and remaining - with /.
+   Note: lossy for paths that originally contained hyphens."
+  [encoded]
+  (when encoded
+    (-> (str encoded)
+        (str/replace-first #"^-" "/")
+        (str/replace "-" "/"))))
+
+(defn- parse-first-timestamp
+  "Read up to n lines from a JSONL file and return the first timestamp found."
+  [path n]
+  (try
+    (with-open [rdr (clojure.java.io/reader (str path))]
+      (->> (line-seq rdr)
+           (take n)
+           (keep (fn [line]
+                   (try
+                     (let [parsed (json/parse-string line true)]
+                       (:timestamp parsed))
+                     (catch Exception _ nil))))
+           first))
+    (catch Exception _ nil)))
+
+(defn- iso->epoch-ms
+  "Convert an ISO-8601 timestamp string to epoch milliseconds."
+  [s]
+  (when s
+    (try
+      (.toEpochMilli (Instant/parse s))
+      (catch Exception _ nil))))
+
+(defn list-sessions
+  "Scan ~/.claude/projects/ for session JSONL files.
+   Returns a vec of session maps sorted by :updated desc.
+
+   Each map contains:
+   - :id - session UUID (filename without .jsonl)
+   - :directory - encoded project directory name
+   - :project-path - best-effort decoded filesystem path
+   - :created - epoch ms from first timestamp in file (or file mtime)
+   - :updated - epoch ms from file last-modified time
+   - :size-bytes - file size in bytes"
+  []
+  (let [projects-dir (claude-projects-dir)]
+    (when (fs/exists? projects-dir)
+      (->> (fs/list-dir projects-dir)
+           (filter fs/directory?)
+           (mapcat (fn [project-dir]
+                     (let [dir-name (str (fs/file-name project-dir))]
+                       (->> (fs/glob project-dir "*.jsonl")
+                            ;; Skip files inside subagents/ subdirectories
+                            (remove (fn [f]
+                                      (let [rel (str (fs/relativize project-dir f))]
+                                        (str/starts-with? rel "subagents/"))))
+                            (map (fn [f]
+                                   (let [fname (str (fs/file-name f))
+                                         session-id (str/replace fname #"\.jsonl$" "")
+                                         mtime-ms (.toMillis (fs/last-modified-time f))
+                                         created-ts (parse-first-timestamp f 10)
+                                         created-ms (or (iso->epoch-ms created-ts) mtime-ms)]
+                                     {:id session-id
+                                      :directory dir-name
+                                      :project-path (decode-project-path dir-name)
+                                      :created created-ms
+                                      :updated mtime-ms
+                                      :size-bytes (fs/size f)})))))))
+           (sort-by :updated >)
+           vec))))
+
 (comment
   ;; Test path encoding
   (encode-project-path "/home/user/Projects/github/my-project")
@@ -232,4 +304,19 @@
 
   ;; Full summary
   (session-tool-summary "fdf605bc-e601-41c7-89be-0c24bfeebb04")
+
+  ;; Decode project path
+  (decode-project-path "-home-arteal-Projects-github-forj")
+  ;; => "/home/arteal/Projects/github/forj"
+
+  ;; List all sessions
+  (let [sessions (list-sessions)]
+    {:count (count sessions)
+     :first (first sessions)
+     :last (last sessions)})
+
+  ;; Check sessions are sorted by updated desc
+  (let [sessions (list-sessions)]
+    (= (map :updated sessions)
+       (reverse (sort (map :updated sessions)))))
   )
