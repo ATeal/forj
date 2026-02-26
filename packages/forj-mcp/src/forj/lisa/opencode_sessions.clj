@@ -1,7 +1,8 @@
 (ns forj.lisa.opencode-sessions
   "Read OpenCode session data from its SQLite database."
   (:require [babashka.fs :as fs]
-            [babashka.pods :as pods]))
+            [babashka.pods :as pods]
+            [cheshire.core :as json]))
 
 ;; Load SQLite pod
 (pods/load-pod 'org.babashka/go-sqlite3 "0.2.3")
@@ -43,6 +44,28 @@
                 JOIN project p ON s.project_id = p.id
                 ORDER BY s.time_updated DESC")))
 
+(defn- parse-message
+  "Parse a raw message row, extracting fields from the JSON data column."
+  [row]
+  (let [data (json/parse-string (:data row) true)]
+    {:role    (:role data)
+     :model   (:modelID data)
+     :tokens  (:tokens data)
+     :cost    (:cost data)
+     :created (:time_created row)
+     :updated (:time_updated row)}))
+
+(defn session-messages
+  "Return messages for a session, ordered by time_created.
+   Each message is a map with :role :model :tokens :cost :created :updated."
+  [session-id]
+  (mapv parse-message
+        (query "SELECT time_created, time_updated, data
+                FROM message
+                WHERE session_id = ?
+                ORDER BY time_created"
+               session-id)))
+
 (comment
   ;; Check DB exists
   (db-path)
@@ -57,4 +80,15 @@
 
   ;; Count sessions
   (count (list-sessions))
+
+  ;; Get messages for a session
+  (def sid (:id (first (list-sessions))))
+  (session-messages sid)
+
+  ;; Check message keys
+  (keys (first (session-messages sid)))
+  ;; => (:role :model :tokens :cost :created :updated)
+
+  ;; Count messages
+  (count (session-messages sid))
   )
