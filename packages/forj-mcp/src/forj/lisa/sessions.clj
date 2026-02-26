@@ -94,6 +94,7 @@
                             :model)]
         {:id          id
          :source      :claude-cli
+         :exists?     true
          :tool-counts (claude/tool-call-counts tool-calls)
          :total-calls (count tool-calls)
          :turn-count  (count transcript)
@@ -122,6 +123,7 @@
                              :model)]
         {:id          id
          :source      :opencode
+         :exists?     true
          :tool-counts (:tool-counts summary)
          :total-calls (:total-calls summary)
          :turn-count  (:turn-count summary)
