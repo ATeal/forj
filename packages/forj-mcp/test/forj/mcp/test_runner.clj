@@ -5,6 +5,7 @@
             [forj.lisa.analytics-test]
             [forj.lisa.agent-teams-test]
             [forj.lisa.claude-sessions-test]
+            [forj.lisa.sessions-test]
             [forj.lisa.plan-edn-test]
             [forj.lisa.validation-test]
             [forj.scaffold-test]))
@@ -14,6 +15,7 @@
                             'forj.lisa.analytics-test
                             'forj.lisa.agent-teams-test
                             'forj.lisa.claude-sessions-test
+                            'forj.lisa.sessions-test
                             'forj.lisa.plan-edn-test
                             'forj.lisa.validation-test
                             'forj.scaffold-test)]

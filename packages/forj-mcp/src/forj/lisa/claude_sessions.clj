@@ -2,7 +2,8 @@
   "Read and parse Claude Code session logs from ~/.claude/projects/."
   (:require [babashka.fs :as fs]
             [cheshire.core :as json]
-            [clojure.string :as str]))
+            [clojure.string :as str])
+  (:import [java.time Instant]))
 
 (defn claude-projects-dir
   "Return the path to Claude's projects directory.
@@ -209,6 +210,151 @@
         :exists? false
         :path (str path)}))))
 
+(defn- try-decode-path
+  "Greedily decode an encoded project path by checking the filesystem.
+   At each hyphen boundary, checks if the path so far is a directory.
+   If yes, treats the hyphen as a /. If no, treats it as a literal hyphen."
+  [segments]
+  (when (seq segments)
+    (loop [built ""
+           current (first segments)
+           remaining (rest segments)]
+      (if (empty? remaining)
+        (str built "/" current)
+        (let [candidate (str built "/" current)]
+          (if (fs/directory? candidate)
+            (recur candidate (first remaining) (rest remaining))
+            (recur built (str current "-" (first remaining)) (rest remaining))))))))
+
+(defn- naive-decode-path
+  "Simple decode: replace all hyphens with slashes."
+  [encoded]
+  (-> (str encoded)
+      (str/replace-first #"^-" "/")
+      (str/replace "-" "/")))
+
+(defn decode-project-path
+  "Best-effort decode of a Claude project directory name back to a filesystem path.
+   Uses filesystem checks to disambiguate hyphens that were originally slashes
+   from those that are part of directory/project names (e.g., my-project).
+   Falls back to naive decode when the smart result doesn't exist on disk."
+  [encoded]
+  (when encoded
+    (let [segments (-> (str encoded)
+                       (str/replace-first #"^-" "")
+                       (str/split #"-"))
+          smart (try-decode-path segments)
+          naive (naive-decode-path encoded)]
+      (cond
+        (fs/exists? smart) smart
+        (fs/exists? naive) naive
+        :else smart))))
+
+(defn- parse-first-lines
+  "Read up to n lines from a JSONL file, parse each as JSON.
+   Returns a seq of parsed maps (nils filtered out)."
+  [path n]
+  (try
+    (with-open [rdr (clojure.java.io/reader (str path))]
+      (->> (line-seq rdr)
+           (take n)
+           (keep (fn [line]
+                   (try
+                     (json/parse-string line true)
+                     (catch Exception _ nil))))
+           vec))
+    (catch Exception _ [])))
+
+(defn- parse-first-timestamp
+  "Read up to n lines from a JSONL file and return the first timestamp found."
+  [path n]
+  (->> (parse-first-lines path n)
+       (keep :timestamp)
+       first))
+
+(defn- extract-user-title
+  "Extract a title from the first user message in pre-parsed JSONL entries.
+   Finds the first entry with :type \"user\" and returns a truncated version
+   (max 80 chars) of the message content."
+  [entries]
+  (some->> entries
+           (filter #(= "user" (:type %)))
+           first
+           :message
+           :content
+           ((fn [content]
+              (cond
+                (string? content) content
+                (sequential? content)
+                (->> content
+                     (filter #(= "text" (:type %)))
+                     (map :text)
+                     (str/join " "))
+                :else nil)))
+           ((fn [text]
+              (when (and text (seq text))
+                (let [clean (-> text str/trim (str/replace #"\s+" " "))]
+                  (if (> (count clean) 80)
+                    (str (subs clean 0 77) "...")
+                    clean)))))))
+
+(defn- iso->epoch-ms
+  "Convert an ISO-8601 timestamp string to epoch milliseconds."
+  [s]
+  (when s
+    (try
+      (.toEpochMilli (Instant/parse s))
+      (catch Exception _ nil))))
+
+(defn derive-title
+  "Derive a title for a Claude CLI session by reading the first user message.
+   Takes a session map (from list-sessions) with :id and :project-path.
+   Returns the title string, or nil if unavailable."
+  [{:keys [id project-path]}]
+  (let [path (session-log-path id (or project-path (System/getProperty "user.dir")))
+        entries (parse-first-lines path 20)]
+    (extract-user-title entries)))
+
+(defn list-sessions
+  "Scan ~/.claude/projects/ for session JSONL files.
+   Returns a vec of session maps sorted by :updated desc.
+   Uses only filesystem metadata for speed (no file content reading).
+
+   Each map contains:
+   - :id - session UUID (filename without .jsonl)
+   - :directory - encoded project directory name
+   - :project-path - best-effort decoded filesystem path
+   - :title - nil (use session-details for title derivation)
+   - :created - epoch ms from file creation time
+   - :updated - epoch ms from file last-modified time
+   - :size-bytes - file size in bytes"
+  []
+  (let [projects-dir (claude-projects-dir)]
+    (when (fs/exists? projects-dir)
+      (->> (fs/list-dir projects-dir)
+           (filter fs/directory?)
+           (mapcat (fn [project-dir]
+                     (let [dir-name (str (fs/file-name project-dir))]
+                       (->> (fs/glob project-dir "*.jsonl")
+                            ;; Skip files inside subagents/ subdirectories
+                            (remove (fn [f]
+                                      (let [rel (str (fs/relativize project-dir f))]
+                                        (str/starts-with? rel "subagents/"))))
+                            (map (fn [f]
+                                   (let [fname (str (fs/file-name f))
+                                         session-id (str/replace fname #"\.jsonl$" "")
+                                         ctime-ms (.toMillis (fs/creation-time f))
+                                         mtime-ms (.toMillis (fs/last-modified-time f))]
+                                     {:id session-id
+                                      :directory dir-name
+                                      :project-path (decode-project-path dir-name)
+                                      :title nil
+                                      :created ctime-ms
+                                      :updated mtime-ms
+                                      :size-bytes (fs/size f)})))))))
+           (sort-by :updated >)
+           vec))))
+
 (comment
   ;; Test path encoding
   (encode-project-path "/home/user/Projects/github/my-project")
@@ -216,7 +362,6 @@
 
   ;; Get session log path
   (str (session-log-path "fdf605bc-e601-41c7-89be-0c24bfeebb04"))
-  ;; => "/home/user/.claude/projects/-home-user-Projects-github-my-project/fdf605bc-e601-41c7-89be-0c24bfeebb04.jsonl"
 
   ;; Read a session
   (def entries (read-session-jsonl
@@ -232,4 +377,34 @@
 
   ;; Full summary
   (session-tool-summary "fdf605bc-e601-41c7-89be-0c24bfeebb04")
-  )
+
+  ;; Decode project path - should preserve hyphens in project name
+  (decode-project-path "-home-arteal-Projects-github-forj")
+  ;; => "/home/arteal/Projects/github/forj"
+
+  ;; Smart decode - project with hyphens in name
+  (decode-project-path "-home-arteal-Projects-github-my-project")
+  ;; => "/home/arteal/Projects/github/my-project" (if exists on disk)
+
+  ;; List all sessions (fast - filesystem metadata only, no file reads)
+  (time (let [sessions (list-sessions)]
+          {:count (count sessions)
+           :first (first sessions)
+           :last (last sessions)}))
+
+  ;; Check sessions are sorted by updated desc
+  (let [sessions (list-sessions)]
+    (= (map :updated sessions)
+       (reverse (sort (map :updated sessions)))))
+
+  ;; Verify project paths with hyphens decode correctly
+  (->> (list-sessions)
+       (map :project-path)
+       distinct
+       sort)
+
+  ;; Derive title on-demand via parse-first-lines + extract-user-title
+  (let [session (first (list-sessions))
+        path (session-log-path (:id session) (:project-path session))
+        lines (parse-first-lines path 10)]
+    (extract-user-title lines)))
