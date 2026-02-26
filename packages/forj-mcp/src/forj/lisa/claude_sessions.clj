@@ -242,31 +242,31 @@
        (keep :timestamp)
        first))
 
-(defn- parse-first-user-title
-  "Extract a title from the first user message in a JSONL file.
-   Reads up to n lines, finds the first entry with :type \"user\",
-   and returns a truncated version (max 80 chars) of the message content."
-  [path n]
-  (->> (parse-first-lines path n)
-       (filter #(= "user" (:type %)))
-       first
-       :message
-       :content
-       ((fn [content]
-          (cond
-            (string? content) content
-            (sequential? content)
-            (->> content
-                 (filter #(= "text" (:type %)))
-                 (map :text)
-                 (str/join " "))
-            :else nil)))
-       ((fn [text]
-          (when (and text (seq text))
-            (let [clean (-> text str/trim (str/replace #"\s+" " "))]
-              (if (> (count clean) 80)
-                (str (subs clean 0 77) "...")
-                clean)))))))
+(defn- extract-user-title
+  "Extract a title from the first user message in pre-parsed JSONL entries.
+   Finds the first entry with :type \"user\" and returns a truncated version
+   (max 80 chars) of the message content."
+  [entries]
+  (some->> entries
+           (filter #(= "user" (:type %)))
+           first
+           :message
+           :content
+           ((fn [content]
+              (cond
+                (string? content) content
+                (sequential? content)
+                (->> content
+                     (filter #(= "text" (:type %)))
+                     (map :text)
+                     (str/join " "))
+                :else nil)))
+           ((fn [text]
+              (when (and text (seq text))
+                (let [clean (-> text str/trim (str/replace #"\s+" " "))]
+                  (if (> (count clean) 80)
+                    (str (subs clean 0 77) "...")
+                    clean)))))))
 
 (defn- iso->epoch-ms
   "Convert an ISO-8601 timestamp string to epoch milliseconds."
@@ -284,6 +284,7 @@
    - :id - session UUID (filename without .jsonl)
    - :directory - encoded project directory name
    - :project-path - best-effort decoded filesystem path
+   - :title - truncated first user message (max 80 chars), or nil
    - :created - epoch ms from first timestamp in file (or file mtime)
    - :updated - epoch ms from file last-modified time
    - :size-bytes - file size in bytes"
@@ -306,7 +307,7 @@
                                          first-lines (parse-first-lines f 10)
                                          created-ts (->> first-lines (keep :timestamp) first)
                                          created-ms (or (iso->epoch-ms created-ts) mtime-ms)
-                                         title (parse-first-user-title f 10)]
+                                         title (extract-user-title first-lines)]
                                      {:id session-id
                                       :directory dir-name
                                       :project-path (decode-project-path dir-name)
