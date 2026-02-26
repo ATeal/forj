@@ -75,72 +75,125 @@
           ["ui" "view" "screen" "page" "component" "display" "show" "render"
            "mobile" "web" "frontend" "button" "form" "list" "card"])))
 
-(defn- build-iteration-prompt
-  "Build the prompt for a single iteration focused on the current checkpoint."
-  [config plan checkpoint signs-content]
+(defn- build-review-prompt
+  "Build the prompt for a review checkpoint that must extend the plan."
+  [plan checkpoint signs-content]
   (let [plan-title (:title plan)
         cp-id (:id checkpoint)
         cp-desc (:description checkpoint)
-        cp-file (:file checkpoint)
-        cp-acceptance (:acceptance checkpoint)
-        cp-validation (:validation checkpoint)
-        cp-gates (:gates checkpoint)
         cp-deps (:depends-on checkpoint)
-        is-ui? (ui-checkpoint? cp-desc)]
+        completed-summary (plan-edn/generate-completed-summary plan)]
     (str/join "\n\n"
               (filter some?
                       [(str "# Lisa Loop: " plan-title)
                        ""
-                       "You are working on a focused checkpoint. Complete this ONE task, then exit."
+                       "You are working on a REVIEW checkpoint. Your job is to evaluate progress and extend the plan."
                        ""
+                       (when completed-summary
+                         (str "## Completed Work\n\n" completed-summary))
                        (str "## Current Checkpoint: " cp-id)
                        (str "**Task:** " cp-desc)
-                       (when cp-file (str "**File:** " cp-file))
-                       (when cp-acceptance (str "**Acceptance Criteria:** " cp-acceptance))
-                       (when (seq cp-gates) (str "**Gates:** " (str/join " | " cp-gates)))
                        (when (seq cp-deps) (str "**Depends on:** " (str/join ", " (map name cp-deps))))
-                       (when cp-validation (str "**Validation:** " cp-validation))
                        ""
-                       "## REQUIRED Workflow - DO NOT SKIP"
+                       "## REQUIRED Workflow - REVIEW CHECKPOINT"
                        ""
-                       "**CRITICAL**: You MUST follow this REPL-driven workflow. Skipping steps wastes iterations."
+                       "This is a REVIEW checkpoint. Your job is to evaluate progress and extend the plan."
+                       "You MUST add new checkpoints — just writing review text is NOT sufficient."
                        ""
                        "### Step 1: Understand Current State"
-                       "- Read LISA_PLAN.edn to understand the full context"
-                       "- Use `repl_eval` to query current REPL state if needed"
-                       "- Read relevant source files to understand existing code"
+                       "- Review the completed work summary above"
+                       "- Read relevant source files to assess quality"
+                       "- Use `repl_eval` to verify behavior if applicable"
                        ""
-                       "### Step 2: Implement Changes"
-                       "- Write code using Edit/Write tools"
-                       (when cp-file (str "- Primary file: " cp-file))
+                       "### Step 2: Evaluate and Identify Gaps"
+                       "- What's working well?"
+                       "- What's missing, broken, or could be improved?"
+                       "- What new tasks are needed?"
                        ""
-                       "### Step 3: REPL Validation - DO NOT SKIP"
-                       "**After writing code, you MUST validate via REPL before marking complete:**"
+                       "### Step 3: Extend the Plan (REQUIRED)"
+                       "You MUST call `lisa_add_checkpoint` at least once to add new tasks."
+                       "Each checkpoint should have a clear description and acceptance criteria."
                        ""
-                       "1. `reload_namespace` - Reload changed namespaces to pick up your edits"
-                       "2. `eval_comment_block` - Run examples in (comment ...) blocks to verify behavior"
-                       "3. `repl_eval` - Test specific expressions to confirm correctness"
-                       ""
-                       "**DO NOT** mark checkpoint complete based only on:"
-                       "- Reading the code and thinking it looks right"
-                       "- Running tests without REPL validation first"
-                       "- Assumptions about what the code does"
-                       ""
-                       "**DO** verify by actually evaluating code in the REPL."
-                       (when is-ui?
-                         (platform/browser-tools-prompt config))
-                       ""
-                       (str "### Step " (if is-ui? "5" "4") ": Mark Complete")
-                       (str "When acceptance criteria are verified via REPL" (when is-ui? " and screenshot") ":")
-                       (str "- Use `lisa_mark_checkpoint_done` tool with checkpoint '" (name cp-id) "'")
+                       "### Step 4: Mark Complete"
+                       "After adding new checkpoints:"
+                       (str "- Use `lisa_mark_checkpoint_done` with checkpoint '" (name cp-id) "'")
                        "- Output 'CHECKPOINT_COMPLETE'"
                        ""
-                       "If blocked, output 'CHECKPOINT_BLOCKED: <reason>' with specific details."
+                       "DO NOT mark complete without adding checkpoints. The orchestrator will reject it."
                        ""
                        (when (seq signs-content)
                          (str "## Previous Learnings (Signs)\n\n" signs-content))
                        ""
-                       "Focus ONLY on this checkpoint. Do not work ahead."]))))
+                       "Focus ONLY on this review checkpoint."]))))
+
+(defn- build-iteration-prompt
+  "Build the prompt for a single iteration focused on the current checkpoint."
+  [config plan checkpoint signs-content]
+  (if (plan-edn/review-checkpoint? checkpoint)
+    (build-review-prompt plan checkpoint signs-content)
+    (let [plan-title (:title plan)
+          cp-id (:id checkpoint)
+          cp-desc (:description checkpoint)
+          cp-file (:file checkpoint)
+          cp-acceptance (:acceptance checkpoint)
+          cp-validation (:validation checkpoint)
+          cp-gates (:gates checkpoint)
+          cp-deps (:depends-on checkpoint)
+          is-ui? (ui-checkpoint? cp-desc)]
+      (str/join "\n\n"
+                (filter some?
+                        [(str "# Lisa Loop: " plan-title)
+                         ""
+                         "You are working on a focused checkpoint. Complete this ONE task, then exit."
+                         ""
+                         (str "## Current Checkpoint: " cp-id)
+                         (str "**Task:** " cp-desc)
+                         (when cp-file (str "**File:** " cp-file))
+                         (when cp-acceptance (str "**Acceptance Criteria:** " cp-acceptance))
+                         (when (seq cp-gates) (str "**Gates:** " (str/join " | " cp-gates)))
+                         (when (seq cp-deps) (str "**Depends on:** " (str/join ", " (map name cp-deps))))
+                         (when cp-validation (str "**Validation:** " cp-validation))
+                         ""
+                         "## REQUIRED Workflow - DO NOT SKIP"
+                         ""
+                         "**CRITICAL**: You MUST follow this REPL-driven workflow. Skipping steps wastes iterations."
+                         ""
+                         "### Step 1: Understand Current State"
+                         "- Read LISA_PLAN.edn to understand the full context"
+                         "- Use `repl_eval` to query current REPL state if needed"
+                         "- Read relevant source files to understand existing code"
+                         ""
+                         "### Step 2: Implement Changes"
+                         "- Write code using Edit/Write tools"
+                         (when cp-file (str "- Primary file: " cp-file))
+                         ""
+                         "### Step 3: REPL Validation - DO NOT SKIP"
+                         "**After writing code, you MUST validate via REPL before marking complete:**"
+                         ""
+                         "1. `reload_namespace` - Reload changed namespaces to pick up your edits"
+                         "2. `eval_comment_block` - Run examples in (comment ...) blocks to verify behavior"
+                         "3. `repl_eval` - Test specific expressions to confirm correctness"
+                         ""
+                         "**DO NOT** mark checkpoint complete based only on:"
+                         "- Reading the code and thinking it looks right"
+                         "- Running tests without REPL validation first"
+                         "- Assumptions about what the code does"
+                         ""
+                         "**DO** verify by actually evaluating code in the REPL."
+                         (when is-ui?
+                           (platform/browser-tools-prompt config))
+                         ""
+                         (str "### Step " (if is-ui? "5" "4") ": Mark Complete")
+                         (str "When acceptance criteria are verified via REPL" (when is-ui? " and screenshot") ":")
+                         (str "- Use `lisa_mark_checkpoint_done` tool with checkpoint '" (name cp-id) "'")
+                         "- Output 'CHECKPOINT_COMPLETE'"
+                         ""
+                         "If blocked, output 'CHECKPOINT_BLOCKED: <reason>' with specific details."
+                         ""
+                         (when (seq signs-content)
+                           (str "## Previous Learnings (Signs)\n\n" signs-content))
+                         ""
+                         "Focus ONLY on this checkpoint. Do not work ahead."])))))
 
 (defn- read-signs
   "Read signs from EDN plan (embedded in :signs key)."
@@ -518,6 +571,8 @@
       ;; Mark as in-progress BEFORE spawning
       (mark-checkpoint-in-progress! project-path cp-id)
       (let [plan (plan-edn/read-plan project-path)
+            ;; Snapshot checkpoint count for review checkpoint verification
+            pre-checkpoint-count (count (:checkpoints plan))
             signs (read-signs project-path)
             prompt (build-iteration-prompt config plan checkpoint signs)
             {:keys [process stream session-id]} (spawn-iteration! project-path prompt config log-file)
@@ -529,7 +584,8 @@
          :stream stream
          :session-id session-id
          :log-file log-file
-         :started-at (System/currentTimeMillis)})
+         :started-at (System/currentTimeMillis)
+         :pre-checkpoint-count pre-checkpoint-count})
       (catch Exception e
         (println (str "[Lisa] ✗ Failed to spawn process for checkpoint " cp-name ": " (.getMessage e)))
         {:checkpoint-id cp-id
@@ -634,7 +690,7 @@
   "Handle completed processes - mark checkpoints done, auto-commit, log.
    When config has :verbose true, also logs analytics and appends signs for poor compliance."
   [project-path completed-procs config]
-  (doseq [{:keys [checkpoint-id checkpoint checkpoint-complete succeeded result idle-killed log-file]} completed-procs]
+  (doseq [{:keys [checkpoint-id checkpoint checkpoint-complete succeeded result idle-killed log-file pre-checkpoint-count]} completed-procs]
     ;; Log analytics for verbose mode (completed processes only, not idle-killed)
     ;; and auto-append sign for poor compliance
     (when (and (:verbose config) (not idle-killed) log-file)
@@ -658,14 +714,30 @@
                         (str "Checkpoint " cp-display " timed out - may need smaller scope or different approach")
                         "Consider breaking into smaller tasks"))
 
-        ;; Checkpoint completed successfully
+        ;; Checkpoint completed successfully — verify review checkpoints extended the plan
         (and succeeded checkpoint-complete)
-        (do
-          (println (str "[Lisa] ✓ Checkpoint " cp-display " complete"))
-          ;; Mark done in plan (orchestrator manages plan state)
-          (plan-edn/mark-checkpoint-done! project-path checkpoint-id)
-          ;; Auto-commit as rollback point
-          (auto-commit-checkpoint! project-path cp-display (:description checkpoint)))
+        (if (and (plan-edn/review-checkpoint? checkpoint)
+                 pre-checkpoint-count
+                 (let [fresh-plan (plan-edn/read-plan project-path)
+                       post-count (count (:checkpoints fresh-plan))]
+                   (<= post-count pre-checkpoint-count)))
+          ;; Review checkpoint didn't add new checkpoints — reject, reset to in-progress
+          (do
+            (println (str "[Lisa] ⚠ Review checkpoint " cp-display
+                          " claimed complete but did not add new checkpoints — rejecting"))
+            (-> (plan-edn/read-plan project-path)
+                (plan-edn/update-checkpoint checkpoint-id {:status :in-progress})
+                (->> (plan-edn/write-plan! project-path)))
+            (append-sign! project-path 0
+                          (str "Review checkpoint " cp-display " did not extend plan")
+                          "Review checkpoints MUST call lisa_add_checkpoint before marking complete"))
+          ;; Normal completion (or review that did extend)
+          (do
+            (println (str "[Lisa] ✓ Checkpoint " cp-display " complete"))
+            ;; Mark done in plan (orchestrator manages plan state)
+            (plan-edn/mark-checkpoint-done! project-path checkpoint-id)
+            ;; Auto-commit as rollback point
+            (auto-commit-checkpoint! project-path cp-display (:description checkpoint))))
 
         ;; Process succeeded but checkpoint not marked complete - reset to pending for next iteration
         succeeded
@@ -874,136 +946,162 @@
 
           (cond
           ;; No plan found
-          (nil? plan)
-          {:status :error
-           :error "No LISA_PLAN.edn found"
-           :iterations iteration
-           :total-cost total-cost
-           :total-input-tokens total-input-tokens
-           :total-output-tokens total-output-tokens}
+            (nil? plan)
+            {:status :error
+             :error "No LISA_PLAN.edn found"
+             :iterations iteration
+             :total-cost total-cost
+             :total-input-tokens total-input-tokens
+             :total-output-tokens total-output-tokens}
 
           ;; All checkpoints complete
-          (plan-all-complete? plan)
-          (let [result {:status :complete
-                        :iterations (dec iteration)
-                        :total-cost total-cost
-                        :total-input-tokens total-input-tokens
-                        :total-output-tokens total-output-tokens}]
-            (when on-complete (on-complete plan total-cost))
-            result)
+            (plan-all-complete? plan)
+            (let [result {:status :complete
+                          :iterations (dec iteration)
+                          :total-cost total-cost
+                          :total-input-tokens total-input-tokens
+                          :total-output-tokens total-output-tokens}]
+              (when on-complete (on-complete plan total-cost))
+              result)
 
           ;; Max iterations reached
-          (> iteration (:max-iterations config))
-          {:status :max-iterations
-           :iterations iteration
-           :total-cost total-cost
-           :total-input-tokens total-input-tokens
-           :total-output-tokens total-output-tokens}
+            (> iteration (:max-iterations config))
+            {:status :max-iterations
+             :iterations iteration
+             :total-cost total-cost
+             :total-input-tokens total-input-tokens
+             :total-output-tokens total-output-tokens}
 
           ;; Run iteration
-          :else
-          (let [checkpoint (plan-current-checkpoint plan)
-                cp-id (:id checkpoint)
-                cp-display cp-id
-                max-failures (:max-checkpoint-failures config)]
+            :else
+            (let [checkpoint (plan-current-checkpoint plan)
+                  cp-id (:id checkpoint)
+                  cp-display cp-id
+                  max-failures (:max-checkpoint-failures config)]
 
             ;; Check if checkpoint should be skipped due to repeated failures
-            (if (and cp-id max-failures (should-skip-checkpoint? project-path cp-id max-failures))
-              (do
-                (println (str "[Lisa] ⚠ Skipping checkpoint " cp-display " after " max-failures " consecutive failures"))
-                (append-sign! project-path iteration
-                              (str "Checkpoint " cp-display " skipped after " max-failures " failures")
-                              "Consider breaking into smaller tasks or manual intervention")
+              (if (and cp-id max-failures (should-skip-checkpoint? project-path cp-id max-failures))
+                (do
+                  (println (str "[Lisa] ⚠ Skipping checkpoint " cp-display " after " max-failures " consecutive failures"))
+                  (append-sign! project-path iteration
+                                (str "Checkpoint " cp-display " skipped after " max-failures " failures")
+                                "Consider breaking into smaller tasks or manual intervention")
                 ;; Mark as failed and continue to next
-                (plan-edn/mark-checkpoint-failed! project-path cp-id "Too many failures")
-                (recur (inc iteration) total-cost total-input-tokens total-output-tokens))
+                  (plan-edn/mark-checkpoint-failed! project-path cp-id "Too many failures")
+                  (recur (inc iteration) total-cost total-input-tokens total-output-tokens))
 
               ;; Normal iteration
-              (let [signs (read-signs project-path)
-                    prompt (build-iteration-prompt config plan checkpoint signs)
-                    log-file (str (fs/path log-dir (str "iter-" iteration ".json")))
+                (let [signs (read-signs project-path)
+                      prompt (build-iteration-prompt config plan checkpoint signs)
+                      log-file (str (fs/path log-dir (str "iter-" iteration ".json")))
+                    ;; Snapshot checkpoint count before spawning (for review checkpoint verification)
+                      pre-checkpoint-count (count (:checkpoints plan))
+                      is-review? (plan-edn/review-checkpoint? checkpoint)
 
-                    _ (println (str "[Lisa] Iteration " iteration ": Checkpoint " cp-display
-                                    " - " (:description checkpoint)))
+                      _ (println (str "[Lisa] Iteration " iteration ": Checkpoint " cp-display
+                                      (when is-review? " [REVIEW]")
+                                      " - " (:description checkpoint)))
 
-                    {:keys [process stream session-id]} (spawn-iteration! project-path prompt config log-file)
+                      {:keys [process stream session-id]} (spawn-iteration! project-path prompt config log-file)
                     ;; Write metadata file with session-id for later correlation
-                    _ (write-iteration-metadata! log-file session-id cp-id iteration)
-                    wait-result (wait-for-process-with-timeout process project-path config)
-                    wait-status (:status wait-result)
+                      _ (write-iteration-metadata! log-file session-id cp-id iteration)
+                      wait-result (wait-for-process-with-timeout process project-path config)
+                      wait-status (:status wait-result)
                     ;; Stop the stream when process completes
-                    _ (stop-stream! stream)]
+                      _ (stop-stream! stream)]
 
                 ;; Handle timeout/idle cases
-                (if (#{:timeout :idle} wait-status)
-                  (do
+                  (if (#{:timeout :idle} wait-status)
+                    (do
                     ;; Update meta file with timeout error
-                    (update-iteration-metadata! log-file false (:reason wait-result))
-                    (append-sign! project-path iteration
-                                  (:reason wait-result)
-                                  "Consider breaking checkpoint into smaller tasks")
-                    (recur (inc iteration) total-cost total-input-tokens total-output-tokens))
+                      (update-iteration-metadata! log-file false (:reason wait-result))
+                      (append-sign! project-path iteration
+                                    (:reason wait-result)
+                                    "Consider breaking checkpoint into smaller tasks")
+                      (recur (inc iteration) total-cost total-input-tokens total-output-tokens))
 
                   ;; Normal completion - parse result
-                  (let [result (parse-iteration-result config log-file)
-                        iteration-cost (or (:total_cost_usd result) 0.0)
-                        usage (:usage result)
-                        iter-input (+ (or (:input_tokens usage) 0)
-                                      (or (:cache_read_input_tokens usage) 0)
-                                      (or (:cache_creation_input_tokens usage) 0))
-                        iter-output (or (:output_tokens usage) 0)
-                        _ (println (str "[Lisa] Tokens: " iter-input " in / " iter-output " out, Cost: $" (format "%.2f" iteration-cost)))
+                    (let [result (parse-iteration-result config log-file)
+                          iteration-cost (or (:total_cost_usd result) 0.0)
+                          usage (:usage result)
+                          iter-input (+ (or (:input_tokens usage) 0)
+                                        (or (:cache_read_input_tokens usage) 0)
+                                        (or (:cache_creation_input_tokens usage) 0))
+                          iter-output (or (:output_tokens usage) 0)
+                          _ (println (str "[Lisa] Tokens: " iter-input " in / " iter-output " out, Cost: $" (format "%.2f" iteration-cost)))
                         ;; Log analytics when verbose (stream-json provides tool call data)
                         ;; and auto-append sign for poor compliance
-                        compliance (when (:verbose config)
-                                     (log-iteration-analytics log-file iteration))
-                        _ (when compliance
-                            (maybe-append-compliance-sign! project-path iteration compliance (:description checkpoint)))]
+                          compliance (when (:verbose config)
+                                       (log-iteration-analytics log-file iteration))
+                          _ (when compliance
+                              (maybe-append-compliance-sign! project-path iteration compliance (:description checkpoint)))]
 
                     ;; Call iteration callback if provided
-                    (when on-iteration
-                      (on-iteration iteration result))
+                      (when on-iteration
+                        (on-iteration iteration result))
 
-                    (cond
+                      (cond
                       ;; Iteration failed
-                      (not (iteration-succeeded? result))
-                      (do
-                        (println (str "[Lisa] Iteration " iteration " failed"))
-                        (let [error-msg (or (:error result)
-                                            (extract-blocked-reason result)
-                                            "Iteration failed")]
+                        (not (iteration-succeeded? result))
+                        (do
+                          (println (str "[Lisa] Iteration " iteration " failed"))
+                          (let [error-msg (or (:error result)
+                                              (extract-blocked-reason result)
+                                              "Iteration failed")]
                           ;; Update meta file with failure
-                          (update-iteration-metadata! log-file false error-msg)
-                          (when-let [blocked (extract-blocked-reason result)]
-                            (append-sign! project-path iteration blocked "Needs resolution")))
-                        (recur (inc iteration)
-                               (+ total-cost iteration-cost)
-                               (+ total-input-tokens iter-input)
-                               (+ total-output-tokens iter-output)))
+                            (update-iteration-metadata! log-file false error-msg)
+                            (when-let [blocked (extract-blocked-reason result)]
+                              (append-sign! project-path iteration blocked "Needs resolution")))
+                          (recur (inc iteration)
+                                 (+ total-cost iteration-cost)
+                                 (+ total-input-tokens iter-input)
+                                 (+ total-output-tokens iter-output)))
 
-                      ;; Checkpoint completed
-                      (checkpoint-completed? result)
-                      (do
-                        (println (str "[Lisa] Checkpoint " cp-display " complete"))
-                        ;; Update meta file with success
-                        (update-iteration-metadata! log-file true nil)
-                        ;; Auto-commit as rollback point
-                        (auto-commit-checkpoint! project-path cp-display (:description checkpoint))
-                        (recur (inc iteration)
-                               (+ total-cost iteration-cost)
-                               (+ total-input-tokens iter-input)
-                               (+ total-output-tokens iter-output)))
+                      ;; Checkpoint completed - verify review checkpoints extended the plan
+                        (checkpoint-completed? result)
+                        (if (and is-review?
+                                 (let [fresh-plan (plan-edn/read-plan project-path)
+                                       post-count (count (:checkpoints fresh-plan))]
+                                   (<= post-count pre-checkpoint-count)))
+                        ;; Review checkpoint didn't add new checkpoints — reject
+                          (do
+                            (println (str "[Lisa] ⚠ Review checkpoint " cp-display
+                                          " claimed complete but did not add new checkpoints — rejecting"))
+                            ;; The spawned iteration already called lisa_mark_checkpoint_done,
+                            ;; so reset checkpoint back to in-progress for the next attempt
+                            (-> (plan-edn/read-plan project-path)
+                                (plan-edn/update-checkpoint cp-id {:status :in-progress})
+                                (->> (plan-edn/write-plan! project-path)))
+                            (append-sign! project-path iteration
+                                          (str "Review checkpoint " cp-display " did not extend plan")
+                                          "Review checkpoints MUST call lisa_add_checkpoint before marking complete")
+                            (update-iteration-metadata! log-file false "Review checkpoint did not extend plan")
+                            (recur (inc iteration)
+                                   (+ total-cost iteration-cost)
+                                   (+ total-input-tokens iter-input)
+                                   (+ total-output-tokens iter-output)))
+                        ;; Normal completion (or review that did extend)
+                          (do
+                            (println (str "[Lisa] Checkpoint " cp-display " complete"))
+                          ;; Update meta file with success
+                            (update-iteration-metadata! log-file true nil)
+                          ;; Auto-commit as rollback point
+                            (auto-commit-checkpoint! project-path cp-display (:description checkpoint))
+                            (recur (inc iteration)
+                                   (+ total-cost iteration-cost)
+                                   (+ total-input-tokens iter-input)
+                                   (+ total-output-tokens iter-output))))
 
                       ;; Iteration ran but checkpoint not marked complete
-                      :else
-                      (do
-                        (println (str "[Lisa] Iteration " iteration " completed, continuing..."))
+                        :else
+                        (do
+                          (println (str "[Lisa] Iteration " iteration " completed, continuing..."))
                         ;; Update meta file - iteration succeeded but checkpoint needs more work
-                        (update-iteration-metadata! log-file false "Checkpoint not complete - needs more work")
-                        (recur (inc iteration)
-                               (+ total-cost iteration-cost)
-                               (+ total-input-tokens iter-input)
-                               (+ total-output-tokens iter-output)))))))))))))))
+                          (update-iteration-metadata! log-file false "Checkpoint not complete - needs more work")
+                          (recur (inc iteration)
+                                 (+ total-cost iteration-cost)
+                                 (+ total-input-tokens iter-input)
+                                 (+ total-output-tokens iter-output)))))))))))))))
 
 (defn generate-plan!
   "Generate a LISA_PLAN.edn by asking Claude to analyze the task and create checkpoints."
