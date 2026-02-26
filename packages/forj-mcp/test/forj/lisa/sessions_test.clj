@@ -491,6 +491,7 @@
 
     (testing "Merges and sorts sessions from both sources"
       (with-redefs [claude/list-sessions (constantly mock-claude-sessions)
+                    claude/derive-title (constantly "Mock title")
                     opencode/list-sessions (constantly mock-opencode-sessions)]
         (let [result (sessions/list-recent-sessions)]
           (is (= 3 (count result)))
@@ -501,6 +502,7 @@
 
     (testing "Filters by client"
       (with-redefs [claude/list-sessions (constantly mock-claude-sessions)
+                    claude/derive-title (constantly "Mock title")
                     opencode/list-sessions (constantly mock-opencode-sessions)]
         (let [claude-only (sessions/list-recent-sessions {:client :claude-cli})
               opencode-only (sessions/list-recent-sessions {:client :opencode})]
@@ -511,6 +513,7 @@
 
     (testing "Filters by project substring"
       (with-redefs [claude/list-sessions (constantly mock-claude-sessions)
+                    claude/derive-title (constantly "Mock title")
                     opencode/list-sessions (constantly mock-opencode-sessions)]
         (let [result (sessions/list-recent-sessions {:project "proj"})]
           ;; "proj" matches "/home/user/proj" but not "/home/user/other"
@@ -519,6 +522,7 @@
 
     (testing "Filters by since"
       (with-redefs [claude/list-sessions (constantly mock-claude-sessions)
+                    claude/derive-title (constantly "Mock title")
                     opencode/list-sessions (constantly mock-opencode-sessions)]
         (let [result (sessions/list-recent-sessions {:since 1700002500000})]
           ;; Only c1 has updated > 1700002500000
@@ -527,12 +531,14 @@
 
     (testing "Respects limit"
       (with-redefs [claude/list-sessions (constantly mock-claude-sessions)
+                    claude/derive-title (constantly "Mock title")
                     opencode/list-sessions (constantly mock-opencode-sessions)]
         (let [result (sessions/list-recent-sessions {:limit 2})]
           (is (= 2 (count result))))))
 
     (testing "Handles errors from one source gracefully"
       (with-redefs [claude/list-sessions (fn [] (throw (Exception. "boom")))
+                    claude/derive-title (constantly nil)
                     opencode/list-sessions (constantly mock-opencode-sessions)]
         (let [result (sessions/list-recent-sessions)]
           ;; Should still return opencode sessions

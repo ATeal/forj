@@ -53,6 +53,15 @@
    :updated      (:updated raw)
    :client-label "OpenCode"})
 
+(defn- enrich-claude-title
+  "Enrich a normalized Claude CLI session with a title derived from first user message.
+   Only reads the JSONL file for sessions that have nil titles."
+  [session]
+  (if (and (= :claude-cli (:source session)) (nil? (:title session)))
+    (assoc session :title (claude/derive-title {:id (:id session)
+                                                :project-path (:directory session)}))
+    session))
+
 (defn list-recent-sessions
   "Return recent sessions from both Claude CLI and OpenCode, merged and sorted.
 
@@ -74,14 +83,14 @@
                                     (mapv normalize-opencode-session))
                                (catch Exception _ [])))
          all (concat (or claude-sessions []) (or opencode-sessions []))]
-     (cond->> all
-       since   (filter #(and (:updated %) (> (:updated %) since)))
-       project (filter #(and (:directory %)
-                              (str/includes? (str/lower-case (str (:directory %)))
-                                             (str/lower-case project))))
-       true    (sort-by :updated #(compare %2 %1))
-       true    (take limit)
-       true    vec))))
+     (->> (cond->> all
+            since   (filter #(and (:updated %) (> (:updated %) since)))
+            project (filter #(and (:directory %)
+                                   (str/includes? (str/lower-case (str (:directory %)))
+                                                  (str/lower-case project)))))
+          (sort-by :updated #(compare %2 %1))
+          (take limit)
+          (mapv enrich-claude-title)))))
 
 (defn- iso->epoch-ms
   "Convert an ISO-8601 timestamp string to epoch milliseconds."

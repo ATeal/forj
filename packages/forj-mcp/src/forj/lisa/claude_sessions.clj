@@ -306,6 +306,15 @@
       (.toEpochMilli (Instant/parse s))
       (catch Exception _ nil))))
 
+(defn derive-title
+  "Derive a title for a Claude CLI session by reading the first user message.
+   Takes a session map (from list-sessions) with :id and :project-path.
+   Returns the title string, or nil if unavailable."
+  [{:keys [id project-path]}]
+  (let [path (session-log-path id (or project-path (System/getProperty "user.dir")))
+        entries (parse-first-lines path 20)]
+    (extract-user-title entries)))
+
 (defn list-sessions
   "Scan ~/.claude/projects/ for session JSONL files.
    Returns a vec of session maps sorted by :updated desc.
