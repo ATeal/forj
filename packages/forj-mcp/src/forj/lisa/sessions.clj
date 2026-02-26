@@ -7,6 +7,21 @@
             [clojure.string :as str])
   (:import [java.time Instant]))
 
+(defn normalize-tool-name
+  "Normalize a tool name to lowercase for consistent counting across sources.
+   Claude CLI uses PascalCase (Read, Glob, Bash), OpenCode uses lowercase (read, glob, bash)."
+  [name]
+  (when name (str/lower-case name)))
+
+(defn- normalize-tool-counts
+  "Normalize tool count keys to lowercase, merging counts for same-named tools."
+  [tool-counts]
+  (reduce-kv (fn [m k v]
+               (let [normalized (normalize-tool-name k)]
+                 (update m normalized (fnil + 0) v)))
+             {}
+             tool-counts))
+
 (def common-keys
   "The set of keys present in every normalized session map."
   #{:id :source :title :directory :project-name :created :updated :client-label})
@@ -17,7 +32,7 @@
   [raw]
   {:id           (:id raw)
    :source       :claude-cli
-   :title        nil
+   :title        (:title raw)
    :directory    (or (:project-path raw) (:directory raw))
    :project-name (when-let [pp (:project-path raw)]
                    (last (re-seq #"[^/]+" pp)))
@@ -95,7 +110,7 @@
         {:id          id
          :source      :claude-cli
          :exists?     true
-         :tool-counts (claude/tool-call-counts tool-calls)
+         :tool-counts (normalize-tool-counts (claude/tool-call-counts tool-calls))
          :total-calls (count tool-calls)
          :turn-count  (count transcript)
          :duration-ms (when (>= (count ts-vec) 2)
@@ -124,7 +139,7 @@
         {:id          id
          :source      :opencode
          :exists?     true
-         :tool-counts (:tool-counts summary)
+         :tool-counts (normalize-tool-counts (:tool-counts summary))
          :total-calls (:total-calls summary)
          :turn-count  (:turn-count summary)
          :duration-ms duration-ms
@@ -235,4 +250,30 @@
     (when oc-session
       (keys (session-summary {:id (:id oc-session) :source :opencode}))))
   ;; => (:id :source :tool-counts :total-calls :turn-count :duration-ms :cost :model)
+
+  ;; --- normalize-tool-name ---
+  (normalize-tool-name "Read")    ;; => "read"
+  (normalize-tool-name "Bash")    ;; => "bash"
+  (normalize-tool-name "glob")    ;; => "glob"
+  (normalize-tool-name nil)       ;; => nil
+
+  ;; --- normalize-tool-counts ---
+  ;; PascalCase keys become lowercase
+  (normalize-tool-counts {"Read" 5 "Bash" 3 "Glob" 2})
+  ;; => {"read" 5 "bash" 3 "glob" 2}
+
+  ;; Already lowercase stays the same
+  (normalize-tool-counts {"read" 5 "bash" 3})
+  ;; => {"read" 5 "bash" 3}
+
+  ;; Verify both sources produce lowercase tool names in summaries
+  (let [cl (first (list-recent-sessions {:client :claude-cli :limit 1}))
+        oc (first (list-recent-sessions {:client :opencode :limit 1}))]
+    {:claude-keys (when cl
+                    (keys (:tool-counts (session-summary {:id (:id cl)
+                                                          :source :claude-cli
+                                                          :directory (:directory cl)}))))
+     :opencode-keys (when oc
+                      (keys (:tool-counts (session-summary {:id (:id oc)
+                                                             :source :opencode}))))})
   )

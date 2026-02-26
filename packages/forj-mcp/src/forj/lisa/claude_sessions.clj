@@ -220,8 +220,9 @@
         (str/replace-first #"^-" "/")
         (str/replace "-" "/"))))
 
-(defn- parse-first-timestamp
-  "Read up to n lines from a JSONL file and return the first timestamp found."
+(defn- parse-first-lines
+  "Read up to n lines from a JSONL file, parse each as JSON.
+   Returns a seq of parsed maps (nils filtered out)."
   [path n]
   (try
     (with-open [rdr (clojure.java.io/reader (str path))]
@@ -229,11 +230,43 @@
            (take n)
            (keep (fn [line]
                    (try
-                     (let [parsed (json/parse-string line true)]
-                       (:timestamp parsed))
+                     (json/parse-string line true)
                      (catch Exception _ nil))))
-           first))
-    (catch Exception _ nil)))
+           vec))
+    (catch Exception _ [])))
+
+(defn- parse-first-timestamp
+  "Read up to n lines from a JSONL file and return the first timestamp found."
+  [path n]
+  (->> (parse-first-lines path n)
+       (keep :timestamp)
+       first))
+
+(defn- parse-first-user-title
+  "Extract a title from the first user message in a JSONL file.
+   Reads up to n lines, finds the first entry with :type \"user\",
+   and returns a truncated version (max 80 chars) of the message content."
+  [path n]
+  (->> (parse-first-lines path n)
+       (filter #(= "user" (:type %)))
+       first
+       :message
+       :content
+       ((fn [content]
+          (cond
+            (string? content) content
+            (sequential? content)
+            (->> content
+                 (filter #(= "text" (:type %)))
+                 (map :text)
+                 (str/join " "))
+            :else nil)))
+       ((fn [text]
+          (when (and text (seq text))
+            (let [clean (-> text str/trim (str/replace #"\s+" " "))]
+              (if (> (count clean) 80)
+                (str (subs clean 0 77) "...")
+                clean)))))))
 
 (defn- iso->epoch-ms
   "Convert an ISO-8601 timestamp string to epoch milliseconds."
@@ -270,11 +303,14 @@
                                    (let [fname (str (fs/file-name f))
                                          session-id (str/replace fname #"\.jsonl$" "")
                                          mtime-ms (.toMillis (fs/last-modified-time f))
-                                         created-ts (parse-first-timestamp f 10)
-                                         created-ms (or (iso->epoch-ms created-ts) mtime-ms)]
+                                         first-lines (parse-first-lines f 10)
+                                         created-ts (->> first-lines (keep :timestamp) first)
+                                         created-ms (or (iso->epoch-ms created-ts) mtime-ms)
+                                         title (parse-first-user-title f 10)]
                                      {:id session-id
                                       :directory dir-name
                                       :project-path (decode-project-path dir-name)
+                                      :title title
                                       :created created-ms
                                       :updated mtime-ms
                                       :size-bytes (fs/size f)})))))))
