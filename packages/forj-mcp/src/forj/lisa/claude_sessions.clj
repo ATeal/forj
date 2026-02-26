@@ -377,11 +377,11 @@
   (decode-project-path "-home-arteal-Projects-github-my-project")
   ;; => "/home/arteal/Projects/github/my-project" (if exists on disk)
 
-  ;; List all sessions
-  (let [sessions (list-sessions)]
-    {:count (count sessions)
-     :first (first sessions)
-     :last (last sessions)})
+  ;; List all sessions (fast - filesystem metadata only, no file reads)
+  (time (let [sessions (list-sessions)]
+          {:count (count sessions)
+           :first (first sessions)
+           :last (last sessions)}))
 
   ;; Check sessions are sorted by updated desc
   (let [sessions (list-sessions)]
@@ -392,4 +392,10 @@
   (->> (list-sessions)
        (map :project-path)
        distinct
-       sort))
+       sort)
+
+  ;; Derive title on-demand via parse-first-lines + extract-user-title
+  (let [session (first (list-sessions))
+        path (session-log-path (:id session) (:project-path session))
+        lines (parse-first-lines path 10)]
+    (extract-user-title lines)))

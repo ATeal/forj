@@ -2219,6 +2219,24 @@
       {:success false
        :error (str "Failed to get session summary: " (.getMessage e))})))
 
+(defn session-transcript-handler
+  "Handler for session_transcript tool. Gets conversation transcript for a session."
+  [{:keys [id source directory limit]}]
+  (try
+    (when-not id
+      (throw (ex-info "Missing required parameter: id" {})))
+    (when-not source
+      (throw (ex-info "Missing required parameter: source" {})))
+    (let [source-kw (keyword source)
+          result (sessions/session-transcript
+                   (cond-> {:id id :source source-kw}
+                     directory (assoc :directory directory)
+                     limit     (assoc :limit limit)))]
+      (assoc result :success true))
+    (catch Exception e
+      {:success false
+       :error (str "Failed to get session transcript: " (.getMessage e))})))
+
 ;; =============================================================================
 ;; Tool Dispatch
 ;; =============================================================================
@@ -2280,8 +2298,9 @@
    "lisa_inspect_iteration" lisa-inspect-iteration
    "lisa_get_iteration_transcript" lisa-get-iteration-transcript
    ;; Session introspection
-   "list_sessions"    list-sessions-handler
-   "session_summary"  session-summary-handler})
+   "list_sessions"        list-sessions-handler
+   "session_summary"      session-summary-handler
+   "session_transcript"   session-transcript-handler})
 
 (defn call-tool
   "Dispatch tool call to appropriate handler."
