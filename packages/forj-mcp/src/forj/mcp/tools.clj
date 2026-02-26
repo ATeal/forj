@@ -180,7 +180,9 @@
                                                                           :description "Validation gates (e.g., 'repl:(fn) => expected')"}
                                                                   :depends_on {:type "array"
                                                                                :items {:type "string"}
-                                                                               :description "IDs of checkpoints this depends on"}}}
+                                                                               :description "IDs of checkpoints this depends on"}
+                                                                  :type {:type "string"
+                                                                         :description "Checkpoint type: 'review' for plan-extending checkpoints, omit for normal"}}}
                                              :description "List of checkpoints with optional dependencies"}
                                :path {:type "string"
                                       :description "Project path (defaults to current directory)"}}
@@ -222,6 +224,8 @@
                                :depends_on {:type "array"
                                             :items {:type "string"}
                                             :description "Checkpoint IDs this depends on (optional, also affects auto-positioning)"}
+                               :type {:type "string"
+                                      :description "Checkpoint type: 'review' for plan-extending checkpoints, omit for normal"}
                                :position {:type "string"
                                           :description "Override auto-positioning: 'end', 'next', or checkpoint ID. Usually not needed."}
                                :path {:type "string"
@@ -1592,7 +1596,6 @@
 ;; Lisa Loop v2 Tools (Planning + Orchestration)
 ;; =============================================================================
 
-
 (defn- parse-checkpoint-id
   "Parse checkpoint ID from string - could be a number or keyword name."
   [checkpoint-str]
@@ -1614,7 +1617,8 @@
                                     (:file cp) (assoc :file (:file cp))
                                     (:acceptance cp) (assoc :acceptance (:acceptance cp))
                                     (:gates cp) (assoc :gates (vec (:gates cp)))
-                                    (:depends_on cp) (assoc :depends-on (mapv keyword (:depends_on cp)))))
+                                    (:depends_on cp) (assoc :depends-on (mapv keyword (:depends_on cp)))
+                                    (:type cp) (assoc :type (keyword (:type cp)))))
                                 parsed-checkpoints)]
       (plan-edn/create-plan! path {:title title :checkpoints checkpoint-data})
       (let [missing-gitignore (plan-edn/check-gitignore path)]
@@ -1690,7 +1694,7 @@
    - Otherwise → append to end
 
    Explicit position options: 'end', 'next', or a checkpoint ID."
-  [{:keys [id description file acceptance gates depends_on position path]
+  [{:keys [id description file acceptance gates depends_on type position path]
     :or {path "."}}]
   (try
     (if-not (plan-edn/plan-exists? path)
@@ -1701,7 +1705,8 @@
                          file (assoc :file file)
                          acceptance (assoc :acceptance acceptance)
                          gates (assoc :gates (vec gates))
-                         depends_on (assoc :depends-on (mapv keyword depends_on)))
+                         depends_on (assoc :depends-on (mapv keyword depends_on))
+                         type (assoc :type (keyword type)))
             pos-kw (cond
                      (nil? position) :auto
                      (= position "end") :end
@@ -2212,8 +2217,8 @@
       (throw (ex-info "Missing required parameter: source" {})))
     (let [source-kw (keyword source)
           summary (sessions/session-summary
-                    (cond-> {:id id :source source-kw}
-                      directory (assoc :directory directory)))]
+                   (cond-> {:id id :source source-kw}
+                     directory (assoc :directory directory)))]
       (assoc summary :success true))
     (catch Exception e
       {:success false
@@ -2229,9 +2234,9 @@
       (throw (ex-info "Missing required parameter: source" {})))
     (let [source-kw (keyword source)
           result (sessions/session-transcript
-                   (cond-> {:id id :source source-kw}
-                     directory (assoc :directory directory)
-                     limit     (assoc :limit limit)))]
+                  (cond-> {:id id :source source-kw}
+                    directory (assoc :directory directory)
+                    limit     (assoc :limit limit)))]
       (assoc result :success true))
     (catch Exception e
       {:success false
@@ -2248,9 +2253,9 @@
         project-name (:project_name arguments)
         project-path (str output-path "/" project-name)
         scaffold-result (scaffold/scaffold-project
-                          {:project-name project-name
-                           :modules (:modules arguments)
-                           :output-path output-path})]
+                         {:project-name project-name
+                          :modules (:modules arguments)
+                          :output-path output-path})]
     ;; Auto-run validation if scaffolding succeeded
     (if (:success scaffold-result)
       (let [validation-result (validate-project {:path project-path :fix true})]

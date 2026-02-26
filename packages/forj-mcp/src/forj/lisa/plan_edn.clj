@@ -7,6 +7,11 @@
    - Embedded signs (learnings)
    - Context compression for token efficiency
 
+   Checkpoints support a :type field:
+   - :review — plan-extending checkpoints that evaluate progress and add new tasks.
+     The orchestrator enforces that review checkpoints actually extend the plan.
+   - nil/omitted — normal implementation checkpoints (default behavior).
+
    Example plan:
    ```clojure
    {:title \"Build user authentication\"
@@ -22,7 +27,12 @@
       :status :in-progress
       :depends-on [:password-hashing]
       :description \"Create JWT token module\"
-      :file \"src/auth/jwt.clj\"}]
+      :file \"src/auth/jwt.clj\"}
+     {:id :review-auth
+      :type :review
+      :status :pending
+      :depends-on [:jwt-tokens]
+      :description \"Review auth implementation and extend plan\"}]
     :signs
     [{:iteration 3
       :checkpoint :jwt-tokens
@@ -85,6 +95,12 @@
   [plan]
   (or (first (filter #(= :in-progress (:status %)) (:checkpoints plan)))
       (first (filter #(= :pending (:status %)) (:checkpoints plan)))))
+
+(defn review-checkpoint?
+  "Check if a checkpoint is a review checkpoint (type :review).
+   Review checkpoints are expected to extend the plan with new tasks."
+  [checkpoint]
+  (= :review (:type checkpoint)))
 
 (defn all-complete?
   "Check if all checkpoints are done."
@@ -418,7 +434,7 @@
                       (slurp gitignore-path)
                       "")
             needs-newline? (and (not (str/blank? current))
-                               (not (str/ends-with? current "\n")))
+                                (not (str/ends-with? current "\n")))
             section (str (when needs-newline? "\n")
                          "\n# forj (Lisa Loop runtime)\n"
                          (str/join "\n" entries)
@@ -434,15 +450,15 @@
   [project-path {:keys [title checkpoints]}]
   (let [;; Assign IDs if not provided
         cps-with-ids (mapv (fn [cp idx]
-                            (let [id (or (:id cp)
-                                         (keyword (str "checkpoint-" (inc idx))))]
-                              (assoc cp
-                                     :id id
-                                     :status (if (and (zero? idx)
-                                                      (empty? (:depends-on cp)))
-                                               :in-progress
-                                               :pending))))
-                          checkpoints (range))
+                             (let [id (or (:id cp)
+                                          (keyword (str "checkpoint-" (inc idx))))]
+                               (assoc cp
+                                      :id id
+                                      :status (if (and (zero? idx)
+                                                       (empty? (:depends-on cp)))
+                                                :in-progress
+                                                :pending))))
+                           checkpoints (range))
         ;; Mark first ready checkpoint as in-progress
         first-ready-idx (first (keep-indexed
                                 (fn [i cp]
