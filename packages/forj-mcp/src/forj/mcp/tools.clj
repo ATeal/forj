@@ -369,6 +369,20 @@
                                         :description "Which client the session belongs to"}
                                :directory {:type "string"
                                            :description "Project directory (optional, used for Claude CLI sessions to locate log files)"}}
+                  :required ["id" "source"]}}
+
+   {:name "session_transcript"
+    :description "Get the conversation transcript for an AI coding session. Returns user messages, assistant text, and tool call summaries (tool name + truncated input). Limited to last N turns."
+    :inputSchema {:type "object"
+                  :properties {:id {:type "string"
+                                    :description "Session ID (e.g., UUID for Claude CLI, 'ses_...' for OpenCode)"}
+                               :source {:type "string"
+                                        :enum ["claude-cli" "opencode"]
+                                        :description "Which client the session belongs to"}
+                               :directory {:type "string"
+                                           :description "Project directory (optional, used for Claude CLI sessions to locate log files)"}
+                               :limit {:type "integer"
+                                       :description "Max turns to return from the end of the conversation (default: 50)"}}
                   :required ["id" "source"]}}])
 
 ;; =============================================================================

@@ -23,11 +23,19 @@
     (when (fs/exists? path)
       (sqlite/query path (vec (cons sql params))))))
 
+(defn- dir->project-name
+  "Derive a project name from a directory path (last path segment)."
+  [directory]
+  (when (and directory (not (str/blank? directory)))
+    (str (fs/file-name directory))))
+
 (defn- rename-session-keys
-  "Rename SQL result keys to idiomatic Clojure keywords."
+  "Rename SQL result keys to idiomatic Clojure keywords.
+   Derives project-name from directory if not available from project table."
   [row]
   (-> row
-      (assoc :project-name (:project_name row))
+      (assoc :project-name (or (not-empty (:project_name row))
+                               (dir->project-name (:directory row))))
       (dissoc :project_name)))
 
 (defn list-sessions
@@ -42,7 +50,7 @@
                        s.time_created as created,
                        s.time_updated as updated
                 FROM session s
-                JOIN project p ON s.project_id = p.id
+                LEFT JOIN project p ON s.project_id = p.id
                 ORDER BY s.time_updated DESC")))
 
 (defn- parse-message

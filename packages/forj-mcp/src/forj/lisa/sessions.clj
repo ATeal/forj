@@ -164,6 +164,48 @@
     (throw (ex-info (str "Unknown session source: " source)
                     {:source source :id id}))))
 
+(defn session-transcript
+  "Get the conversation transcript for a session from either source.
+
+   Takes a map with:
+   - :id        - session identifier
+   - :source    - :claude-cli or :opencode
+   - :directory - (optional, for :claude-cli) project path, defaults to cwd
+   - :limit     - max turns to return (default 50, from the end)
+
+   Returns:
+   {:id :source :exists? :transcript :turn-count}"
+  [{:keys [id source directory limit] :or {limit 50}}]
+  (let [result (case source
+                 :claude-cli
+                 (let [project-path (or directory (System/getProperty "user.dir"))
+                       path (claude/session-log-path id project-path)]
+                   (if (fs/exists? path)
+                     (let [entries (claude/read-session-jsonl path)
+                           transcript (claude/extract-transcript entries)]
+                       {:id id
+                        :source :claude-cli
+                        :exists? true
+                        :transcript (vec transcript)
+                        :turn-count (count transcript)})
+                     {:id id :source :claude-cli :exists? false}))
+
+                 :opencode
+                 (let [transcript (opencode/extract-transcript id)]
+                   (if (seq transcript)
+                     {:id id
+                      :source :opencode
+                      :exists? true
+                      :transcript transcript
+                      :turn-count (count transcript)}
+                     {:id id :source :opencode :exists? false}))
+
+                 (throw (ex-info (str "Unknown session source: " source)
+                                 {:source source :id id})))]
+    (if (and (:exists? result) (> (:turn-count result) limit))
+      (assoc result :transcript (vec (take-last limit (:transcript result))))
+      result)))
+
 (comment
   ;; Verify both normalizers produce identical key sets
   (= (set (keys (normalize-claude-session

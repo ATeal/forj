@@ -309,13 +309,14 @@
 (defn list-sessions
   "Scan ~/.claude/projects/ for session JSONL files.
    Returns a vec of session maps sorted by :updated desc.
+   Uses only filesystem metadata for speed (no file content reading).
 
    Each map contains:
    - :id - session UUID (filename without .jsonl)
    - :directory - encoded project directory name
    - :project-path - best-effort decoded filesystem path
-   - :title - truncated first user message (max 80 chars), or nil
-   - :created - epoch ms from first timestamp in file (or file mtime)
+   - :title - nil (use session-details for title derivation)
+   - :created - epoch ms from file creation time
    - :updated - epoch ms from file last-modified time
    - :size-bytes - file size in bytes"
   []
@@ -333,16 +334,13 @@
                             (map (fn [f]
                                    (let [fname (str (fs/file-name f))
                                          session-id (str/replace fname #"\.jsonl$" "")
-                                         mtime-ms (.toMillis (fs/last-modified-time f))
-                                         first-lines (parse-first-lines f 10)
-                                         created-ts (->> first-lines (keep :timestamp) first)
-                                         created-ms (or (iso->epoch-ms created-ts) mtime-ms)
-                                         title (extract-user-title first-lines)]
+                                         ctime-ms (.toMillis (fs/creation-time f))
+                                         mtime-ms (.toMillis (fs/last-modified-time f))]
                                      {:id session-id
                                       :directory dir-name
                                       :project-path (decode-project-path dir-name)
-                                      :title title
-                                      :created created-ms
+                                      :title nil
+                                      :created ctime-ms
                                       :updated mtime-ms
                                       :size-bytes (fs/size f)})))))))
            (sort-by :updated >)
