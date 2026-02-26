@@ -223,7 +223,10 @@
           (let [result (claude/list-sessions)
                 session (first result)]
             (is (= "-home-user-myproject" (:directory session)))
-            (is (= "/home/user/myproject" (:project-path session)))))
+            ;; project-path is decoded from directory - starts with /
+            ;; Exact result depends on filesystem (smart decode checks real dirs)
+            (is (string? (:project-path session)))
+            (is (str/starts-with? (:project-path session) "/"))))
         (finally
           (fs/delete-tree tmp-dir))))))
 
@@ -233,7 +236,30 @@
            (claude/decode-project-path "-home-arteal-Projects-github-forj"))))
 
   (testing "Returns nil for nil input"
-    (is (nil? (claude/decode-project-path nil)))))
+    (is (nil? (claude/decode-project-path nil))))
+
+  (testing "Preserves hyphens in project names when path exists on disk"
+    ;; Create a real directory structure to test smart decoding
+    (let [tmp-dir (fs/create-temp-dir {:prefix "decode-test-"})
+          ;; Simulate /tmp/xxx/my-project existing
+          parent (fs/path tmp-dir "parent")
+          project (fs/path parent "my-project")]
+      (try
+        (fs/create-dirs project)
+        ;; Encode as if it were: /tmp/xxx/parent/my-project
+        ;; The encoded form replaces / with -
+        (let [encoded (claude/encode-project-path (str project))
+              decoded (claude/decode-project-path encoded)]
+          ;; Smart decode should find the real path with hyphens preserved
+          (is (= (str project) decoded)))
+        (finally
+          (fs/delete-tree tmp-dir)))))
+
+  (testing "Falls back gracefully for non-existent paths"
+    ;; For a path that doesn't exist on disk, should still produce a result
+    (let [result (claude/decode-project-path "-nonexistent-path-with-hyphens")]
+      (is (some? result))
+      (is (string? result)))))
 
 (deftest claude-extract-transcript-test
   (testing "Extracts user and assistant turns"
@@ -262,6 +288,146 @@
           entries [{:type "user" :message {:content long-text}}]
           result (claude/extract-transcript entries)]
       (is (<= (count (:content (first result))) 504)))))
+
+;; =============================================================================
+;; Unified sessions interface tests
+;; =============================================================================
+
+;; =============================================================================
+;; Tool name normalization tests (refinement #2)
+;; =============================================================================
+
+(deftest normalize-tool-name-test
+  (testing "Lowercases PascalCase tool names"
+    (is (= "read" (sessions/normalize-tool-name "Read")))
+    (is (= "bash" (sessions/normalize-tool-name "Bash")))
+    (is (= "glob" (sessions/normalize-tool-name "Glob"))))
+
+  (testing "Keeps already lowercase names unchanged"
+    (is (= "read" (sessions/normalize-tool-name "read")))
+    (is (= "bash" (sessions/normalize-tool-name "bash"))))
+
+  (testing "Handles MCP-style names"
+    (is (= "mcp__forj__repl_eval" (sessions/normalize-tool-name "mcp__forj__repl_eval"))))
+
+  (testing "Returns nil for nil input"
+    (is (nil? (sessions/normalize-tool-name nil)))))
+
+(deftest session-summary-normalizes-tool-counts-test
+  (testing "Claude CLI tool counts are normalized to lowercase"
+    (let [{:keys [tmp-dir project-dir]} (create-test-claude-dir)]
+      (try
+        (let [entries [{:type "user" :message {:content "hi"}
+                        :timestamp "2026-02-25T10:00:00Z"}
+                       {:type "assistant"
+                        :message {:content [{:type "tool_use" :name "Read" :id "t1"
+                                             :input {:file_path "/foo.clj"}}
+                                            {:type "tool_use" :name "Edit" :id "t2"
+                                             :input {:file_path "/foo.clj"}}]}
+                        :timestamp "2026-02-25T10:01:00Z"}]
+              _ (write-session-file project-dir "test-norm" entries)]
+          (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))]
+            (let [result (sessions/session-summary
+                           {:id "test-norm" :source :claude-cli
+                            :directory "/home/user/myproject"})]
+              ;; Tool names should be lowercase
+              (is (contains? (:tool-counts result) "read"))
+              (is (contains? (:tool-counts result) "edit"))
+              (is (not (contains? (:tool-counts result) "Read")))
+              (is (not (contains? (:tool-counts result) "Edit"))))))
+        (finally
+          (fs/delete-tree tmp-dir)))))
+
+  (testing "OpenCode tool counts are normalized to lowercase"
+    (with-redefs [opencode/session-summary (constantly {:id "ses_x" :exists? true
+                                                         :tool-counts {"read" 2 "bash" 1}
+                                                         :total-calls 3
+                                                         :turn-count 4})
+                  opencode/session-messages (constantly [{:role "user" :created 100 :updated 100}])]
+      (let [result (sessions/session-summary {:id "ses_x" :source :opencode})]
+        ;; Already lowercase but should still work through normalization
+        (is (contains? (:tool-counts result) "read"))
+        (is (contains? (:tool-counts result) "bash"))))))
+
+;; =============================================================================
+;; Derived Claude titles tests (refinement #3)
+;; =============================================================================
+
+(deftest claude-extract-user-title-test
+  (testing "Extracts title from first user message with string content"
+    (let [entries [{:type "user" :message {:content "Fix the login bug"}}
+                   {:type "assistant" :message {:content [{:type "text" :text "Sure"}]}}]]
+      (is (= "Fix the login bug" (#'claude/extract-user-title entries)))))
+
+  (testing "Extracts title from first user message with array content"
+    (let [entries [{:type "user" :message {:content [{:type "text" :text "Add feature X"}]}}]]
+      (is (= "Add feature X" (#'claude/extract-user-title entries)))))
+
+  (testing "Truncates long titles to 80 chars"
+    (let [long-msg (apply str (repeat 100 "x"))
+          entries [{:type "user" :message {:content long-msg}}]
+          result (#'claude/extract-user-title entries)]
+      (is (<= (count result) 80))
+      (is (str/ends-with? result "..."))))
+
+  (testing "Returns nil when no user messages"
+    (let [entries [{:type "assistant" :message {:content [{:type "text" :text "hi"}]}}]]
+      (is (nil? (#'claude/extract-user-title entries)))))
+
+  (testing "Returns nil for empty entries"
+    (is (nil? (#'claude/extract-user-title [])))
+    (is (nil? (#'claude/extract-user-title nil)))))
+
+(deftest claude-list-sessions-title-is-nil-test
+  (testing "list-sessions returns :title nil (performance optimization)"
+    (let [{:keys [tmp-dir project-dir]} (create-test-claude-dir)]
+      (try
+        (write-session-file project-dir "test-title"
+                            [{:type "user" :message {:content "Hello world"}
+                              :timestamp "2026-02-25T10:00:00Z"}])
+        (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))]
+          (let [result (claude/list-sessions)
+                session (first result)]
+            ;; Title should be nil in list-sessions (perf optimization)
+            (is (nil? (:title session)))
+            ;; But key should still exist
+            (is (contains? session :title))))
+        (finally
+          (fs/delete-tree tmp-dir))))))
+
+;; =============================================================================
+;; OpenCode project-name fallback tests (refinement #4)
+;; =============================================================================
+
+(deftest opencode-project-name-fallback-test
+  (testing "Falls back to directory-derived project name when project_name is nil"
+    (let [sessions-with-nil-project
+          [{:id "ses_003" :title "Test" :directory "/home/user/my-project"
+            :project_name nil :created 1700000000000 :updated 1700001000000}]]
+      (with-redefs [opencode/query (fn [sql & _]
+                                     (when (str/includes? sql "FROM session")
+                                       sessions-with-nil-project))]
+        (let [result (opencode/list-sessions)]
+          (is (= 1 (count result)))
+          ;; Should derive "my-project" from directory
+          (is (= "my-project" (:project-name (first result))))))))
+
+  (testing "Falls back to directory-derived name when project_name is empty string"
+    (let [sessions-with-empty-project
+          [{:id "ses_004" :title "Test" :directory "/home/user/another-proj"
+            :project_name "" :created 1700000000000 :updated 1700001000000}]]
+      (with-redefs [opencode/query (fn [sql & _]
+                                     (when (str/includes? sql "FROM session")
+                                       sessions-with-empty-project))]
+        (let [result (opencode/list-sessions)]
+          (is (= "another-proj" (:project-name (first result))))))))
+
+  (testing "Uses project_name when available"
+    (with-redefs [opencode/query (fn [sql & _]
+                                   (when (str/includes? sql "FROM session")
+                                     sample-opencode-sessions))]
+      (let [result (opencode/list-sessions)]
+        (is (= "project" (:project-name (first result))))))))
 
 ;; =============================================================================
 ;; Unified sessions interface tests
@@ -519,6 +685,177 @@
                                       :directory "/my/project"}})
         (is (= "/my/project" (:directory @captured-args)))
         (is (= :claude-cli (:source @captured-args)))))))
+
+;; =============================================================================
+;; session_transcript tool tests (refinement #5)
+;; =============================================================================
+
+(deftest tool-definitions-include-transcript-test
+  (testing "session_transcript tool is defined in tools vec"
+    (let [tool-names (set (map :name tools/tools))]
+      (is (contains? tool-names "session_transcript"))))
+
+  (testing "session_transcript tool has correct schema"
+    (let [tool (first (filter #(= "session_transcript" (:name %)) tools/tools))]
+      (is (some? tool))
+      (is (string? (:description tool)))
+      (is (= ["id" "source"] (get-in tool [:inputSchema :required])))
+      (is (get-in tool [:inputSchema :properties :id]))
+      (is (get-in tool [:inputSchema :properties :source]))
+      (is (get-in tool [:inputSchema :properties :directory]))
+      (is (get-in tool [:inputSchema :properties :limit])))))
+
+(deftest session-transcript-unified-test
+  (testing "Returns claude-cli transcript"
+    (let [{:keys [tmp-dir project-dir]} (create-test-claude-dir)]
+      (try
+        (let [entries [{:type "user" :message {:content "What is 2+2?"}
+                        :timestamp "2026-02-25T10:00:00Z"}
+                       {:type "assistant"
+                        :message {:content [{:type "text" :text "The answer is 4."}]}
+                        :timestamp "2026-02-25T10:01:00Z"}]
+              _ (write-session-file project-dir "test-transcript" entries)]
+          (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))]
+            (let [result (sessions/session-transcript
+                           {:id "test-transcript" :source :claude-cli
+                            :directory "/home/user/myproject"})]
+              (is (true? (:exists? result)))
+              (is (= :claude-cli (:source result)))
+              (is (= 2 (:turn-count result)))
+              (is (= 2 (count (:transcript result))))
+              (is (= "user" (:type (first (:transcript result)))))
+              (is (= "assistant" (:type (second (:transcript result))))))))
+        (finally
+          (fs/delete-tree tmp-dir)))))
+
+  (testing "Returns exists? false for non-existent claude-cli session"
+    (let [{:keys [tmp-dir]} (create-test-claude-dir)]
+      (try
+        (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))]
+          (let [result (sessions/session-transcript
+                         {:id "nonexistent" :source :claude-cli
+                          :directory "/home/user/myproject"})]
+            (is (false? (:exists? result)))))
+        (finally
+          (fs/delete-tree tmp-dir)))))
+
+  (testing "Respects limit parameter"
+    (let [{:keys [tmp-dir project-dir]} (create-test-claude-dir)]
+      (try
+        (let [entries (vec (for [i (range 10)]
+                            {:type (if (even? i) "user" "assistant")
+                             :message {:content (if (even? i)
+                                                  (str "Question " i)
+                                                  [{:type "text" :text (str "Answer " i)}])}
+                             :timestamp (str "2026-02-25T10:0" i ":00Z")}))
+              _ (write-session-file project-dir "test-limit" entries)]
+          (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))]
+            (let [result (sessions/session-transcript
+                           {:id "test-limit" :source :claude-cli
+                            :directory "/home/user/myproject"
+                            :limit 3})]
+              (is (true? (:exists? result)))
+              ;; Should return only last 3 turns
+              (is (= 3 (count (:transcript result)))))))
+        (finally
+          (fs/delete-tree tmp-dir)))))
+
+  (testing "Returns opencode transcript"
+    (with-redefs [opencode/extract-transcript
+                  (constantly [{:type "user" :content "hello"}
+                               {:type "assistant" :content "hi there"}])]
+      (let [result (sessions/session-transcript {:id "ses_001" :source :opencode})]
+        (is (true? (:exists? result)))
+        (is (= :opencode (:source result)))
+        (is (= 2 (:turn-count result))))))
+
+  (testing "Returns exists? false for empty opencode transcript"
+    (with-redefs [opencode/extract-transcript (constantly [])]
+      (let [result (sessions/session-transcript {:id "ses_fake" :source :opencode})]
+        (is (false? (:exists? result))))))
+
+  (testing "Throws for unknown source"
+    (is (thrown? Exception
+                (sessions/session-transcript {:id "x" :source :unknown})))))
+
+(deftest session-transcript-handler-test
+  (testing "Returns transcript successfully"
+    (with-redefs [sessions/session-transcript
+                  (constantly {:id "s1" :source :claude-cli :exists? true
+                               :transcript [{:type "user" :content "hi"}]
+                               :turn-count 1})]
+      (let [result (tools/call-tool {:name "session_transcript"
+                                      :arguments {:id "s1" :source "claude-cli"}})]
+        (is (true? (:success result)))
+        (is (= "s1" (:id result)))
+        (is (= 1 (:turn-count result)))
+        (is (= 1 (count (:transcript result)))))))
+
+  (testing "Returns error for missing id"
+    (let [result (tools/call-tool {:name "session_transcript"
+                                    :arguments {:source "opencode"}})]
+      (is (false? (:success result)))
+      (is (str/includes? (:error result) "id"))))
+
+  (testing "Returns error for missing source"
+    (let [result (tools/call-tool {:name "session_transcript"
+                                    :arguments {:id "s1"}})]
+      (is (false? (:success result)))
+      (is (str/includes? (:error result) "source"))))
+
+  (testing "Passes directory and limit parameters"
+    (let [captured-args (atom nil)]
+      (with-redefs [sessions/session-transcript
+                    (fn [args]
+                      (reset! captured-args args)
+                      {:id "s1" :source :claude-cli :exists? true
+                       :transcript [] :turn-count 0})]
+        (tools/call-tool {:name "session_transcript"
+                          :arguments {:id "s1" :source "claude-cli"
+                                      :directory "/my/project"
+                                      :limit 10}})
+        (is (= "/my/project" (:directory @captured-args)))
+        (is (= :claude-cli (:source @captured-args)))
+        (is (= 10 (:limit @captured-args)))))))
+
+;; =============================================================================
+;; list-sessions performance tests (refinement #6)
+;; =============================================================================
+
+(deftest claude-list-sessions-uses-filesystem-metadata-test
+  (testing "list-sessions uses file creation/modification time, not file content"
+    (let [{:keys [tmp-dir project-dir]} (create-test-claude-dir)]
+      (try
+        ;; Write a session file with NO timestamp in the content
+        (write-session-file project-dir "test-perf"
+                            [{:type "user" :message {:content "no timestamp here"}}])
+        (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))]
+          (let [result (claude/list-sessions)
+                session (first result)]
+            ;; Should still have :created and :updated from filesystem metadata
+            (is (some? (:created session)))
+            (is (some? (:updated session)))
+            (is (number? (:created session)))
+            (is (number? (:updated session)))
+            (is (pos? (:created session)))
+            (is (pos? (:updated session)))
+            ;; Title should be nil (not derived in list-sessions for perf)
+            (is (nil? (:title session)))))
+        (finally
+          (fs/delete-tree tmp-dir)))))
+
+  (testing "list-sessions includes size-bytes from filesystem"
+    (let [{:keys [tmp-dir project-dir]} (create-test-claude-dir)]
+      (try
+        (write-session-file project-dir "test-size"
+                            [{:type "user" :message {:content "some content"}}])
+        (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))]
+          (let [result (claude/list-sessions)
+                session (first result)]
+            (is (number? (:size-bytes session)))
+            (is (pos? (:size-bytes session)))))
+        (finally
+          (fs/delete-tree tmp-dir))))))
 
 (comment
   ;; Run tests from REPL
