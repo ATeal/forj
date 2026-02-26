@@ -1,9 +1,11 @@
 (ns forj.lisa.sessions
   "Unified session interface across Claude CLI and OpenCode.
    Normalizes session data from both sources into a common shape."
-  (:require [forj.lisa.claude-sessions :as claude]
+  (:require [babashka.fs :as fs]
+            [forj.lisa.claude-sessions :as claude]
             [forj.lisa.opencode-sessions :as opencode]
-            [clojure.string :as str]))
+            [clojure.string :as str])
+  (:import [java.time Instant]))
 
 (def common-keys
   "The set of keys present in every normalized session map."
@@ -65,6 +67,85 @@
        true    (sort-by :updated #(compare %2 %1))
        true    (take limit)
        true    vec))))
+
+(defn- iso->epoch-ms
+  "Convert an ISO-8601 timestamp string to epoch milliseconds."
+  [s]
+  (when s
+    (try
+      (.toEpochMilli (Instant/parse s))
+      (catch Exception _ nil))))
+
+(defn- claude-session-summary
+  "Build a summary for a Claude CLI session by reading entries once."
+  [id directory]
+  (let [project-path (or directory (System/getProperty "user.dir"))
+        path (claude/session-log-path id project-path)]
+    (if (fs/exists? path)
+      (let [entries    (claude/read-session-jsonl path)
+            tool-calls (claude/extract-tool-calls entries)
+            transcript (claude/extract-transcript entries)
+            timestamps (keep iso->epoch-ms (keep :timestamp entries))
+            ts-vec     (vec timestamps)
+            model      (->> entries
+                            (filter #(= "assistant" (:type %)))
+                            first
+                            :message
+                            :model)]
+        {:id          id
+         :source      :claude-cli
+         :tool-counts (claude/tool-call-counts tool-calls)
+         :total-calls (count tool-calls)
+         :turn-count  (count transcript)
+         :duration-ms (when (>= (count ts-vec) 2)
+                        (- (peek ts-vec) (first ts-vec)))
+         :cost        nil
+         :model       model})
+      {:id id :source :claude-cli :exists? false})))
+
+(defn- opencode-session-summary
+  "Build a summary for an OpenCode session, enriched with message data."
+  [id]
+  (let [summary (opencode/session-summary id)]
+    (if (:exists? summary)
+      (let [messages    (opencode/session-messages id)
+            duration-ms (when (>= (count messages) 2)
+                          (let [start (:created (first messages))
+                                end   (:updated (last messages))]
+                            (when (and start end (number? start) (number? end))
+                              (- end start))))
+            cost        (let [c (reduce + 0 (keep :cost messages))]
+                          (when (pos? c) c))
+            model       (->> messages
+                             (filter #(= "assistant" (:role %)))
+                             first
+                             :model)]
+        {:id          id
+         :source      :opencode
+         :tool-counts (:tool-counts summary)
+         :total-calls (:total-calls summary)
+         :turn-count  (:turn-count summary)
+         :duration-ms duration-ms
+         :cost        cost
+         :model       model})
+      {:id id :source :opencode :exists? false})))
+
+(defn session-summary
+  "Get a normalized summary for a session from either source.
+
+   Takes a map with:
+   - :id     - session identifier
+   - :source - :claude-cli or :opencode
+   - :directory - (optional, for :claude-cli) project path, defaults to cwd
+
+   Returns:
+   {:id :source :tool-counts :total-calls :turn-count :duration-ms :cost :model}"
+  [{:keys [id source directory]}]
+  (case source
+    :claude-cli (claude-session-summary id directory)
+    :opencode   (opencode-session-summary id)
+    (throw (ex-info (str "Unknown session source: " source)
+                    {:source source :id id}))))
 
 (comment
   ;; Verify both normalizers produce identical key sets
@@ -128,4 +209,28 @@
 
   ;; Combine filters
   (list-recent-sessions {:client :claude-cli :project "forj" :limit 3})
+
+  ;; --- session-summary ---
+
+  ;; Summary for an opencode session
+  (let [oc-session (first (list-recent-sessions {:client :opencode :limit 1}))]
+    (when oc-session
+      (session-summary {:id (:id oc-session) :source :opencode})))
+
+  ;; Summary for a claude-cli session
+  (let [cl-session (first (list-recent-sessions {:client :claude-cli :limit 1}))]
+    (when cl-session
+      (session-summary {:id (:id cl-session)
+                        :source :claude-cli
+                        :directory (:directory cl-session)})))
+
+  ;; Non-existent session
+  (session-summary {:id "fake-id" :source :opencode})
+  ;; => {:id "fake-id" :source :opencode :exists? false}
+
+  ;; Check normalized keys
+  (let [oc-session (first (list-recent-sessions {:client :opencode :limit 1}))]
+    (when oc-session
+      (keys (session-summary {:id (:id oc-session) :source :opencode}))))
+  ;; => (:id :source :tool-counts :total-calls :turn-count :duration-ms :cost :model)
   )
