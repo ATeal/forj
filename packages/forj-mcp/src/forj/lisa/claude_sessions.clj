@@ -210,15 +210,45 @@
         :exists? false
         :path (str path)}))))
 
+(defn- try-decode-path
+  "Greedily decode an encoded project path by checking the filesystem.
+   At each hyphen boundary, checks if the path so far is a directory.
+   If yes, treats the hyphen as a /. If no, treats it as a literal hyphen."
+  [segments]
+  (when (seq segments)
+    (loop [built ""
+           current (first segments)
+           remaining (rest segments)]
+      (if (empty? remaining)
+        (str built "/" current)
+        (let [candidate (str built "/" current)]
+          (if (fs/directory? candidate)
+            (recur candidate (first remaining) (rest remaining))
+            (recur built (str current "-" (first remaining)) (rest remaining))))))))
+
+(defn- naive-decode-path
+  "Simple decode: replace all hyphens with slashes."
+  [encoded]
+  (-> (str encoded)
+      (str/replace-first #"^-" "/")
+      (str/replace "-" "/")))
+
 (defn decode-project-path
   "Best-effort decode of a Claude project directory name back to a filesystem path.
-   Reverses encode-project-path by replacing leading - with / and remaining - with /.
-   Note: lossy for paths that originally contained hyphens."
+   Uses filesystem checks to disambiguate hyphens that were originally slashes
+   from those that are part of directory/project names (e.g., my-project).
+   Falls back to naive decode when the smart result doesn't exist on disk."
   [encoded]
   (when encoded
-    (-> (str encoded)
-        (str/replace-first #"^-" "/")
-        (str/replace "-" "/"))))
+    (let [segments (-> (str encoded)
+                       (str/replace-first #"^-" "")
+                       (str/split #"-"))
+          smart (try-decode-path segments)
+          naive (naive-decode-path encoded)]
+      (cond
+        (fs/exists? smart) smart
+        (fs/exists? naive) naive
+        :else smart))))
 
 (defn- parse-first-lines
   "Read up to n lines from a JSONL file, parse each as JSON.
@@ -325,7 +355,6 @@
 
   ;; Get session log path
   (str (session-log-path "fdf605bc-e601-41c7-89be-0c24bfeebb04"))
-  ;; => "/home/user/.claude/projects/-home-user-Projects-github-my-project/fdf605bc-e601-41c7-89be-0c24bfeebb04.jsonl"
 
   ;; Read a session
   (def entries (read-session-jsonl
@@ -342,9 +371,13 @@
   ;; Full summary
   (session-tool-summary "fdf605bc-e601-41c7-89be-0c24bfeebb04")
 
-  ;; Decode project path
+  ;; Decode project path - should preserve hyphens in project name
   (decode-project-path "-home-arteal-Projects-github-forj")
   ;; => "/home/arteal/Projects/github/forj"
+
+  ;; Smart decode - project with hyphens in name
+  (decode-project-path "-home-arteal-Projects-github-my-project")
+  ;; => "/home/arteal/Projects/github/my-project" (if exists on disk)
 
   ;; List all sessions
   (let [sessions (list-sessions)]
@@ -356,4 +389,9 @@
   (let [sessions (list-sessions)]
     (= (map :updated sessions)
        (reverse (sort (map :updated sessions)))))
-  )
+
+  ;; Verify project paths with hyphens decode correctly
+  (->> (list-sessions)
+       (map :project-path)
+       distinct
+       sort))
