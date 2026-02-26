@@ -1,6 +1,9 @@
 (ns forj.lisa.sessions
   "Unified session interface across Claude CLI and OpenCode.
-   Normalizes session data from both sources into a common shape.")
+   Normalizes session data from both sources into a common shape."
+  (:require [forj.lisa.claude-sessions :as claude]
+            [forj.lisa.opencode-sessions :as opencode]
+            [clojure.string :as str]))
 
 (def common-keys
   "The set of keys present in every normalized session map."
@@ -32,6 +35,36 @@
    :created      (:created raw)
    :updated      (:updated raw)
    :client-label "OpenCode"})
+
+(defn list-recent-sessions
+  "Return recent sessions from both Claude CLI and OpenCode, merged and sorted.
+
+   Options (all optional):
+   - :since    - epoch ms; only sessions updated after this time
+   - :project  - substring match on :directory
+   - :client   - :claude-cli or :opencode; nil for both
+   - :limit    - max results (default 20)"
+  ([] (list-recent-sessions {}))
+  ([{:keys [since project client limit] :or {limit 20}}]
+   (let [claude-sessions  (when-not (= client :opencode)
+                            (try
+                              (->> (claude/list-sessions)
+                                   (mapv normalize-claude-session))
+                              (catch Exception _ [])))
+         opencode-sessions (when-not (= client :claude-cli)
+                             (try
+                               (->> (opencode/list-sessions)
+                                    (mapv normalize-opencode-session))
+                               (catch Exception _ [])))
+         all (concat (or claude-sessions []) (or opencode-sessions []))]
+     (cond->> all
+       since   (filter #(and (:updated %) (> (:updated %) since)))
+       project (filter #(and (:directory %)
+                              (str/includes? (str/lower-case (str (:directory %)))
+                                             (str/lower-case project))))
+       true    (sort-by :updated #(compare %2 %1))
+       true    (take limit)
+       true    vec))))
 
 (comment
   ;; Verify both normalizers produce identical key sets
@@ -69,4 +102,30 @@
      :project-name "forj"
      :created 1700000000000
      :updated 1700001000000})
+
+  ;; --- list-recent-sessions ---
+
+  ;; All sessions, default limit 20
+  (let [sessions (list-recent-sessions)]
+    {:count (count sessions)
+     :sources (frequencies (map :source sessions))
+     :first (first sessions)})
+
+  ;; Sorted by :updated desc?
+  (let [sessions (list-recent-sessions)]
+    (= (map :updated sessions)
+       (reverse (sort (map :updated sessions)))))
+
+  ;; Filter by client
+  (count (list-recent-sessions {:client :claude-cli}))
+  (count (list-recent-sessions {:client :opencode}))
+
+  ;; Filter by project substring
+  (list-recent-sessions {:project "forj" :limit 5})
+
+  ;; Filter by since (last 24 hours)
+  (list-recent-sessions {:since (- (System/currentTimeMillis) 86400000)})
+
+  ;; Combine filters
+  (list-recent-sessions {:client :claude-cli :project "forj" :limit 3})
   )
