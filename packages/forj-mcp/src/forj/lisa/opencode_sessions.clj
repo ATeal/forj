@@ -66,6 +66,47 @@
                 ORDER BY time_created"
                session-id)))
 
+(defn- parse-part
+  "Parse a raw part row, extracting fields from the JSON data column."
+  [row]
+  (let [data (json/parse-string (:data row) true)]
+    (merge {:type     (:type data)
+            :created  (:time_created row)
+            :updated  (:time_updated row)}
+           (case (:type data)
+             "tool" {:call-id (:callID data)
+                     :tool    (:tool data)
+                     :input   (get-in data [:state :input])
+                     :status  (get-in data [:state :status])
+                     :output  (get-in data [:state :output])}
+             "text" {:text (:text data)}
+             "step-start" {}
+             {}))))
+
+(defn session-parts
+  "Return parts for a session, ordered by time_created.
+   Each part is a map with :type plus type-specific fields.
+   Tool parts include :call-id :tool :input :status :output."
+  [session-id]
+  (mapv parse-part
+        (query "SELECT id, session_id, time_created, time_updated, data
+                FROM part
+                WHERE session_id = ?
+                ORDER BY time_created"
+               session-id)))
+
+(defn extract-tool-calls
+  "Extract tool call info from session parts.
+   Returns a vec of maps with :name :input :id matching the shape
+   from claude-sessions/extract-tool-calls."
+  [parts]
+  (->> parts
+       (filter #(= "tool" (:type %)))
+       (mapv (fn [part]
+               {:name  (:tool part)
+                :input (:input part)
+                :id    (:call-id part)}))))
+
 (comment
   ;; Check DB exists
   (db-path)
@@ -91,4 +132,17 @@
 
   ;; Count messages
   (count (session-messages sid))
+
+  ;; Get parts for a session
+  (session-parts sid)
+
+  ;; Check part types
+  (frequencies (map :type (session-parts sid)))
+
+  ;; Extract tool calls
+  (extract-tool-calls (session-parts sid))
+
+  ;; Check tool call keys match claude-sessions shape
+  (keys (first (extract-tool-calls (session-parts sid))))
+  ;; => (:name :input :id)
   )
