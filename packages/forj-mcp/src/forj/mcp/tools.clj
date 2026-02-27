@@ -10,6 +10,7 @@
             [forj.lisa.claude-sessions :as claude-sessions]
             [forj.lisa.plan-edn :as plan-edn]
             [forj.lisa.platform :as platform]
+            [forj.lisa.review :as review]
             [forj.lisa.sessions :as sessions]
             [forj.lisa.validation :as lisa-validation]
             [forj.scaffold :as scaffold]))
@@ -341,6 +342,12 @@
                                :iteration {:type "integer"
                                            :description "Iteration number (e.g., 1, 2, 3). Omit for latest."}
                                :path {:type "string"
+                                      :description "Project path (defaults to current directory)"}}}}
+
+   {:name "lisa_run_review"
+    :description "Generate a post-completion review of the last Lisa Loop run. Shows per-checkpoint stats, code changes, signs, and REPL compliance. Works after loop completion or on-demand for past runs."
+    :inputSchema {:type "object"
+                  :properties {:path {:type "string"
                                       :description "Project path (defaults to current directory)"}}}}
 
    {:name "lisa_plan_to_tasks"
@@ -2087,6 +2094,33 @@
       {:success false
        :error (str "Failed to get loop status: " (.getMessage e))})))
 
+(defn lisa-run-review
+  "Generate a post-completion review of the last Lisa Loop run."
+  [{:keys [path] :or {path "."}}]
+  (try
+    (let [project-path (str (fs/normalize (fs/absolutize path)))]
+      (if-not (plan-edn/plan-exists? project-path)
+        {:success false
+         :error "No LISA_PLAN.edn found. Run a Lisa Loop first."}
+        (let [;; Reconstruct a minimal loop-result from meta files
+              log-dir (str (fs/path project-path ".forj/logs/lisa"))
+              meta-files (when (fs/exists? log-dir)
+                           (->> (fs/glob log-dir "*-meta.json")
+                                (mapv #(json/parse-string (slurp (str %)) true))))
+              iterations (count meta-files)
+              review-data (review/gather-review-data project-path
+                                                     {:status :complete
+                                                      :iterations iterations
+                                                      :total-cost 0.0
+                                                      :total-input-tokens 0
+                                                      :total-output-tokens 0})]
+          {:success true
+           :review review-data
+           :formatted (review/format-review review-data)})))
+    (catch Exception e
+      {:success false
+       :error (str "Failed to generate review: " (.getMessage e))})))
+
 (defn- find-meta-file
   "Find meta file for a checkpoint/iteration, or the latest one if not specified."
   [log-dir checkpoint-id iteration]
@@ -2298,6 +2332,7 @@
    ;; Validation tools
    "lisa_run_validation" lisa-run-validation
    "lisa_check_gates"    lisa-check-gates
+   "lisa_run_review"     lisa-run-review
    ;; Monitoring
    "lisa_watch" lisa-watch
    "lisa_inspect_iteration" lisa-inspect-iteration

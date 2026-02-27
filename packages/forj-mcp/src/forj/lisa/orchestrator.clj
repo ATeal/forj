@@ -14,7 +14,8 @@
             [clojure.string :as str]
             [forj.lisa.analytics :as analytics]
             [forj.lisa.plan-edn :as plan-edn]
-            [forj.lisa.platform :as platform]))
+            [forj.lisa.platform :as platform]
+            [forj.lisa.review :as review]))
 
 (def default-config
   {:platform :claude  ;; :claude or :opencode
@@ -27,7 +28,8 @@
    ;; nil = disabled, idle timeout is the primary stuck detector
    :iteration-timeout-ms nil             ;; Disabled by default (use --iteration-timeout to enable)
    :idle-timeout-ms (* 5 60 1000)        ;; 5 minutes with no file activity
-   :max-checkpoint-failures 3}           ;; Skip checkpoint after N consecutive failures
+   :max-checkpoint-failures 3            ;; Skip checkpoint after N consecutive failures
+   :review true}                         ;; Print post-completion review
   ;; Platform-specific keys (:cli, :mcp-config, :allowed-tools, :agent) are
   ;; merged from platform/platform-config at runtime
   )
@@ -1155,14 +1157,16 @@
      --platform PLATFORM    Platform: claude or opencode (default: auto-detect)
      --iteration-timeout N  Timeout per iteration in seconds (disabled by default)
      --idle-timeout N       Kill if no file activity for N seconds (default: 300 = 5 min)
-     --no-timeout           Disable all timeouts"
+     --no-timeout           Disable all timeouts
+     --no-review            Skip post-completion review summary"
   [& args]
   (let [;; Parse args
         {:keys [project-path max-iterations parallel max-parallel verbose platform
-                iteration-timeout idle-timeout no-timeout]}
+                iteration-timeout idle-timeout no-timeout no-review]}
         (loop [args args
                opts {:project-path "." :max-iterations 20 :parallel true :max-parallel 3
-                     :verbose false :platform nil :iteration-timeout nil :idle-timeout 300 :no-timeout false}]
+                     :verbose false :platform nil :iteration-timeout nil :idle-timeout 300
+                     :no-timeout false :no-review false}]
           (if (empty? args)
             opts
             (let [[arg & more] args]
@@ -1175,6 +1179,9 @@
 
                 (= "--no-timeout" arg)
                 (recur more (assoc opts :no-timeout true))
+
+                (= "--no-review" arg)
+                (recur more (assoc opts :no-review true))
 
                 (= "--platform" arg)
                 (recur (rest more) (assoc opts :platform (keyword (first more))))
@@ -1233,6 +1240,15 @@
                                                          (println (str "[Lisa] Checkpoint " (:id cp) " complete")))
                                :on-complete (fn [_plan cost]
                                               (println (str "[Lisa] All checkpoints complete! Total cost: $" cost)))})]
+        ;; Post-completion review
+        (when (and (not no-review) (= :complete (:status result)))
+          (try
+            (let [review-data (review/gather-review-data project-path result)]
+              (println)
+              (println (review/format-review review-data)))
+            (catch Exception e
+              (println (str "[Lisa] Review generation failed: " (.getMessage e))))))
+
         (println "[Lisa] Final status:" (:status result))
         (println "[Lisa] Total iterations:" (:iterations result))
         (println "[Lisa] Total tokens:" (:total-input-tokens result) "in /" (:total-output-tokens result) "out")
