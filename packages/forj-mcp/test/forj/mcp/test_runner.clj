@@ -7,6 +7,7 @@
             [forj.lisa.claude-sessions-test]
             [forj.lisa.sessions-test]
             [forj.lisa.plan-edn-test]
+            [forj.lisa.review-test]
             [forj.lisa.validation-test]
             [forj.scaffold-test]))
 
@@ -17,6 +18,7 @@
                             'forj.lisa.claude-sessions-test
                             'forj.lisa.sessions-test
                             'forj.lisa.plan-edn-test
+                            'forj.lisa.review-test
                             'forj.lisa.validation-test
                             'forj.scaffold-test)]
     (if (and (zero? (:fail result))
