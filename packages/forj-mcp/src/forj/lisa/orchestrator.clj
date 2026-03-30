@@ -812,111 +812,132 @@
         _ (cleanup-previous-run! project-path config)
         ;; Reset any orphaned in-progress checkpoints from previous crashed runs
         _ (reset-orphaned-checkpoints! project-path #{})
-        max-parallel (:max-parallel config)]
+        max-parallel (:max-parallel config)
+        ;; Pre-flight: detect stale completed plan before entering loop
+        initial-plan (plan-edn/read-plan project-path)]
 
-    (println (str "[Lisa] Starting parallel execution (max " max-parallel " concurrent)"))
+    (cond
+      (nil? initial-plan)
+      {:status :error
+       :error "No LISA_PLAN.edn found. Use lisa_create_plan to create a plan before running the orchestrator."
+       :iterations 0
+       :total-cost 0.0
+       :total-input-tokens 0
+       :total-output-tokens 0}
 
-    (loop [iteration 1
-           active-procs []
-           total-cost 0.0
-           total-input 0
-           total-output 0]
+      (plan-edn/all-complete? initial-plan)
+      {:status :error
+       :error "Existing LISA_PLAN.edn is already complete. Use lisa_create_plan to create a new plan before running the orchestrator."
+       :iterations 0
+       :total-cost 0.0
+       :total-input-tokens 0
+       :total-output-tokens 0}
+
+      :else
+      (do
+        (println (str "[Lisa] Starting parallel execution (max " max-parallel " concurrent)"))
+
+        (loop [iteration 1
+               active-procs []
+               total-cost 0.0
+               total-input 0
+               total-output 0]
 
       ;; Check for completion or limits
-      (let [plan (plan-edn/read-plan project-path)]
-        (cond
+          (let [plan (plan-edn/read-plan project-path)]
+            (cond
           ;; All done
-          (plan-edn/all-complete? plan)
-          (let [result {:status :complete
-                        :iterations iteration
-                        :total-cost total-cost
-                        :total-input-tokens total-input
-                        :total-output-tokens total-output}]
-            (println "[Lisa] All checkpoints complete!")
-            (when on-complete (on-complete plan total-cost))
-            result)
+              (plan-edn/all-complete? plan)
+              (let [result {:status :complete
+                            :iterations iteration
+                            :total-cost total-cost
+                            :total-input-tokens total-input
+                            :total-output-tokens total-output}]
+                (println "[Lisa] All checkpoints complete!")
+                (when on-complete (on-complete plan total-cost))
+                result)
 
           ;; Max iterations
-          (> iteration (:max-iterations config))
-          {:status :max-iterations
-           :iterations iteration
-           :total-cost total-cost
-           :total-input-tokens total-input
-           :total-output-tokens total-output}
+              (> iteration (:max-iterations config))
+              {:status :max-iterations
+               :iterations iteration
+               :total-cost total-cost
+               :total-input-tokens total-input
+               :total-output-tokens total-output}
 
-          :else
+              :else
           ;; Main parallel loop logic
-          (let [;; Check which active processes have completed (or idle-killed)
-                checked-procs (mapv #(check-process-complete % project-path config) active-procs)
-                completed (filter :completed checked-procs)
-                still-active (remove :completed checked-procs)
+              (let [;; Check which active processes have completed (or idle-killed)
+                    checked-procs (mapv #(check-process-complete % project-path config) active-procs)
+                    completed (filter :completed checked-procs)
+                    still-active (remove :completed checked-procs)
 
                 ;; Process completions
-                _ (when (seq completed)
-                    (process-completed-checkpoints! project-path completed config)
+                    _ (when (seq completed)
+                        (process-completed-checkpoints! project-path completed config)
                     ;; Only call callback for checkpoints that actually succeeded
-                    (doseq [{:keys [checkpoint succeeded checkpoint-complete]} completed]
-                      (when (and on-checkpoint-complete succeeded checkpoint-complete)
-                        (on-checkpoint-complete checkpoint))))
+                        (doseq [{:keys [checkpoint succeeded checkpoint-complete]} completed]
+                          (when (and on-checkpoint-complete succeeded checkpoint-complete)
+                            (on-checkpoint-complete checkpoint))))
 
                 ;; Sum up costs from completed
-                costs (sum-costs completed)
+                    costs (sum-costs completed)
 
                 ;; Re-read plan to get updated ready checkpoints
-                ready (when (< (count still-active) max-parallel)
-                        (let [fresh-plan (plan-edn/read-plan project-path)
-                              ready-cps (plan-edn/ready-checkpoints fresh-plan)
-                              active-ids (set (map :checkpoint-id still-active))]
+                    ready (when (< (count still-active) max-parallel)
+                            (let [fresh-plan (plan-edn/read-plan project-path)
+                                  ready-cps (plan-edn/ready-checkpoints fresh-plan)
+                                  active-ids (set (map :checkpoint-id still-active))]
                           ;; Filter out already active checkpoints
-                          (remove #(active-ids (:id %)) ready-cps)))
+                              (remove #(active-ids (:id %)) ready-cps)))
 
                 ;; How many new processes to spawn
-                slots-available (- max-parallel (count still-active))
-                to-spawn (take slots-available ready)
+                    slots-available (- max-parallel (count still-active))
+                    to-spawn (take slots-available ready)
 
                 ;; Spawn new processes
-                new-procs (when (seq to-spawn)
-                            (println (str "[Lisa] Spawning " (count to-spawn)
-                                          " parallel checkpoint(s): "
-                                          (str/join ", " (map #(name (:id %)) to-spawn))))
-                            (mapv #(spawn-checkpoint-process! project-path % config log-dir iteration)
-                                  to-spawn))
+                    new-procs (when (seq to-spawn)
+                                (println (str "[Lisa] Spawning " (count to-spawn)
+                                              " parallel checkpoint(s): "
+                                              (str/join ", " (map #(name (:id %)) to-spawn))))
+                                (mapv #(spawn-checkpoint-process! project-path % config log-dir iteration)
+                                      to-spawn))
 
                 ;; Combine active processes
-                all-active (into (vec still-active) new-procs)]
+                    all-active (into (vec still-active) new-procs)]
 
             ;; If nothing active and nothing to spawn, check for orphaned in-progress
-            (if (and (empty? all-active) (empty? to-spawn))
-              (let [;; Check if there are orphaned in-progress checkpoints
-                    fresh-plan (plan-edn/read-plan project-path)
-                    in-progress (filter #(= :in-progress (:status %)) (:checkpoints fresh-plan))]
-                (if (seq in-progress)
+                (if (and (empty? all-active) (empty? to-spawn))
+                  (let [;; Check if there are orphaned in-progress checkpoints
+                        fresh-plan (plan-edn/read-plan project-path)
+                        in-progress (filter #(= :in-progress (:status %)) (:checkpoints fresh-plan))]
+                    (if (seq in-progress)
                   ;; Reset orphaned checkpoints and continue
-                  (do
-                    (println "[Lisa] Detected orphaned in-progress checkpoints, resetting...")
-                    (reset-orphaned-checkpoints! project-path #{})
-                    (Thread/sleep (:poll-interval-ms config))
-                    (recur iteration all-active
-                           (+ total-cost (:cost costs))
-                           (+ total-input (:input costs))
-                           (+ total-output (:output costs))))
+                      (do
+                        (println "[Lisa] Detected orphaned in-progress checkpoints, resetting...")
+                        (reset-orphaned-checkpoints! project-path #{})
+                        (Thread/sleep (:poll-interval-ms config))
+                        (recur iteration all-active
+                               (+ total-cost (:cost costs))
+                               (+ total-input (:input costs))
+                               (+ total-output (:output costs))))
                   ;; Truly stuck - no pending or in-progress checkpoints
-                  (do
-                    (println "[Lisa] No active processes and no ready checkpoints - stuck")
-                    {:status :stuck
-                     :iterations iteration
-                     :total-cost (+ total-cost (:cost costs))
-                     :total-input-tokens (+ total-input (:input costs))
-                     :total-output-tokens (+ total-output (:output costs))})))
+                      (do
+                        (println "[Lisa] No active processes and no ready checkpoints - stuck")
+                        {:status :stuck
+                         :iterations iteration
+                         :total-cost (+ total-cost (:cost costs))
+                         :total-input-tokens (+ total-input (:input costs))
+                         :total-output-tokens (+ total-output (:output costs))})))
 
               ;; Continue loop - poll interval
-              (do
-                (Thread/sleep (:poll-interval-ms config))
-                (recur (if (seq completed) (inc iteration) iteration)
-                       all-active
-                       (+ total-cost (:cost costs))
-                       (+ total-input (:input costs))
-                       (+ total-output (:output costs)))))))))))
+                  (do
+                    (Thread/sleep (:poll-interval-ms config))
+                    (recur (if (seq completed) (inc iteration) iteration)
+                           all-active
+                           (+ total-cost (:cost costs))
+                           (+ total-input (:input costs))
+                           (+ total-output (:output costs)))))))))))))
 
 (defn run-loop!
   "Run the Lisa Loop orchestrator.
@@ -938,172 +959,192 @@
                         (platform/platform-config (or (:platform opts) (:platform default-config)))
                         opts)
           log-dir (ensure-log-dir! project-path config)
-          _ (cleanup-previous-run! project-path config)]
+          _ (cleanup-previous-run! project-path config)
+          ;; Pre-flight: detect stale completed plan before entering loop
+          initial-plan (read-plan project-path)]
 
-      (loop [iteration 1
-             total-cost 0.0
-             total-input-tokens 0
-             total-output-tokens 0]
-        (let [plan (read-plan project-path)]
+      (cond
+        (nil? initial-plan)
+        {:status :error
+         :error "No LISA_PLAN.edn found. Use lisa_create_plan to create a plan before running the orchestrator."
+         :iterations 0
+         :total-cost 0.0
+         :total-input-tokens 0
+         :total-output-tokens 0}
 
-          (cond
+        (plan-all-complete? initial-plan)
+        {:status :error
+         :error "Existing LISA_PLAN.edn is already complete. Use lisa_create_plan to create a new plan before running the orchestrator."
+         :iterations 0
+         :total-cost 0.0
+         :total-input-tokens 0
+         :total-output-tokens 0}
+
+        :else
+        (loop [iteration 1
+               total-cost 0.0
+               total-input-tokens 0
+               total-output-tokens 0]
+          (let [plan (read-plan project-path)]
+
+            (cond
           ;; No plan found
-            (nil? plan)
-            {:status :error
-             :error "No LISA_PLAN.edn found"
-             :iterations iteration
-             :total-cost total-cost
-             :total-input-tokens total-input-tokens
-             :total-output-tokens total-output-tokens}
+              (nil? plan)
+              {:status :error
+               :error "No LISA_PLAN.edn found"
+               :iterations iteration
+               :total-cost total-cost
+               :total-input-tokens total-input-tokens
+               :total-output-tokens total-output-tokens}
 
           ;; All checkpoints complete
-            (plan-all-complete? plan)
-            (let [result {:status :complete
-                          :iterations (dec iteration)
-                          :total-cost total-cost
-                          :total-input-tokens total-input-tokens
-                          :total-output-tokens total-output-tokens}]
-              (when on-complete (on-complete plan total-cost))
-              result)
+              (plan-all-complete? plan)
+              (let [result {:status :complete
+                            :iterations (dec iteration)
+                            :total-cost total-cost
+                            :total-input-tokens total-input-tokens
+                            :total-output-tokens total-output-tokens}]
+                (when on-complete (on-complete plan total-cost))
+                result)
 
           ;; Max iterations reached
-            (> iteration (:max-iterations config))
-            {:status :max-iterations
-             :iterations iteration
-             :total-cost total-cost
-             :total-input-tokens total-input-tokens
-             :total-output-tokens total-output-tokens}
+              (> iteration (:max-iterations config))
+              {:status :max-iterations
+               :iterations iteration
+               :total-cost total-cost
+               :total-input-tokens total-input-tokens
+               :total-output-tokens total-output-tokens}
 
           ;; Run iteration
-            :else
-            (let [checkpoint (plan-current-checkpoint plan)
-                  cp-id (:id checkpoint)
-                  cp-display cp-id
-                  max-failures (:max-checkpoint-failures config)]
+              :else
+              (let [checkpoint (plan-current-checkpoint plan)
+                    cp-id (:id checkpoint)
+                    cp-display cp-id
+                    max-failures (:max-checkpoint-failures config)]
 
             ;; Check if checkpoint should be skipped due to repeated failures
-              (if (and cp-id max-failures (should-skip-checkpoint? project-path cp-id max-failures))
-                (do
-                  (println (str "[Lisa] ⚠ Skipping checkpoint " cp-display " after " max-failures " consecutive failures"))
-                  (append-sign! project-path iteration
-                                (str "Checkpoint " cp-display " skipped after " max-failures " failures")
-                                "Consider breaking into smaller tasks or manual intervention")
+                (if (and cp-id max-failures (should-skip-checkpoint? project-path cp-id max-failures))
+                  (do
+                    (println (str "[Lisa] ⚠ Skipping checkpoint " cp-display " after " max-failures " consecutive failures"))
+                    (append-sign! project-path iteration
+                                  (str "Checkpoint " cp-display " skipped after " max-failures " failures")
+                                  "Consider breaking into smaller tasks or manual intervention")
                 ;; Mark as failed and continue to next
-                  (plan-edn/mark-checkpoint-failed! project-path cp-id "Too many failures")
-                  (recur (inc iteration) total-cost total-input-tokens total-output-tokens))
+                    (plan-edn/mark-checkpoint-failed! project-path cp-id "Too many failures")
+                    (recur (inc iteration) total-cost total-input-tokens total-output-tokens))
 
               ;; Normal iteration
-                (let [signs (read-signs project-path)
-                      prompt (build-iteration-prompt config plan checkpoint signs)
-                      log-file (str (fs/path log-dir (str "iter-" iteration ".json")))
+                  (let [signs (read-signs project-path)
+                        prompt (build-iteration-prompt config plan checkpoint signs)
+                        log-file (str (fs/path log-dir (str "iter-" iteration ".json")))
                     ;; Snapshot checkpoint count before spawning (for review checkpoint verification)
-                      pre-checkpoint-count (count (:checkpoints plan))
-                      is-review? (plan-edn/review-checkpoint? checkpoint)
+                        pre-checkpoint-count (count (:checkpoints plan))
+                        is-review? (plan-edn/review-checkpoint? checkpoint)
 
-                      _ (println (str "[Lisa] Iteration " iteration ": Checkpoint " cp-display
-                                      (when is-review? " [REVIEW]")
-                                      " - " (:description checkpoint)))
+                        _ (println (str "[Lisa] Iteration " iteration ": Checkpoint " cp-display
+                                        (when is-review? " [REVIEW]")
+                                        " - " (:description checkpoint)))
 
-                      {:keys [process stream session-id]} (spawn-iteration! project-path prompt config log-file)
+                        {:keys [process stream session-id]} (spawn-iteration! project-path prompt config log-file)
                     ;; Write metadata file with session-id for later correlation
-                      _ (write-iteration-metadata! log-file session-id cp-id iteration)
-                      wait-result (wait-for-process-with-timeout process project-path config)
-                      wait-status (:status wait-result)
+                        _ (write-iteration-metadata! log-file session-id cp-id iteration)
+                        wait-result (wait-for-process-with-timeout process project-path config)
+                        wait-status (:status wait-result)
                     ;; Stop the stream when process completes
-                      _ (stop-stream! stream)]
+                        _ (stop-stream! stream)]
 
                 ;; Handle timeout/idle cases
-                  (if (#{:timeout :idle} wait-status)
-                    (do
+                    (if (#{:timeout :idle} wait-status)
+                      (do
                     ;; Update meta file with timeout error
-                      (update-iteration-metadata! log-file false (:reason wait-result))
-                      (append-sign! project-path iteration
-                                    (:reason wait-result)
-                                    "Consider breaking checkpoint into smaller tasks")
-                      (recur (inc iteration) total-cost total-input-tokens total-output-tokens))
+                        (update-iteration-metadata! log-file false (:reason wait-result))
+                        (append-sign! project-path iteration
+                                      (:reason wait-result)
+                                      "Consider breaking checkpoint into smaller tasks")
+                        (recur (inc iteration) total-cost total-input-tokens total-output-tokens))
 
                   ;; Normal completion - parse result
-                    (let [result (parse-iteration-result config log-file)
-                          iteration-cost (or (:total_cost_usd result) 0.0)
-                          usage (:usage result)
-                          iter-input (+ (or (:input_tokens usage) 0)
-                                        (or (:cache_read_input_tokens usage) 0)
-                                        (or (:cache_creation_input_tokens usage) 0))
-                          iter-output (or (:output_tokens usage) 0)
-                          _ (println (str "[Lisa] Tokens: " iter-input " in / " iter-output " out, Cost: $" (format "%.2f" iteration-cost)))
+                      (let [result (parse-iteration-result config log-file)
+                            iteration-cost (or (:total_cost_usd result) 0.0)
+                            usage (:usage result)
+                            iter-input (+ (or (:input_tokens usage) 0)
+                                          (or (:cache_read_input_tokens usage) 0)
+                                          (or (:cache_creation_input_tokens usage) 0))
+                            iter-output (or (:output_tokens usage) 0)
+                            _ (println (str "[Lisa] Tokens: " iter-input " in / " iter-output " out, Cost: $" (format "%.2f" iteration-cost)))
                         ;; Log analytics when verbose (stream-json provides tool call data)
                         ;; and auto-append sign for poor compliance
-                          compliance (when (:verbose config)
-                                       (log-iteration-analytics log-file iteration))
-                          _ (when compliance
-                              (maybe-append-compliance-sign! project-path iteration compliance (:description checkpoint)))]
+                            compliance (when (:verbose config)
+                                         (log-iteration-analytics log-file iteration))
+                            _ (when compliance
+                                (maybe-append-compliance-sign! project-path iteration compliance (:description checkpoint)))]
 
                     ;; Call iteration callback if provided
-                      (when on-iteration
-                        (on-iteration iteration result))
+                        (when on-iteration
+                          (on-iteration iteration result))
 
-                      (cond
+                        (cond
                       ;; Iteration failed
-                        (not (iteration-succeeded? result))
-                        (do
-                          (println (str "[Lisa] Iteration " iteration " failed"))
-                          (let [error-msg (or (:error result)
-                                              (extract-blocked-reason result)
-                                              "Iteration failed")]
-                          ;; Update meta file with failure
-                            (update-iteration-metadata! log-file false error-msg)
-                            (when-let [blocked (extract-blocked-reason result)]
-                              (append-sign! project-path iteration blocked "Needs resolution")))
-                          (recur (inc iteration)
-                                 (+ total-cost iteration-cost)
-                                 (+ total-input-tokens iter-input)
-                                 (+ total-output-tokens iter-output)))
-
-                      ;; Checkpoint completed - verify review checkpoints extended the plan
-                        (checkpoint-completed? result)
-                        (if (and is-review?
-                                 (let [fresh-plan (plan-edn/read-plan project-path)
-                                       post-count (count (:checkpoints fresh-plan))]
-                                   (<= post-count pre-checkpoint-count)))
-                        ;; Review checkpoint didn't add new checkpoints — reject
+                          (not (iteration-succeeded? result))
                           (do
-                            (println (str "[Lisa] ⚠ Review checkpoint " cp-display
-                                          " claimed complete but did not add new checkpoints — rejecting"))
-                            ;; The spawned iteration already called lisa_mark_checkpoint_done,
-                            ;; so reset checkpoint back to in-progress for the next attempt
-                            (-> (plan-edn/read-plan project-path)
-                                (plan-edn/update-checkpoint cp-id {:status :in-progress})
-                                (->> (plan-edn/write-plan! project-path)))
-                            (append-sign! project-path iteration
-                                          (str "Review checkpoint " cp-display " did not extend plan")
-                                          "Review checkpoints MUST call lisa_add_checkpoint before marking complete")
-                            (update-iteration-metadata! log-file false "Review checkpoint did not extend plan")
+                            (println (str "[Lisa] Iteration " iteration " failed"))
+                            (let [error-msg (or (:error result)
+                                                (extract-blocked-reason result)
+                                                "Iteration failed")]
+                          ;; Update meta file with failure
+                              (update-iteration-metadata! log-file false error-msg)
+                              (when-let [blocked (extract-blocked-reason result)]
+                                (append-sign! project-path iteration blocked "Needs resolution")))
                             (recur (inc iteration)
                                    (+ total-cost iteration-cost)
                                    (+ total-input-tokens iter-input)
                                    (+ total-output-tokens iter-output)))
+
+                      ;; Checkpoint completed - verify review checkpoints extended the plan
+                          (checkpoint-completed? result)
+                          (if (and is-review?
+                                   (let [fresh-plan (plan-edn/read-plan project-path)
+                                         post-count (count (:checkpoints fresh-plan))]
+                                     (<= post-count pre-checkpoint-count)))
+                        ;; Review checkpoint didn't add new checkpoints — reject
+                            (do
+                              (println (str "[Lisa] ⚠ Review checkpoint " cp-display
+                                            " claimed complete but did not add new checkpoints — rejecting"))
+                            ;; The spawned iteration already called lisa_mark_checkpoint_done,
+                            ;; so reset checkpoint back to in-progress for the next attempt
+                              (-> (plan-edn/read-plan project-path)
+                                  (plan-edn/update-checkpoint cp-id {:status :in-progress})
+                                  (->> (plan-edn/write-plan! project-path)))
+                              (append-sign! project-path iteration
+                                            (str "Review checkpoint " cp-display " did not extend plan")
+                                            "Review checkpoints MUST call lisa_add_checkpoint before marking complete")
+                              (update-iteration-metadata! log-file false "Review checkpoint did not extend plan")
+                              (recur (inc iteration)
+                                     (+ total-cost iteration-cost)
+                                     (+ total-input-tokens iter-input)
+                                     (+ total-output-tokens iter-output)))
                         ;; Normal completion (or review that did extend)
-                          (do
-                            (println (str "[Lisa] Checkpoint " cp-display " complete"))
+                            (do
+                              (println (str "[Lisa] Checkpoint " cp-display " complete"))
                           ;; Update meta file with success
-                            (update-iteration-metadata! log-file true nil)
+                              (update-iteration-metadata! log-file true nil)
                           ;; Auto-commit as rollback point
-                            (auto-commit-checkpoint! project-path cp-display (:description checkpoint))
+                              (auto-commit-checkpoint! project-path cp-display (:description checkpoint))
+                              (recur (inc iteration)
+                                     (+ total-cost iteration-cost)
+                                     (+ total-input-tokens iter-input)
+                                     (+ total-output-tokens iter-output))))
+
+                      ;; Iteration ran but checkpoint not marked complete
+                          :else
+                          (do
+                            (println (str "[Lisa] Iteration " iteration " completed, continuing..."))
+                        ;; Update meta file - iteration succeeded but checkpoint needs more work
+                            (update-iteration-metadata! log-file false "Checkpoint not complete - needs more work")
                             (recur (inc iteration)
                                    (+ total-cost iteration-cost)
                                    (+ total-input-tokens iter-input)
-                                   (+ total-output-tokens iter-output))))
-
-                      ;; Iteration ran but checkpoint not marked complete
-                        :else
-                        (do
-                          (println (str "[Lisa] Iteration " iteration " completed, continuing..."))
-                        ;; Update meta file - iteration succeeded but checkpoint needs more work
-                          (update-iteration-metadata! log-file false "Checkpoint not complete - needs more work")
-                          (recur (inc iteration)
-                                 (+ total-cost iteration-cost)
-                                 (+ total-input-tokens iter-input)
-                                 (+ total-output-tokens iter-output)))))))))))))))
+                                   (+ total-output-tokens iter-output))))))))))))))))
 
 (defn generate-plan!
   "Generate a LISA_PLAN.edn by asking Claude to analyze the task and create checkpoints."
@@ -1250,6 +1291,8 @@
               (println (str "[Lisa] Review generation failed: " (.getMessage e))))))
 
         (println "[Lisa] Final status:" (:status result))
+        (when (:error result)
+          (println "[Lisa] Error:" (:error result)))
         (println "[Lisa] Total iterations:" (:iterations result))
         (println "[Lisa] Total tokens:" (:total-input-tokens result) "in /" (:total-output-tokens result) "out")
         (println "[Lisa] Total cost: $" (format "%.2f" (or (:total-cost result) 0.0)))

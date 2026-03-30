@@ -1,7 +1,50 @@
 (ns forj.lisa.validation-test
   "Tests for forj.lisa.validation"
-  (:require [clojure.test :refer [deftest testing is]]
+  (:require [clojure.test :refer [deftest testing is use-fixtures]]
+            [babashka.process :as p]
             [forj.lisa.validation :as validation]))
+
+;; =============================================================================
+;; Test fixture: start a bb nREPL for REPL validation tests
+;; =============================================================================
+
+(def ^:dynamic *nrepl-port* nil)
+
+(defn- wait-for-nrepl
+  "Poll until nREPL is accepting connections on port, or timeout."
+  [port timeout-ms]
+  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+    (loop []
+      (if (> (System/currentTimeMillis) deadline)
+        false
+        (let [result (p/shell {:out :string :err :string :continue true}
+                              "clj-nrepl-eval" "-p" (str port) "-t" "2000" "(+ 1 1)")]
+          (if (zero? (:exit result))
+            true
+            (do (Thread/sleep 200)
+                (recur))))))))
+
+(defn- find-free-port []
+  (let [ss (java.net.ServerSocket. 0)
+        port (.getLocalPort ss)]
+    (.close ss)
+    port))
+
+(defn nrepl-fixture [f]
+  (let [port (find-free-port)
+        proc (p/process {:out :inherit :err :inherit}
+                        "bb" "--nrepl-server" (str port))]
+    (try
+      (if (wait-for-nrepl port 10000)
+        (binding [*nrepl-port* port]
+          (f))
+        (do
+          (println "WARN: Could not start nREPL for validation tests, skipping REPL tests")
+          (f)))
+      (finally
+        (p/destroy-tree proc)))))
+
+(use-fixtures :once nrepl-fixture)
 
 ;; =============================================================================
 ;; parse-validation-string tests
@@ -67,36 +110,38 @@
 ;; =============================================================================
 
 (deftest run-validation-repl-test
-  (testing "Runs REPL validation with expected result"
-    (let [validation-item {:type :repl :expression "(+ 1 2) => 3" :raw "repl:(+ 1 2) => 3"}
-          result (validation/run-validation validation-item {:port 1669})]
-      (is (= :repl (:type result)))
-      (is (true? (:passed result)))
-      (is (= "3" (:actual result)))
-      (is (= "3" (:expected result)))))
+  (when-not *nrepl-port*
+    (println "SKIP: run-validation-repl-test (no nREPL available)"))
+  (when *nrepl-port*
+    (testing "Runs REPL validation with expected result"
+      (let [validation-item {:type :repl :expression "(+ 1 2) => 3" :raw "repl:(+ 1 2) => 3"}
+            result (validation/run-validation validation-item {:port *nrepl-port*})]
+        (is (= :repl (:type result)))
+        (is (true? (:passed result)))
+        (is (= "3" (:actual result)))
+        (is (= "3" (:expected result)))))
 
-  (testing "Fails REPL validation with wrong expected result"
-    (let [validation-item {:type :repl :expression "(+ 1 2) => 5" :raw "repl:(+ 1 2) => 5"}
-          result (validation/run-validation validation-item {:port 1669})]
-      (is (= :repl (:type result)))
-      (is (false? (:passed result)))
-      (is (= "3" (:actual result)))
-      (is (= "5" (:expected result)))))
+    (testing "Fails REPL validation with wrong expected result"
+      (let [validation-item {:type :repl :expression "(+ 1 2) => 5" :raw "repl:(+ 1 2) => 5"}
+            result (validation/run-validation validation-item {:port *nrepl-port*})]
+        (is (= :repl (:type result)))
+        (is (false? (:passed result)))
+        (is (= "3" (:actual result)))
+        (is (= "5" (:expected result)))))
 
-  (testing "Passes REPL validation without expected result"
-    (let [validation-item {:type :repl :expression "(+ 1 2)" :raw "repl:(+ 1 2)"}
-          result (validation/run-validation validation-item {:port 1669})]
-      (is (= :repl (:type result)))
-      (is (true? (:passed result)))
-      (is (= "3" (:actual result)))
-      (is (nil? (:expected result)))))
+    (testing "Passes REPL validation without expected result"
+      (let [validation-item {:type :repl :expression "(+ 1 2)" :raw "repl:(+ 1 2)"}
+            result (validation/run-validation validation-item {:port *nrepl-port*})]
+        (is (= :repl (:type result)))
+        (is (true? (:passed result)))
+        (is (= "3" (:actual result)))
+        (is (nil? (:expected result)))))
 
-  (testing "Reports error for invalid expression"
-    ;; When expecting a specific value, an error won't match
-    (let [validation-item {:type :repl :expression "(undefined-fn) => 42" :raw "repl:(undefined-fn) => 42"}
-          result (validation/run-validation validation-item {:port 1669})]
-      (is (= :repl (:type result)))
-      (is (false? (:passed result))))))
+    (testing "Reports error for invalid expression"
+      (let [validation-item {:type :repl :expression "(undefined-fn) => 42" :raw "repl:(undefined-fn) => 42"}
+            result (validation/run-validation validation-item {:port *nrepl-port*})]
+        (is (= :repl (:type result)))
+        (is (false? (:passed result)))))))
 
 ;; =============================================================================
 ;; run-validation tests (unknown type)
@@ -114,30 +159,33 @@
 ;; =============================================================================
 
 (deftest run-validations-test
-  (testing "Runs multiple REPL validations"
-    (let [result (validation/run-validations
-                  "repl:(+ 1 2) => 3 | repl:(* 2 3) => 6"
-                  {:port 1669})]
-      (is (true? (:all-passed result)))
-      (is (= 2 (:passed-count result)))
-      (is (= 0 (:failed-count result)))
-      (is (re-find #"PASSED" (:summary result)))))
+  (when-not *nrepl-port*
+    (println "SKIP: run-validations-test (no nREPL available)"))
+  (when *nrepl-port*
+    (testing "Runs multiple REPL validations"
+      (let [result (validation/run-validations
+                    "repl:(+ 1 2) => 3 | repl:(* 2 3) => 6"
+                    {:port *nrepl-port*})]
+        (is (true? (:all-passed result)))
+        (is (= 2 (:passed-count result)))
+        (is (= 0 (:failed-count result)))
+        (is (re-find #"PASSED" (:summary result)))))
 
-  (testing "Reports mixed results correctly"
-    (let [result (validation/run-validations
-                  "repl:(+ 1 2) => 3 | repl:(+ 1 2) => 99"
-                  {:port 1669})]
-      (is (false? (:all-passed result)))
-      (is (= 1 (:passed-count result)))
-      (is (= 1 (:failed-count result)))
-      (is (re-find #"FAILED" (:summary result)))))
+    (testing "Reports mixed results correctly"
+      (let [result (validation/run-validations
+                    "repl:(+ 1 2) => 3 | repl:(+ 1 2) => 99"
+                    {:port *nrepl-port*})]
+        (is (false? (:all-passed result)))
+        (is (= 1 (:passed-count result)))
+        (is (= 1 (:failed-count result)))
+        (is (re-find #"FAILED" (:summary result))))))
 
   (testing "Returns summary for empty validations"
-    (let [result (validation/run-validations "" {:port 1669})]
+    (let [result (validation/run-validations "" {:port 99999})]
       (is (= "No validations defined" (:summary result)))))
 
   (testing "Returns summary for nil validations"
-    (let [result (validation/run-validations nil {:port 1669})]
+    (let [result (validation/run-validations nil {:port 99999})]
       (is (= "No validations defined" (:summary result))))))
 
 ;; =============================================================================
@@ -154,21 +202,21 @@
     (let [result (validation/checkpoint-gates-passed? "   " {})]
       (is (true? (:passed result)))))
 
-  (testing "Passes when all gates pass"
-    (let [result (validation/checkpoint-gates-passed?
-                  "repl:(+ 1 2) => 3"
-                  {:port 1669})]
-      (is (true? (:passed result)))
-      (is (re-find #"PASSED" (:message result)))))
+  (when *nrepl-port*
+    (testing "Passes when all gates pass"
+      (let [result (validation/checkpoint-gates-passed?
+                    "repl:(+ 1 2) => 3"
+                    {:port *nrepl-port*})]
+        (is (true? (:passed result)))
+        (is (re-find #"PASSED" (:message result)))))
 
-  (testing "Fails when any gate fails"
-    (let [result (validation/checkpoint-gates-passed?
-                  "repl:(+ 1 2) => 99"
-                  {:port 1669})]
-      (is (false? (:passed result)))
-      (is (re-find #"FAILED" (:message result))))))
+    (testing "Fails when any gate fails"
+      (let [result (validation/checkpoint-gates-passed?
+                    "repl:(+ 1 2) => 99"
+                    {:port *nrepl-port*})]
+        (is (false? (:passed result)))
+        (is (re-find #"FAILED" (:message result)))))))
 
 (comment
   ;; Run tests from REPL
-  (clojure.test/run-tests 'forj.lisa.validation-test)
-  )
+  (clojure.test/run-tests 'forj.lisa.validation-test))
