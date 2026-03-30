@@ -165,7 +165,7 @@
 
    ;; Lisa Loop v2 tools (planning + orchestration)
    {:name "lisa_create_plan"
-    :description "Create a LISA_PLAN.edn with checkpoints for a task. Supports dependency graphs between checkpoints. IMPORTANT: Pass checkpoints as a native JSON array, not a stringified array. For large plans (>10 checkpoints), consider creating a minimal plan and adding checkpoints individually with lisa_add_checkpoint."
+    :description "Create a LISA_PLAN.edn with checkpoints for a task. Replaces any existing LISA_PLAN.edn. Always create a fresh plan before running the orchestrator. Supports dependency graphs between checkpoints. IMPORTANT: Pass checkpoints as a native JSON array, not a stringified array. For large plans (>10 checkpoints), consider creating a minimal plan and adding checkpoints individually with lisa_add_checkpoint."
     :inputSchema {:type "object"
                   :properties {:title {:type "string"
                                        :description "Plan title (e.g., 'Build user authentication')"}
@@ -234,7 +234,7 @@
                   :required ["id" "description"]}}
 
    {:name "lisa_run_orchestrator"
-    :description "Run the Lisa Loop orchestrator. Spawns fresh instances (Claude or OpenCode) for each iteration until all checkpoints complete. Includes timeout detection (15 min per iteration, 5 min idle) to recover from stuck iterations."
+    :description "Run the Lisa Loop orchestrator. Requires a LISA_PLAN.edn with pending checkpoints — if the existing plan is already complete, returns an error. Use lisa_create_plan first to create a fresh plan. Spawns fresh instances (Claude or OpenCode) for each iteration until all checkpoints complete. Includes timeout detection (15 min per iteration, 5 min idle) to recover from stuck iterations."
     :inputSchema {:type "object"
                   :properties {:path {:type "string"
                                       :description "Project path (defaults to current directory)"}
@@ -1749,56 +1749,67 @@
     :or {path "." max_iterations 20 parallel true max_parallel 3 verbose false
          iteration_timeout nil idle_timeout 300 no_timeout false}}]
   (try
-    (let [project-path (fs/absolutize path)
-          ;; Auto-detect platform if not explicitly provided
-          resolved-platform (platform/resolve-platform platform)
-          log-dir (str (fs/path project-path ".forj/logs/lisa"))
-          _ (fs/create-dirs log-dir)
-          timestamp (-> (java.time.LocalDateTime/now)
-                        (.format (java.time.format.DateTimeFormatter/ofPattern "yyyyMMdd-HHmmss")))
-          log-file (str (fs/path log-dir (str "orchestrator-" timestamp ".log")))
+    (let [project-path (fs/absolutize path)]
+      ;; Pre-flight: check for stale or missing plan before spawning background process
+      (cond
+        (not (plan-edn/plan-exists? (str project-path)))
+        {:success false
+         :error "No LISA_PLAN.edn found. Use lisa_create_plan to create a plan before running the orchestrator."}
+
+        (plan-edn/all-complete? (plan-edn/read-plan (str project-path)))
+        {:success false
+         :error "Existing LISA_PLAN.edn is already complete. Use lisa_create_plan to create a new plan before running the orchestrator."}
+
+        :else
+        (let [;; Auto-detect platform if not explicitly provided
+              resolved-platform (platform/resolve-platform platform)
+              log-dir (str (fs/path project-path ".forj/logs/lisa"))
+              _ (fs/create-dirs log-dir)
+              timestamp (-> (java.time.LocalDateTime/now)
+                            (.format (java.time.format.DateTimeFormatter/ofPattern "yyyyMMdd-HHmmss")))
+              log-file (str (fs/path log-dir (str "orchestrator-" timestamp ".log")))
 
           ;; Build command args - always pass --platform to be explicit
-          cmd-args (cond-> ["bb" "-cp" (System/getProperty "java.class.path")
-                            "-m" "forj.lisa.orchestrator" (str project-path)
-                            "--platform" (name resolved-platform)
-                            "--max-iterations" (str max_iterations)]
-                     (not parallel) (into ["--sequential"])
-                     (and parallel max_parallel) (into ["--max-parallel" (str max_parallel)])
-                     verbose (into ["--verbose"])
-                     no_timeout (into ["--no-timeout"])
-                     (and (not no_timeout) iteration_timeout) (into ["--iteration-timeout" (str iteration_timeout)])
-                     (and (not no_timeout) idle_timeout) (into ["--idle-timeout" (str idle_timeout)]))
+              cmd-args (cond-> ["bb" "-cp" (System/getProperty "java.class.path")
+                                "-m" "forj.lisa.orchestrator" (str project-path)
+                                "--platform" (name resolved-platform)
+                                "--max-iterations" (str max_iterations)]
+                         (not parallel) (into ["--sequential"])
+                         (and parallel max_parallel) (into ["--max-parallel" (str max_parallel)])
+                         verbose (into ["--verbose"])
+                         no_timeout (into ["--no-timeout"])
+                         (and (not no_timeout) iteration_timeout) (into ["--iteration-timeout" (str iteration_timeout)])
+                         (and (not no_timeout) idle_timeout) (into ["--idle-timeout" (str idle_timeout)]))
 
           ;; Spawn detached process with output redirected to log file
-          proc (apply p/process {:dir (str project-path)
-                                 :out (java.io.File. log-file)
-                                 :err :out}  ;; stderr to same file
-                      cmd-args)
-          pid (-> proc :proc .pid)]
+              proc (apply p/process {:dir (str project-path)
+                                     :out (java.io.File. log-file)
+                                     :err :out}  ;; stderr to same file
+                          cmd-args)
+              pid (-> proc :proc .pid)]
 
       ;; Track the orchestrator for cleanup via stop_project
-      (track-process {:pid pid
-                      :name "lisa-orchestrator"
-                      :command (str/join " " (take 6 cmd-args))})
+          (track-process {:pid pid
+                          :name "lisa-orchestrator"
+                          :command (str/join " " (take 6 cmd-args))})
 
-      {:success true
-       :message (str "Lisa Loop orchestrator started ("
-                     (name resolved-platform) " platform, "
-                     (if parallel
-                       (str "parallel mode, max " max_parallel " concurrent")
-                       "sequential mode")
-                     (when verbose ", verbose")
-                     ")")
-       :platform (name resolved-platform)
-       :pid pid
-       :log-file log-file
-       :parallel parallel
-       :verbose verbose
-       :timeouts (if no_timeout
-                   :disabled
-                   {:iteration-sec iteration_timeout :idle-sec idle_timeout})
-       :monitor-hint (str "tail -f " log-file)})
+          {:success true
+           :message (str "Lisa Loop orchestrator started ("
+                         (name resolved-platform) " platform, "
+                         (if parallel
+                           (str "parallel mode, max " max_parallel " concurrent")
+                           "sequential mode")
+                         (when verbose ", verbose")
+                         ")")
+           :platform (name resolved-platform)
+           :pid pid
+           :log-file log-file
+           :parallel parallel
+           :verbose verbose
+           :timeouts (if no_timeout
+                       :disabled
+                       {:iteration-sec iteration_timeout :idle-sec idle_timeout})
+           :monitor-hint (str "tail -f " log-file)})))
     (catch Exception e
       {:success false
        :error (str "Failed to start orchestrator: " (.getMessage e))})))
