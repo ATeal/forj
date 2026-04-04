@@ -114,45 +114,55 @@
 
   ;; Installation tasks
   install
-  {:doc "Install forj. Flags: --claude, --opencode, --agent-teams. No flags shows interactive menu."
+  {:doc "Install forj. Flags: --claude, --opencode, --droid, --agent-teams. No flags shows interactive menu."
    :task (let [args (set *command-line-args*)
               claude? (contains? args "--claude")
               opencode? (contains? args "--opencode")
+              droid? (contains? args "--droid")
               agent-teams? (contains? args "--agent-teams")
               ;; Determine platform choice
-              choice (cond
-                       ;; Explicit flags - skip menu
-                       (and claude? opencode?) :both
-                       claude? :claude
-                       opencode? :opencode
-                       ;; No platform flag - show interactive menu
-                       :else (do
-                               (println "\n  forj - REPL-driven LLM development for Clojure\n")
-                               (println "  Select your platform:\n")
-                               (println "    [1] Claude Code (default)")
-                               (println "    [2] OpenCode")
-                               (println "    [3] Both")
-                               (print "\n  Choice [1]: ")
-                               (flush)
-                               (let [input (str/trim (or (read-line) ""))]
-                                 (case input
-                                   "" :claude
-                                   "1" :claude
-                                   "2" :opencode
-                                   "3" :both
-                                   (do (println "  Invalid choice, defaulting to Claude Code.")
-                                       :claude)))))]
-           ;; Dispatch based on choice
-           (when (#{:claude :both} choice)
+              choices (cond
+                        ;; Explicit flags - skip menu
+                        (or claude? opencode? droid?)
+                        (cond-> #{}
+                          claude? (conj :claude)
+                          opencode? (conj :opencode)
+                          droid? (conj :droid))
+                        ;; No platform flag - show interactive menu
+                        :else (do
+                                (println "\n  forj - REPL-driven LLM development for Clojure\n")
+                                (println "  Select your platform:\n")
+                                (println "    [1] Claude Code (default)")
+                                (println "    [2] OpenCode")
+                                (println "    [3] Factory Droid")
+                                (println "    [4] All")
+                                (print "\n  Choice [1]: ")
+                                (flush)
+                                (let [input (str/trim (or (read-line) ""))]
+                                  (case input
+                                    "" #{:claude}
+                                    "1" #{:claude}
+                                    "2" #{:opencode}
+                                    "3" #{:droid}
+                                    "4" #{:claude :opencode :droid}
+                                    (do (println "  Invalid choice, defaulting to Claude Code.")
+                                        #{:claude})))))]
+           ;; Dispatch based on choices
+           (when (contains? choices :claude)
              (run 'install:mcp)
              (run 'install:hooks)
              (run 'install:skill)
              (when agent-teams?
                (run 'install:agent-teams)))
-           (when (#{:opencode :both} choice)
+           (when (contains? choices :opencode)
              (run 'install:opencode))
+           (when (contains? choices :droid)
+             (run 'install:droid))
            (println (str "\n✓ forj installed for "
-                         (case choice :claude "Claude Code" :opencode "OpenCode" :both "Claude Code + OpenCode")
+                         (str/join " + " (cond-> []
+                                           (contains? choices :claude) (conj "Claude Code")
+                                           (contains? choices :opencode) (conj "OpenCode")
+                                           (contains? choices :droid) (conj "Factory Droid")))
                          (when agent-teams? " (with Agent Teams)")
                          "! Restart your editor to activate.")))}
 
@@ -368,27 +378,124 @@
            (fs/create-sym-link link-path plugin-source)
            (println "✓ Plugin symlinked to" link-path))}
 
+  ;; Factory Droid installation tasks
+  install:droid
+  {:doc "Install forj for Factory Droid (runs MCP, skills, and hooks tasks)"
+   :task (do
+           (run 'install:droid:mcp)
+           (run 'install:droid:skills)
+           (run 'install:droid:hooks))}
+
+  install:droid:mcp
+  {:doc "Install MCP server config via droid CLI"
+   :task (let [forj-path (System/getProperty "user.dir")
+               launcher (str forj-path "/bin/forj-mcp")]
+           ;; Remove existing forj config if present (ignore errors)
+           (shell {:continue true} "droid" "mcp" "remove" "forj")
+           ;; Add forj with correct launcher script
+           (let [result (shell {:continue true} "droid" "mcp" "add" "forj" launcher)]
+             (if (zero? (:exit result))
+               (println "✓ MCP server 'forj' installed for Factory Droid")
+               (do
+                 (println "⚠ Failed to install via droid CLI, check if 'droid' is in PATH")
+                 (System/exit 1)))))}
+
+  install:droid:hooks
+  {:doc "Install hooks config to ~/.factory/settings.json"
+   :task (let [forj-path (System/getProperty "user.dir")
+               factory-dir (str (fs/path (System/getProperty "user.home") ".factory"))
+               settings-file (str (fs/path factory-dir "settings.json"))
+               existing (when (fs/exists? settings-file)
+                          (json/parse-string (slurp settings-file) true))
+               cp (str forj-path "/packages/forj-mcp/src:" forj-path "/packages/forj-hooks/src")
+               hooks-config {:SessionStart [{:hooks [{:type "command"
+                                                      :command (str "bb -cp " cp " -m forj.hooks.session-start")}]}]
+                             :UserPromptSubmit [{:hooks [{:type "command"
+                                                          :command (str "bb -cp " cp " -m forj.hooks.user-prompt")}]}]
+                             :PreToolUse [{:matcher "Edit|Create"
+                                           :hooks [{:type "command"
+                                                    :command (str "bb -cp " cp " -m forj.hooks.paren-repair")}]}]}
+               forj-allowlist ["bb nrepl *"
+                               "bb test *"
+                               "clj-nrepl-eval *"
+                               "clj-paren-repair *"]
+               existing-allow (get existing :commandAllowlist [])
+               merged-allow (vec (distinct (concat existing-allow forj-allowlist)))
+               new-config (-> (or existing {})
+                              (update :hooks merge hooks-config)
+                              (assoc :commandAllowlist merged-allow))]
+           (fs/create-dirs factory-dir)
+           (spit settings-file (json/generate-string new-config {:pretty true}))
+           (println "✓ Hooks config installed to" settings-file)
+           (println "✓ forj commands added to allowlist"))}
+
+  install:droid:skills
+  {:doc "Install forj skills (/clj-repl, /clj-init, /lisa-loop) to ~/.factory/skills/"
+   :task (let [forj-path (System/getProperty "user.dir")
+               skills-base (str (fs/path (System/getProperty "user.home") ".factory" "skills"))
+               ;; Install clj-repl skill
+               clj-repl-dir (str (fs/path skills-base "clj-repl"))
+               clj-repl-source (str (fs/path forj-path "packages" "forj-skill" "SKILL.md"))
+               _ (fs/create-dirs clj-repl-dir)
+               _ (fs/copy clj-repl-source (str (fs/path clj-repl-dir "SKILL.md")) {:replace-existing true})
+               _ (println "✓ /clj-repl skill installed to" clj-repl-dir)
+               ;; Install clj-init skill (SKILL.md + modules + versions.edn + templates)
+               clj-init-dir (str (fs/path skills-base "clj-init"))
+               clj-init-source (str (fs/path forj-path "packages" "forj-skill" "clj-init"))
+               _ (fs/create-dirs clj-init-dir)
+               _ (fs/copy (str (fs/path clj-init-source "SKILL.md"))
+                          (str (fs/path clj-init-dir "SKILL.md")) {:replace-existing true})
+               ;; Copy modules directory
+               modules-source (str (fs/path clj-init-source "modules"))
+               modules-dest (str (fs/path clj-init-dir "modules"))
+               _ (when (fs/exists? modules-dest)
+                   (fs/delete-tree modules-dest))
+               _ (fs/copy-tree modules-source modules-dest)
+               ;; Copy versions.edn
+               _ (fs/copy (str (fs/path clj-init-source "versions.edn"))
+                          (str (fs/path clj-init-dir "versions.edn")) {:replace-existing true})
+               ;; Copy templates directory (legacy)
+               templates-source (str (fs/path clj-init-source "templates"))
+               templates-dest (str (fs/path clj-init-dir "templates"))
+               _ (when (fs/exists? templates-dest)
+                   (fs/delete-tree templates-dest))
+               _ (when (fs/exists? templates-source)
+                   (fs/copy-tree templates-source templates-dest))
+               _ (println "✓ /clj-init skill installed to" clj-init-dir)
+               ;; Install lisa-loop skill
+               lisa-loop-dir (str (fs/path skills-base "lisa-loop"))
+               lisa-loop-source (str (fs/path forj-path "packages" "forj-skill" "lisa-loop"))]
+           (fs/create-dirs lisa-loop-dir)
+           (fs/copy (str (fs/path lisa-loop-source "SKILL.md"))
+                    (str (fs/path lisa-loop-dir "SKILL.md")) {:replace-existing true})
+           (println "✓ /lisa-loop skill installed to" lisa-loop-dir))}
+
   check-versions
   {:doc "Check template dependency versions against latest available"
    :task (shell "bb" "-f" "scripts/check_versions.clj")}
 
   uninstall
-  {:doc "Remove forj from all platforms. Flags: --claude, --opencode. No flags removes both."
+  {:doc "Remove forj from all platforms. Flags: --claude, --opencode, --droid. No flags removes all."
    :task (let [args (set *command-line-args*)
                claude? (contains? args "--claude")
                opencode? (contains? args "--opencode")
-               ;; If no flags, uninstall both
-               do-claude? (or claude? (and (not claude?) (not opencode?)))
-               do-opencode? (or opencode? (and (not claude?) (not opencode?)))]
+               droid? (contains? args "--droid")
+               any-flag? (or claude? opencode? droid?)
+               do-claude? (or claude? (not any-flag?))
+               do-opencode? (or opencode? (not any-flag?))
+               do-droid? (or droid? (not any-flag?))]
            (when do-claude?
              (run 'uninstall:claude))
            (when do-opencode?
              (run 'uninstall:opencode))
+           (when do-droid?
+             (run 'uninstall:droid))
            (println (str "\n✓ forj uninstalled"
-                         (cond
-                           (and do-claude? do-opencode?) " from Claude Code + OpenCode."
-                           do-claude? " from Claude Code."
-                           do-opencode? " from OpenCode.")
+                         (let [platforms (cond-> []
+                                          do-claude? (conj "Claude Code")
+                                          do-opencode? (conj "OpenCode")
+                                          do-droid? (conj "Factory Droid"))]
+                           (str " from " (str/join " + " platforms) "."))
                          " Restart your editor to complete.")))}
 
   uninstall:claude
@@ -448,4 +555,34 @@
                (if (fs/directory? old)
                  (fs/delete-tree old)
                  (fs/delete-if-exists old))
-               (println "✓ Removed old plugin at" old))))}}}
+               (println "✓ Removed old plugin at" old))))}
+
+  uninstall:droid
+  {:doc "Remove forj from Factory Droid config"
+   :task (let [home (System/getProperty "user.home")
+               factory-dir (str (fs/path home ".factory"))
+               settings-file (str (fs/path factory-dir "settings.json"))
+               skills-dir (str (fs/path factory-dir "skills"))
+               skill-names ["clj-repl" "clj-init" "lisa-loop"]]
+           ;; Remove MCP server via droid CLI
+           (let [result (shell {:continue true} "droid" "mcp" "remove" "forj")]
+             (if (zero? (:exit result))
+               (println "✓ Removed forj MCP server from Factory Droid")
+               (println "⚠ forj MCP server not found or already removed")))
+           ;; Remove hooks and allowlist entries
+           (when (fs/exists? settings-file)
+             (let [config (json/parse-string (slurp settings-file) true)
+                   forj-allowlist #{"bb nrepl *" "bb test *" "clj-nrepl-eval *" "clj-paren-repair *"}
+                   new-config (-> config
+                                  (update :hooks dissoc :SessionStart :UserPromptSubmit :PreToolUse)
+                                  (update :commandAllowlist
+                                          (fn [allow]
+                                            (vec (remove forj-allowlist (or allow []))))))]
+               (spit settings-file (json/generate-string new-config {:pretty true}))
+               (println "✓ Removed hooks and allowlist entries from" settings-file)))
+           ;; Remove all forj skills
+           (doseq [name skill-names]
+             (let [dir (str (fs/path skills-dir name))]
+               (when (fs/exists? dir)
+                 (fs/delete-tree dir)
+                 (println (str "✓ Removed /" name " skill from Factory Droid"))))))}}}
