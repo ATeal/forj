@@ -208,10 +208,13 @@
   "Mark a checkpoint as done and advance to the next ready one."
   [project-path checkpoint-id]
   (when-let [plan (read-plan project-path)]
-    (let [updated (-> plan
-                      (update-checkpoint checkpoint-id
-                                         {:status :done
-                                          :completed (timestamp)}))]
+    (let [cp (checkpoint-by-id plan checkpoint-id)
+          completed-ts (timestamp)
+          started-ts (:started cp)
+          done-update (cond-> {:status :done
+                               :completed completed-ts}
+                        started-ts (assoc :duration-ms (duration-ms started-ts completed-ts)))
+          updated (update-checkpoint plan checkpoint-id done-update)]
       ;; Find next ready checkpoint and mark in-progress
       (if-let [next-ready (first (ready-checkpoints updated))]
         (-> updated
@@ -228,13 +231,19 @@
   "Mark a checkpoint as failed."
   [project-path checkpoint-id reason]
   (when-let [plan (read-plan project-path)]
-    (-> plan
-        (update-checkpoint checkpoint-id
-                           {:status :failed
-                            :failed-at (timestamp)
-                            :failure-reason reason})
-        (assoc :status :failed)
-        (->> (write-plan! project-path)))))
+    (let [cp (checkpoint-by-id plan checkpoint-id)
+          failed-at (timestamp)
+          started (:started cp)
+          base-updates {:status :failed
+                        :failed-at failed-at
+                        :failure-reason reason}
+          updates (if started
+                    (assoc base-updates :duration-ms (duration-ms started failed-at))
+                    base-updates)]
+      (-> plan
+          (update-checkpoint checkpoint-id updates)
+          (assoc :status :failed)
+          (->> (write-plan! project-path))))))
 
 (defn- find-checkpoint-idx
   "Find index of checkpoint by ID."
