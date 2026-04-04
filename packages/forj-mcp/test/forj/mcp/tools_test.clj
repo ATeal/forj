@@ -35,13 +35,25 @@
 ;; =============================================================================
 
 (deftest select-repl-for-file-test
-  (let [repls "localhost:1668 (bb)\nlocalhost:9000 (cljs)\nlocalhost:7888 (clj)"]
+  (let [repls (str "Discovered nREPL servers:\n\n"
+                   "In current directory (/home/user/project):\n"
+                   "  localhost:1668 (bb)\n"
+                   "  localhost:9000 (cljs)\n"
+                   "  localhost:7888 (clj)\n\n"
+                   "Total: 3 servers")]
     (testing "Selects correct REPL by file type"
       (is (= 9000 (tools/select-repl-for-file repls "src/app.cljs")))
       (is (= 1668 (tools/select-repl-for-file repls "scripts/build.bb"))))
 
-    (testing "Falls back to first available when no match"
-      (is (some? (tools/select-repl-for-file repls "README.md"))))))
+    (testing "Falls back to first available in current directory"
+      (is (some? (tools/select-repl-for-file repls "README.md")))))
+
+  (testing "Does not fall back to other-project REPLs"
+    (let [other-only (str "Discovered nREPL servers:\n\n"
+                          "In other directories:\n"
+                          "  localhost:1667 (bb) - /home/user/other-project\n\n"
+                          "Total: 1 server")]
+      (is (nil? (tools/select-repl-for-file other-only "src/core.clj"))))))
 
 ;; =============================================================================
 ;; file-path->namespace tests
