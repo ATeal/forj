@@ -521,11 +521,9 @@
     ;; Clear iteration logs from previous runs (sequential mode)
     (doseq [f (fs/glob log-dir "iter-*.json")]
       (fs/delete f))
-    ;; Clear parallel output logs (but NOT meta files) from previous runs
-    ;; Meta files end in -meta.json and should be preserved
+    ;; Clear parallel output logs (including meta files) from previous runs
     (doseq [f (fs/glob log-dir "parallel-*.json")]
-      (when-not (str/ends-with? (str f) "-meta.json")
-        (fs/delete f)))
+      (fs/delete f))
     ;; Clear orchestrator log if it exists
     (let [orch-log (str (fs/path log-dir "orchestrator.log"))]
       (when (fs/exists? orch-log)

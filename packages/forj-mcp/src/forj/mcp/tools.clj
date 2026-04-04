@@ -2046,8 +2046,9 @@
               log-dir (str project-path "/.forj/logs/lisa")
               ;; Match both old (iter-*) and new (parallel-*) naming patterns
               iter-files (when (fs/exists? log-dir)
-                           (concat (fs/glob log-dir "iter-*.json")
-                                   (fs/glob log-dir "parallel-*.json")))
+                           (->> (concat (fs/glob log-dir "iter-*.json")
+                                        (fs/glob log-dir "parallel-*.json"))
+                                (remove #(str/ends-with? (str %) "-meta.json"))))
               ;; Get meta files for session-id extraction
               meta-files (when (fs/exists? log-dir)
                            (concat (fs/glob log-dir "iter-*-meta.json")

@@ -173,6 +173,26 @@
 (defn- timestamp []
   (str (java.time.Instant/now)))
 
+(defn duration-ms
+  "Calculate milliseconds between two ISO-8601 timestamp strings.
+   Returns a long."
+  [start-ts end-ts]
+  (.toMillis (java.time.Duration/between
+              (java.time.Instant/parse start-ts)
+              (java.time.Instant/parse end-ts))))
+
+(defn format-duration
+  "Format milliseconds to human-readable string like '2m 34s', '45s', or '1h 5m'."
+  [ms]
+  (let [total-secs (quot ms 1000)
+        hours (quot total-secs 3600)
+        minutes (quot (rem total-secs 3600) 60)
+        seconds (rem total-secs 60)]
+    (cond
+      (pos? hours)   (str hours "h " minutes "m")
+      (pos? minutes) (str minutes "m " seconds "s")
+      :else          (str seconds "s"))))
+
 (defn update-checkpoint
   "Update a checkpoint by ID with new fields. Returns updated plan."
   [plan id updates]
