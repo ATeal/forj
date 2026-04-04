@@ -39,6 +39,8 @@
    (let [encoded-path (encode-project-path project-path)
          claude-path (fs/path (claude-projects-dir) encoded-path (str session-id ".jsonl"))
          droid-path (fs/path (droid-sessions-dir) encoded-path (str session-id ".jsonl"))]
+     ;; Check droid path first since UUIDs won't collide across platforms,
+     ;; and droid is newer so more likely to be the active platform
      (cond
        (fs/exists? droid-path) droid-path
        (fs/exists? claude-path) claude-path
