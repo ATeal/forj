@@ -173,6 +173,26 @@
 (defn- timestamp []
   (str (java.time.Instant/now)))
 
+(defn duration-ms
+  "Calculate milliseconds between two ISO-8601 timestamp strings.
+   Returns a long."
+  [start-ts end-ts]
+  (.toMillis (java.time.Duration/between
+              (java.time.Instant/parse start-ts)
+              (java.time.Instant/parse end-ts))))
+
+(defn format-duration
+  "Format milliseconds to human-readable string like '2m 34s', '45s', or '1h 5m'."
+  [ms]
+  (let [total-secs (quot ms 1000)
+        hours (quot total-secs 3600)
+        minutes (quot (rem total-secs 3600) 60)
+        seconds (rem total-secs 60)]
+    (cond
+      (pos? hours)   (str hours "h " minutes "m")
+      (pos? minutes) (str minutes "m " seconds "s")
+      :else          (str seconds "s"))))
+
 (defn update-checkpoint
   "Update a checkpoint by ID with new fields. Returns updated plan."
   [plan id updates]
@@ -188,10 +208,13 @@
   "Mark a checkpoint as done and advance to the next ready one."
   [project-path checkpoint-id]
   (when-let [plan (read-plan project-path)]
-    (let [updated (-> plan
-                      (update-checkpoint checkpoint-id
-                                         {:status :done
-                                          :completed (timestamp)}))]
+    (let [cp (checkpoint-by-id plan checkpoint-id)
+          completed-ts (timestamp)
+          started-ts (:started cp)
+          done-update (cond-> {:status :done
+                               :completed completed-ts}
+                        started-ts (assoc :duration-ms (duration-ms started-ts completed-ts)))
+          updated (update-checkpoint plan checkpoint-id done-update)]
       ;; Find next ready checkpoint and mark in-progress
       (if-let [next-ready (first (ready-checkpoints updated))]
         (-> updated
@@ -208,13 +231,19 @@
   "Mark a checkpoint as failed."
   [project-path checkpoint-id reason]
   (when-let [plan (read-plan project-path)]
-    (-> plan
-        (update-checkpoint checkpoint-id
-                           {:status :failed
-                            :failed-at (timestamp)
-                            :failure-reason reason})
-        (assoc :status :failed)
-        (->> (write-plan! project-path)))))
+    (let [cp (checkpoint-by-id plan checkpoint-id)
+          failed-at (timestamp)
+          started (:started cp)
+          base-updates {:status :failed
+                        :failed-at failed-at
+                        :failure-reason reason}
+          updates (if started
+                    (assoc base-updates :duration-ms (duration-ms started failed-at))
+                    base-updates)]
+      (-> plan
+          (update-checkpoint checkpoint-id updates)
+          (assoc :status :failed)
+          (->> (write-plan! project-path))))))
 
 (defn- find-checkpoint-idx
   "Find index of checkpoint by ID."

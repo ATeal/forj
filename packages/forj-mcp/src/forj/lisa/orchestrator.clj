@@ -521,11 +521,9 @@
     ;; Clear iteration logs from previous runs (sequential mode)
     (doseq [f (fs/glob log-dir "iter-*.json")]
       (fs/delete f))
-    ;; Clear parallel output logs (but NOT meta files) from previous runs
-    ;; Meta files end in -meta.json and should be preserved
+    ;; Clear parallel output logs (including meta files) from previous runs
     (doseq [f (fs/glob log-dir "parallel-*.json")]
-      (when-not (str/ends-with? (str f) "-meta.json")
-        (fs/delete f)))
+      (fs/delete f))
     ;; Clear orchestrator log if it exists
     (let [orch-log (str (fs/path log-dir "orchestrator.log"))]
       (when (fs/exists? orch-log)
@@ -735,9 +733,14 @@
                           "Review checkpoints MUST call lisa_add_checkpoint before marking complete"))
           ;; Normal completion (or review that did extend)
           (do
-            (println (str "[Lisa] ✓ Checkpoint " cp-display " complete"))
             ;; Mark done in plan (orchestrator manages plan state)
             (plan-edn/mark-checkpoint-done! project-path checkpoint-id)
+            ;; Log completion with duration if available
+            (let [done-plan (plan-edn/read-plan project-path)
+                  done-cp (plan-edn/checkpoint-by-id done-plan checkpoint-id)
+                  dur-ms (:duration-ms done-cp)
+                  dur-str (when dur-ms (str " (" (plan-edn/format-duration dur-ms) ")"))]
+              (println (str "[Lisa] ✓ Checkpoint " cp-display " complete" dur-str)))
             ;; Auto-commit as rollback point
             (auto-commit-checkpoint! project-path cp-display (:description checkpoint))))
 
@@ -1125,7 +1128,12 @@
                                      (+ total-output-tokens iter-output)))
                         ;; Normal completion (or review that did extend)
                             (do
-                              (println (str "[Lisa] Checkpoint " cp-display " complete"))
+                              ;; Log completion with duration if available
+                              (let [done-plan (plan-edn/read-plan project-path)
+                                    done-cp (plan-edn/checkpoint-by-id done-plan cp-id)
+                                    dur-ms (:duration-ms done-cp)
+                                    dur-str (when dur-ms (str " (" (plan-edn/format-duration dur-ms) ")"))]
+                                (println (str "[Lisa] Checkpoint " cp-display " complete" dur-str)))
                           ;; Update meta file with success
                               (update-iteration-metadata! log-file true nil)
                           ;; Auto-commit as rollback point

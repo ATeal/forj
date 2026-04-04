@@ -239,7 +239,7 @@
                   :properties {:path {:type "string"
                                       :description "Project path (defaults to current directory)"}
                                :platform {:type "string"
-                                          :enum ["claude" "opencode"]
+                                          :enum ["claude" "opencode" "droid"]
                                           :description "Platform to spawn iterations with (default: auto-detect from environment)"}
                                :max_iterations {:type "integer"
                                                 :description "Maximum iterations before stopping (default: 20)"}
@@ -358,15 +358,15 @@
 
    ;; Session introspection tools
    {:name "list_sessions"
-    :description "List recent AI coding sessions from Claude CLI and/or OpenCode. Returns unified session data sorted by most recently updated."
+    :description "List recent AI coding sessions from Claude CLI, OpenCode, and/or Factory Droid. Returns unified session data sorted by most recently updated."
     :inputSchema {:type "object"
                   :properties {:project {:type "string"
                                          :description "Filter by project directory substring (case-insensitive)"}
                                :since {:type "string"
                                        :description "ISO-8601 date string (e.g., '2026-02-25T00:00:00Z'). Only sessions updated after this time."}
                                :client {:type "string"
-                                        :enum ["claude-cli" "opencode"]
-                                        :description "Filter by client type. Omit for both."}
+                                        :enum ["claude-cli" "opencode" "droid"]
+                                        :description "Filter by client type. Omit for all."}
                                :limit {:type "integer"
                                        :description "Max results to return (default: 20)"}}}}
 
@@ -374,24 +374,24 @@
     :description "Get a detailed summary of a specific AI coding session. Returns tool usage counts, turn count, duration, cost, and model info."
     :inputSchema {:type "object"
                   :properties {:id {:type "string"
-                                    :description "Session ID (e.g., UUID for Claude CLI, 'ses_...' for OpenCode)"}
+                                    :description "Session ID (e.g., UUID for Claude CLI/Droid, 'ses_...' for OpenCode)"}
                                :source {:type "string"
-                                        :enum ["claude-cli" "opencode"]
+                                        :enum ["claude-cli" "opencode" "droid"]
                                         :description "Which client the session belongs to"}
                                :directory {:type "string"
-                                           :description "Project directory (optional, used for Claude CLI sessions to locate log files)"}}
+                                           :description "Project directory (optional, used for Claude CLI/Droid sessions to locate log files)"}}
                   :required ["id" "source"]}}
 
    {:name "session_transcript"
     :description "Get the conversation transcript for an AI coding session. Returns user messages, assistant text, and tool call summaries (tool name + truncated input). Limited to last N turns."
     :inputSchema {:type "object"
                   :properties {:id {:type "string"
-                                    :description "Session ID (e.g., UUID for Claude CLI, 'ses_...' for OpenCode)"}
+                                    :description "Session ID (e.g., UUID for Claude CLI/Droid, 'ses_...' for OpenCode)"}
                                :source {:type "string"
-                                        :enum ["claude-cli" "opencode"]
+                                        :enum ["claude-cli" "opencode" "droid"]
                                         :description "Which client the session belongs to"}
                                :directory {:type "string"
-                                           :description "Project directory (optional, used for Claude CLI sessions to locate log files)"}
+                                           :description "Project directory (optional, used for Claude CLI/Droid sessions to locate log files)"}
                                :limit {:type "integer"
                                        :description "Max turns to return from the end of the conversation (default: 50)"}}
                   :required ["id" "source"]}}])
@@ -526,27 +526,41 @@
 
 (defn select-repl-for-file
   "Given discovered REPLs and a file path, select the best matching REPL.
+   Only considers REPLs in the current directory section to avoid
+   silently connecting to a different project's REPL.
    Returns the port number or nil if no suitable REPL found."
   [repls-output file-path]
   (let [detected-type (detect-repl-type file-path)
         normalized-type (normalize-repl-type detected-type)
         lines (str/split-lines repls-output)
-        ;; Parse REPL entries: "localhost:PORT (type)"
+        ;; Only parse REPLs from the "current directory" section
+        current-dir-idx (some #(when (str/includes? (second %) "current directory")
+                                 (first %))
+                              (map-indexed vector lines))
+        other-dir-idx (some #(when (str/includes? (second %) "other directories")
+                               (first %))
+                            (map-indexed vector lines))
+        current-dir-lines (if current-dir-idx
+                            (->> lines
+                                 (drop current-dir-idx)
+                                 (take (if other-dir-idx
+                                         (- other-dir-idx current-dir-idx)
+                                         100)))
+                            [])
         parse-repl (fn [line]
                      (when-let [[_ port type] (re-find #"localhost:(\d+)\s+\((\w+)\)" line)]
                        {:port (parse-long port)
                         :type (keyword type)}))
-        repls (->> lines
+        repls (->> current-dir-lines
                    (map parse-repl)
                    (remove nil?))]
-    ;; Match REPL type
     (or
-     ;; Exact match
+     ;; Exact type match in current directory
      (:port (first (filter #(= (:type %) normalized-type) repls)))
      ;; Fallback: bb can often run clj code
      (when (= normalized-type :clj)
        (:port (first (filter #(= (:type %) :bb) repls))))
-     ;; Last resort: first available
+     ;; Any REPL in current directory (but never cross-project)
      (:port (first repls)))))
 
 (defn discover-repls
@@ -588,6 +602,13 @@
          (map parse-long)
          (remove nil?))))
 
+(defn- repl-error?
+  "Check if REPL output contains an error/exception.
+   clj-nrepl-eval returns exit 0 even on errors, so we detect them in stdout."
+  [output]
+  (when (seq output)
+    (re-find #"(?m)^(?:java\.\w+\.|clojure\.lang\.\w+|Syntax error|CompilerException)" output)))
+
 (defn eval-code
   "Evaluate Clojure code via clj-nrepl-eval.
    When 'file' is provided, uses path-based REPL selection (clj/cljs/bb)."
@@ -604,21 +625,32 @@
           {:success false
            :error (if file
                     (let [detected-type (detect-repl-type file)]
-                      (str "No " (name detected-type) " REPL running. Start one with /clj-repl"))
-                    "No nREPL server running. Start one with /clj-repl or in a terminal: bb nrepl-server 1667")})
+                      (str "No " (name detected-type) " REPL running in current project. "
+                           "Start one with /clj-repl"))
+                    (str "No nREPL server running in current project. "
+                         "Start one with /clj-repl or in a terminal: bb nrepl-server 1667"))})
         {:success false :error error}))
     ;; Evaluate with provided port
     (try
       (let [args (cond-> ["clj-nrepl-eval" "-p" (str port)]
                    timeout (conj "-t" (str timeout))
                    true (conj code))
-            result (shell-execute args)]
+            result (shell-execute args)
+            output (str/trim (:out result))
+            err-output (str/trim (or (:err result) ""))]
         (if (zero? (:exit result))
-          {:success true
-           :value (str/trim (:out result))}
+          (cond
+            ;; Check stderr for errors (clj-nrepl-eval sends exceptions to stderr)
+            (repl-error? err-output)
+            {:success false :error err-output}
+            ;; Check stdout for errors (some versions may use stdout)
+            (repl-error? output)
+            {:success false :error output}
+            :else
+            {:success true :value output})
           {:success false
-           :error (or (not-empty (str/trim (:err result)))
-                      (str/trim (:out result))
+           :error (or (not-empty err-output)
+                      output
                       "Evaluation failed")}))
       (catch Exception e
         {:success false
@@ -2046,8 +2078,9 @@
               log-dir (str project-path "/.forj/logs/lisa")
               ;; Match both old (iter-*) and new (parallel-*) naming patterns
               iter-files (when (fs/exists? log-dir)
-                           (concat (fs/glob log-dir "iter-*.json")
-                                   (fs/glob log-dir "parallel-*.json")))
+                           (->> (concat (fs/glob log-dir "iter-*.json")
+                                        (fs/glob log-dir "parallel-*.json"))
+                                (remove #(str/ends-with? (str %) "-meta.json"))))
               ;; Get meta files for session-id extraction
               meta-files (when (fs/exists? log-dir)
                            (concat (fs/glob log-dir "iter-*-meta.json")
@@ -2086,9 +2119,13 @@
                                   :file (:file current)
                                   :started (:started current)})
            :checkpoints (mapv (fn [cp]
-                                {:id (:id cp)
-                                 :status (:status cp)
-                                 :description (:description cp)})
+                                (cond-> {:id (:id cp)
+                                         :status (:status cp)
+                                         :description (:description cp)}
+                                  (:started cp)     (assoc :started (:started cp))
+                                  (:completed cp)   (assoc :completed (:completed cp))
+                                  (:failed-at cp)   (assoc :failed-at (:failed-at cp))
+                                  (:duration-ms cp) (assoc :duration-ms (:duration-ms cp))))
                               checkpoints)
            :iterations iteration-count
            :last-cost (when latest-result (:total_cost_usd latest-result))
