@@ -176,7 +176,8 @@
                             [{:type "user" :message "hi" :timestamp "2026-02-25T10:00:00Z"}])
         (write-session-file project-dir "session-bbb"
                             [{:type "user" :message "hello" :timestamp "2026-02-25T11:00:00Z"}])
-        (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))]
+        (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))
+                     claude/droid-sessions-dir (constantly "/nonexistent/droid-path")]
           (let [result (claude/list-sessions)]
             (is (= 2 (count result)))
             ;; Check keys
@@ -202,7 +203,8 @@
                             [{:type "user" :timestamp "2026-02-25T10:00:00Z"}])
         (write-session-file subagent-dir "subagent-session"
                             [{:type "user" :timestamp "2026-02-25T10:00:00Z"}])
-        (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))]
+        (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))
+                     claude/droid-sessions-dir (constantly "/nonexistent/droid-path")]
           (let [result (claude/list-sessions)]
             (is (= 1 (count result)))
             (is (= "normal-session" (:id (first result))))))
@@ -210,7 +212,8 @@
           (fs/delete-tree tmp-dir)))))
 
   (testing "Returns empty for non-existent projects dir"
-    (with-redefs [claude/claude-projects-dir (constantly "/nonexistent/path")]
+    (with-redefs [claude/claude-projects-dir (constantly "/nonexistent/path")
+                 claude/droid-sessions-dir (constantly "/nonexistent/droid-path")]
       (let [result (claude/list-sessions)]
         (is (or (nil? result) (empty? result))))))
 
@@ -219,7 +222,8 @@
       (try
         (write-session-file project-dir "test-session"
                             [{:type "user" :timestamp "2026-02-25T10:00:00Z"}])
-        (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))]
+        (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))
+                     claude/droid-sessions-dir (constantly "/nonexistent/droid-path")]
           (let [result (claude/list-sessions)
                 session (first result)]
             (is (= "-home-user-myproject" (:directory session)))
@@ -326,7 +330,8 @@
                                              :input {:file_path "/foo.clj"}}]}
                         :timestamp "2026-02-25T10:01:00Z"}]
               _ (write-session-file project-dir "test-norm" entries)]
-          (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))]
+          (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))
+                     claude/droid-sessions-dir (constantly "/nonexistent/droid-path")]
             (let [result (sessions/session-summary
                            {:id "test-norm" :source :claude-cli
                             :directory "/home/user/myproject"})]
@@ -385,7 +390,8 @@
         (write-session-file project-dir "test-title"
                             [{:type "user" :message {:content "Hello world"}
                               :timestamp "2026-02-25T10:00:00Z"}])
-        (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))]
+        (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))
+                     claude/droid-sessions-dir (constantly "/nonexistent/droid-path")]
           (let [result (claude/list-sessions)
                 session (first result)]
             ;; Title should be nil in list-sessions (perf optimization)
@@ -466,22 +472,27 @@
       (is (= sessions/common-keys (set (keys result)))))))
 
 (deftest normalizers-produce-same-keys-test
-  (testing "Both normalizers produce identical key sets"
+  (testing "All normalizers produce identical key sets"
     (let [claude-keys (set (keys (sessions/normalize-claude-session
                                    {:id "c" :directory "d" :project-path "/p"
                                     :created 0 :updated 0 :size-bytes 0})))
           opencode-keys (set (keys (sessions/normalize-opencode-session
                                      {:id "o" :title "t" :directory "/p"
-                                      :project-name "p" :created 0 :updated 0})))]
-      (is (= claude-keys opencode-keys sessions/common-keys)))))
+                                      :project-name "p" :created 0 :updated 0})))
+          droid-keys (set (keys (sessions/normalize-droid-session
+                                  {:id "d" :directory "d" :project-path "/p"
+                                   :created 0 :updated 0 :size-bytes 0})))]
+      (is (= claude-keys opencode-keys droid-keys sessions/common-keys)))))
 
 (deftest list-recent-sessions-test
   (let [mock-claude-sessions [{:id "c1" :directory "-home-user-proj"
                                 :project-path "/home/user/proj"
+                                :source :claude-cli
                                 :created 1700000000000 :updated 1700003000000
                                 :size-bytes 100}
                                {:id "c2" :directory "-home-user-other"
                                 :project-path "/home/user/other"
+                                :source :claude-cli
                                 :created 1700000000000 :updated 1700001000000
                                 :size-bytes 200}]
         mock-opencode-sessions [{:id "o1" :title "OC Session"
@@ -556,7 +567,8 @@
                                   :model "claude-3-opus"}
                         :timestamp "2026-02-25T10:01:00Z"}]
               _ (write-session-file project-dir "test-summary" entries)]
-          (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))]
+          (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))
+                     claude/droid-sessions-dir (constantly "/nonexistent/droid-path")]
             (let [result (sessions/session-summary
                            {:id "test-summary" :source :claude-cli
                             :directory "/home/user/myproject"})]
@@ -721,7 +733,8 @@
                         :message {:content [{:type "text" :text "The answer is 4."}]}
                         :timestamp "2026-02-25T10:01:00Z"}]
               _ (write-session-file project-dir "test-transcript" entries)]
-          (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))]
+          (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))
+                     claude/droid-sessions-dir (constantly "/nonexistent/droid-path")]
             (let [result (sessions/session-transcript
                            {:id "test-transcript" :source :claude-cli
                             :directory "/home/user/myproject"})]
@@ -737,7 +750,8 @@
   (testing "Returns exists? false for non-existent claude-cli session"
     (let [{:keys [tmp-dir]} (create-test-claude-dir)]
       (try
-        (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))]
+        (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))
+                     claude/droid-sessions-dir (constantly "/nonexistent/droid-path")]
           (let [result (sessions/session-transcript
                          {:id "nonexistent" :source :claude-cli
                           :directory "/home/user/myproject"})]
@@ -755,7 +769,8 @@
                                                   [{:type "text" :text (str "Answer " i)}])}
                              :timestamp (str "2026-02-25T10:0" i ":00Z")}))
               _ (write-session-file project-dir "test-limit" entries)]
-          (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))]
+          (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))
+                     claude/droid-sessions-dir (constantly "/nonexistent/droid-path")]
             (let [result (sessions/session-transcript
                            {:id "test-limit" :source :claude-cli
                             :directory "/home/user/myproject"
@@ -835,7 +850,8 @@
         ;; Write a session file with NO timestamp in the content
         (write-session-file project-dir "test-perf"
                             [{:type "user" :message {:content "no timestamp here"}}])
-        (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))]
+        (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))
+                     claude/droid-sessions-dir (constantly "/nonexistent/droid-path")]
           (let [result (claude/list-sessions)
                 session (first result)]
             ;; Should still have :created and :updated from filesystem metadata
@@ -855,7 +871,8 @@
       (try
         (write-session-file project-dir "test-size"
                             [{:type "user" :message {:content "some content"}}])
-        (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))]
+        (with-redefs [claude/claude-projects-dir (constantly (str tmp-dir))
+                     claude/droid-sessions-dir (constantly "/nonexistent/droid-path")]
           (let [result (claude/list-sessions)
                 session (first result)]
             (is (number? (:size-bytes session)))

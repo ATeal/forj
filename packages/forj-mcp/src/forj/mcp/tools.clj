@@ -239,7 +239,7 @@
                   :properties {:path {:type "string"
                                       :description "Project path (defaults to current directory)"}
                                :platform {:type "string"
-                                          :enum ["claude" "opencode"]
+                                          :enum ["claude" "opencode" "droid"]
                                           :description "Platform to spawn iterations with (default: auto-detect from environment)"}
                                :max_iterations {:type "integer"
                                                 :description "Maximum iterations before stopping (default: 20)"}
@@ -358,15 +358,15 @@
 
    ;; Session introspection tools
    {:name "list_sessions"
-    :description "List recent AI coding sessions from Claude CLI and/or OpenCode. Returns unified session data sorted by most recently updated."
+    :description "List recent AI coding sessions from Claude CLI, OpenCode, and/or Factory Droid. Returns unified session data sorted by most recently updated."
     :inputSchema {:type "object"
                   :properties {:project {:type "string"
                                          :description "Filter by project directory substring (case-insensitive)"}
                                :since {:type "string"
                                        :description "ISO-8601 date string (e.g., '2026-02-25T00:00:00Z'). Only sessions updated after this time."}
                                :client {:type "string"
-                                        :enum ["claude-cli" "opencode"]
-                                        :description "Filter by client type. Omit for both."}
+                                        :enum ["claude-cli" "opencode" "droid"]
+                                        :description "Filter by client type. Omit for all."}
                                :limit {:type "integer"
                                        :description "Max results to return (default: 20)"}}}}
 
@@ -374,24 +374,24 @@
     :description "Get a detailed summary of a specific AI coding session. Returns tool usage counts, turn count, duration, cost, and model info."
     :inputSchema {:type "object"
                   :properties {:id {:type "string"
-                                    :description "Session ID (e.g., UUID for Claude CLI, 'ses_...' for OpenCode)"}
+                                    :description "Session ID (e.g., UUID for Claude CLI/Droid, 'ses_...' for OpenCode)"}
                                :source {:type "string"
-                                        :enum ["claude-cli" "opencode"]
+                                        :enum ["claude-cli" "opencode" "droid"]
                                         :description "Which client the session belongs to"}
                                :directory {:type "string"
-                                           :description "Project directory (optional, used for Claude CLI sessions to locate log files)"}}
+                                           :description "Project directory (optional, used for Claude CLI/Droid sessions to locate log files)"}}
                   :required ["id" "source"]}}
 
    {:name "session_transcript"
     :description "Get the conversation transcript for an AI coding session. Returns user messages, assistant text, and tool call summaries (tool name + truncated input). Limited to last N turns."
     :inputSchema {:type "object"
                   :properties {:id {:type "string"
-                                    :description "Session ID (e.g., UUID for Claude CLI, 'ses_...' for OpenCode)"}
+                                    :description "Session ID (e.g., UUID for Claude CLI/Droid, 'ses_...' for OpenCode)"}
                                :source {:type "string"
-                                        :enum ["claude-cli" "opencode"]
+                                        :enum ["claude-cli" "opencode" "droid"]
                                         :description "Which client the session belongs to"}
                                :directory {:type "string"
-                                           :description "Project directory (optional, used for Claude CLI sessions to locate log files)"}
+                                           :description "Project directory (optional, used for Claude CLI/Droid sessions to locate log files)"}
                                :limit {:type "integer"
                                        :description "Max turns to return from the end of the conversation (default: 50)"}}
                   :required ["id" "source"]}}])

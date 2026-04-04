@@ -1,5 +1,5 @@
 (ns forj.lisa.platform
-  "Platform abstraction for Lisa Loop - supports Claude Code and OpenCode.
+  "Platform abstraction for Lisa Loop - supports Claude Code, OpenCode, and Factory Droid.
 
    Each platform has different:
    - CLI commands and flags for spawning instances
@@ -34,16 +34,45 @@
                 (recur p (inc depth))))))))
     (catch Exception _ false)))
 
+(defn- droid-in-ancestors?
+  "Walk up the process tree looking for 'droid' in any ancestor command."
+  []
+  (try
+    (loop [ph (java.lang.ProcessHandle/current)
+           depth 0]
+      (when (and ph (< depth 10))
+        (let [parent (.parent ph)]
+          (when (.isPresent parent)
+            (let [p (.get parent)
+                  info (.info p)
+                  cmd (.command info)]
+              (if (and (.isPresent cmd)
+                       (let [c (.get cmd)]
+                         (and (str/includes? c "droid")
+                              (not (str/includes? c "android")))))
+                true
+                (recur p (inc depth))))))))
+    (catch Exception _ false)))
+
 (defn detect-platform
   "Auto-detect the calling platform.
    Checks: env vars > ancestor process name > falls back to :claude."
   []
   (cond
+    ;; Factory Droid env vars
+    (or (System/getenv "FACTORY_API_KEY")
+        (System/getenv "FACTORY_PROJECT_DIR"))
+    :droid
+
     ;; Env vars (if OpenCode ever sets them)
     (or (System/getenv "OPENCODE_DIR")
         (System/getenv "OPENCODE_SESSION_ID")
         (some-> (System/getenv "OPENCODE_VERSION") seq))
     :opencode
+
+    ;; Check if droid is in our process ancestor chain
+    (droid-in-ancestors?)
+    :droid
 
     ;; Check if opencode is in our process ancestor chain
     (opencode-in-ancestors?)
@@ -75,11 +104,17 @@
    :agent "build"
    :allowed-tools "Bash,Edit,Read,Write,Glob,Grep,mcp__forj__*,mcp__playwright__*"})
 
+(def ^:private droid-defaults
+  {:platform :droid
+   :cli "droid"
+   :allowed-tools "Execute,Edit,Read,Create,Glob,Grep,mcp__forj__*"})
+
 (defn platform-config
   "Get platform-specific default config values."
   [platform]
   (case platform
     :opencode opencode-defaults
+    :droid droid-defaults
     claude-defaults))
 
 ;; =============================================================================
@@ -90,7 +125,8 @@
   "Build CLI args for spawning an iteration instance.
 
    Claude: claude -p --output-format json --dangerously-skip-permissions --mcp-config ... --session-id ...
-   OpenCode: opencode run --format json --dir <path> --agent build"
+   OpenCode: opencode run --format json --dir <path> --agent build
+   Droid: droid exec --output-format json --skip-permissions-unsafe --session-id ..."
   [config project-path session-id]
   (let [platform (:platform config)
         verbose? (:verbose config)]
@@ -99,6 +135,15 @@
       ;; OpenCode: --format json always streams JSONL (no separate verbose mode)
       (cond-> ["opencode" "run" "--format" "json" "--dir" (str project-path)]
         (:agent config) (into ["--agent" (:agent config)]))
+
+      :droid
+      ;; Droid: same output format as Claude, no --mcp-config needed
+      (cond-> ["droid" "exec"
+               "--output-format" (if verbose? "stream-json" "json")
+               "--skip-permissions-unsafe"
+               "--cwd" (str project-path)
+               "--session-id" session-id]
+        verbose? (conj "--verbose"))
 
       ;; Claude (default)
       (cond-> ["claude" "-p"
@@ -193,7 +238,8 @@
        :total_cost_usd total-cost})))
 
 (defn parse-iteration-output
-  "Parse the output from a spawned iteration. Platform-aware."
+  "Parse the output from a spawned iteration. Platform-aware.
+   Droid uses the same output format as Claude."
   [config log-file]
   (try
     (when-not (fs/exists? log-file)
@@ -211,7 +257,7 @@
 (defn extract-session-id-from-log
   "Extract the session ID from a log file's JSON events.
 
-   Claude: session-id is pre-generated and passed as CLI arg (use the known value).
+   Claude/Droid: session-id is pre-generated and passed as CLI arg (use the known value).
    OpenCode: session-id is in the sessionID field of each JSON event."
   [config log-file]
   (case (:platform config)
@@ -222,7 +268,7 @@
         (when-not (str/blank? first-line)
           (:sessionID (json/parse-string first-line true))))
       (catch Exception _ nil))
-    ;; Claude: session ID is passed to CLI, already known
+    ;; Claude and Droid: session ID is passed to CLI, already known
     nil))
 
 ;; =============================================================================
@@ -232,7 +278,7 @@
 (defn read-session-transcript
   "Read the conversation transcript for a session.
 
-   Claude: reads from ~/.claude/projects/<encoded>/<session-id>.jsonl
+   Claude/Droid: reads from session JSONL (delegated to claude-sessions namespace)
    OpenCode: shells out to `opencode export <session-id>`"
   [config session-id _project-path]
   (case (:platform config)
@@ -280,13 +326,13 @@
       (catch Exception e
         {:session-id session-id :exists? false :error (.getMessage e)}))
 
-    ;; Claude: delegate to claude-sessions namespace (loaded dynamically to avoid circular dep)
+    ;; Claude and Droid: delegate to claude-sessions namespace (loaded dynamically to avoid circular dep)
     nil))
 
 (defn read-session-tool-summary
   "Get tool usage summary for a session.
 
-   Claude: reads from session JSONL
+   Claude/Droid: reads from session JSONL
    OpenCode: parses tool events from the iteration log file"
   [config session-id-or-log-file _project-path]
   (case (:platform config)
@@ -316,7 +362,7 @@
       (catch Exception e
         {:exists? false :error (.getMessage e)}))
 
-    ;; Claude: delegate to claude-sessions namespace
+    ;; Claude and Droid: delegate to claude-sessions namespace
     nil))
 
 ;; =============================================================================
@@ -340,7 +386,7 @@
          "Check shadow-cljs.edn :dev-http, package.json scripts, or LISA_PLAN.edn for the correct URL/port.\n\n"
          "CHECKPOINT WILL BE REJECTED if you mark complete without screenshot verification.")
 
-    ;; Claude: Chrome MCP primary, Playwright as fallback
+    ;; Claude and Droid: Chrome MCP primary, Playwright as fallback
     (str "\n### Step 4: Visual Validation - DO NOT SKIP\n"
          "**For UI checkpoints, you MUST take a screenshot:**\n\n"
          "**Chrome MCP Workflow** (use these exact steps):\n"
@@ -368,12 +414,12 @@
   "Check if agent teams feature is available for the given platform.
 
    Claude: requires CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS env var
-   OpenCode: not yet supported"
+   OpenCode/Droid: not yet supported"
   [config]
   (case (:platform config)
-    :opencode
+    (:opencode :droid)
     {:available false
-     :reason "Agent Teams is not yet supported in OpenCode. Use sequential or parallel Lisa Loop instead."}
+     :reason "Agent Teams is not yet supported on this platform. Use sequential or parallel Lisa Loop instead."}
 
     ;; Claude: check env var
     (let [enabled? (let [val (System/getenv "FORJ_AGENT_TEAMS")]
@@ -398,6 +444,7 @@
   ;; Test platform configs
   (platform-config :claude)
   (platform-config :opencode)
+  (platform-config :droid)
 
   ;; Test spawn args
   (build-spawn-args (platform-config :claude) "/home/user/project" "uuid-123")
@@ -405,6 +452,9 @@
 
   (build-spawn-args (platform-config :opencode) "/home/user/project" nil)
   ;; => ["opencode" "run" "--format" "json" "--dir" "/home/user/project" "--agent" "build"]
+
+  (build-spawn-args (platform-config :droid) "/home/user/project" "uuid-123")
+  ;; => ["droid" "exec" "--output-format" "json" "--skip-permissions-unsafe" "--cwd" ... "--session-id" ...]
 
   ;; Test OpenCode output parsing
   (parse-opencode-output

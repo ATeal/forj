@@ -1,6 +1,6 @@
 (ns forj.lisa.sessions
-  "Unified session interface across Claude CLI and OpenCode.
-   Normalizes session data from both sources into a common shape."
+  "Unified session interface across Claude CLI, OpenCode, and Factory Droid.
+   Normalizes session data from all sources into a common shape."
   (:require [babashka.fs :as fs]
             [forj.lisa.claude-sessions :as claude]
             [forj.lisa.opencode-sessions :as opencode]
@@ -53,36 +53,59 @@
    :updated      (:updated raw)
    :client-label "OpenCode"})
 
-(defn- enrich-claude-title
-  "Enrich a normalized Claude CLI session with a title derived from first user message.
+(defn normalize-droid-session
+  "Convert a raw claude-sessions/list-sessions map (with :source :droid) into the common session shape.
+   Droid sessions use the same JSONL format as Claude, stored in ~/.factory/sessions/."
+  [raw]
+  {:id           (:id raw)
+   :source       :droid
+   :title        (:title raw)
+   :directory    (or (:project-path raw) (:directory raw))
+   :project-name (when-let [pp (:project-path raw)]
+                   (last (re-seq #"[^/]+" pp)))
+   :created      (:created raw)
+   :updated      (:updated raw)
+   :client-label "Factory Droid"})
+
+(defn- enrich-title
+  "Enrich a normalized Claude CLI or Droid session with a title derived from first user message.
    Only reads the JSONL file for sessions that have nil titles."
   [session]
-  (if (and (= :claude-cli (:source session)) (nil? (:title session)))
+  (if (and (#{:claude-cli :droid} (:source session)) (nil? (:title session)))
     (assoc session :title (claude/derive-title {:id (:id session)
                                                 :project-path (:directory session)}))
     session))
 
 (defn list-recent-sessions
-  "Return recent sessions from both Claude CLI and OpenCode, merged and sorted.
+  "Return recent sessions from Claude CLI, OpenCode, and Factory Droid, merged and sorted.
 
    Options (all optional):
    - :since    - epoch ms; only sessions updated after this time
    - :project  - substring match on :directory
-   - :client   - :claude-cli or :opencode; nil for both
+   - :client   - :claude-cli, :opencode, or :droid; nil for all
    - :limit    - max results (default 20)"
   ([] (list-recent-sessions {}))
   ([{:keys [since project client limit] :or {limit 20}}]
-   (let [claude-sessions  (when-not (= client :opencode)
+   (let [claude-sessions  (when-not (#{:opencode :droid} client)
                             (try
                               (->> (claude/list-sessions)
+                                   (filter #(= :claude-cli (:source %)))
                                    (mapv normalize-claude-session))
                               (catch Exception _ [])))
-         opencode-sessions (when-not (= client :claude-cli)
+         droid-sessions   (when-not (#{:opencode :claude-cli} client)
+                            (try
+                              (->> (claude/list-sessions)
+                                   (filter #(= :droid (:source %)))
+                                   (mapv normalize-droid-session))
+                              (catch Exception _ [])))
+         opencode-sessions (when-not (#{:claude-cli :droid} client)
                              (try
                                (->> (opencode/list-sessions)
                                     (mapv normalize-opencode-session))
                                (catch Exception _ [])))
-         all (concat (or claude-sessions []) (or opencode-sessions []))]
+         all (concat (or claude-sessions [])
+                     (or droid-sessions [])
+                     (or opencode-sessions []))]
      (->> (cond->> all
             since   (filter #(and (:updated %) (> (:updated %) since)))
             project (filter #(and (:directory %)
@@ -90,7 +113,7 @@
                                                   (str/lower-case project)))))
           (sort-by :updated #(compare %2 %1))
           (take limit)
-          (mapv enrich-claude-title)))))
+          (mapv enrich-title)))))
 
 (defn- iso->epoch-ms
   "Convert an ISO-8601 timestamp string to epoch milliseconds."
@@ -157,47 +180,47 @@
       {:id id :source :opencode :exists? false})))
 
 (defn session-summary
-  "Get a normalized summary for a session from either source.
+  "Get a normalized summary for a session from any source.
 
    Takes a map with:
    - :id     - session identifier
-   - :source - :claude-cli or :opencode
-   - :directory - (optional, for :claude-cli) project path, defaults to cwd
+   - :source - :claude-cli, :opencode, or :droid
+   - :directory - (optional, for :claude-cli/:droid) project path, defaults to cwd
 
    Returns:
    {:id :source :tool-counts :total-calls :turn-count :duration-ms :cost :model}"
   [{:keys [id source directory]}]
   (case source
-    :claude-cli (claude-session-summary id directory)
-    :opencode   (opencode-session-summary id)
+    (:claude-cli :droid) (claude-session-summary id directory)
+    :opencode           (opencode-session-summary id)
     (throw (ex-info (str "Unknown session source: " source)
                     {:source source :id id}))))
 
 (defn session-transcript
-  "Get the conversation transcript for a session from either source.
+  "Get the conversation transcript for a session from any source.
 
    Takes a map with:
    - :id        - session identifier
-   - :source    - :claude-cli or :opencode
-   - :directory - (optional, for :claude-cli) project path, defaults to cwd
+   - :source    - :claude-cli, :opencode, or :droid
+   - :directory - (optional, for :claude-cli/:droid) project path, defaults to cwd
    - :limit     - max turns to return (default 50, from the end)
 
    Returns:
    {:id :source :exists? :transcript :turn-count}"
   [{:keys [id source directory limit] :or {limit 50}}]
   (let [result (case source
-                 :claude-cli
+                 (:claude-cli :droid)
                  (let [project-path (or directory (System/getProperty "user.dir"))
                        path (claude/session-log-path id project-path)]
                    (if (fs/exists? path)
                      (let [entries (claude/read-session-jsonl path)
                            transcript (claude/extract-transcript entries)]
                        {:id id
-                        :source :claude-cli
+                        :source source
                         :exists? true
                         :transcript (vec transcript)
                         :turn-count (count transcript)})
-                     {:id id :source :claude-cli :exists? false}))
+                     {:id id :source source :exists? false}))
 
                  :opencode
                  (let [transcript (opencode/extract-transcript id)]

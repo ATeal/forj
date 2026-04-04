@@ -1,5 +1,5 @@
 (ns forj.lisa.claude-sessions
-  "Read and parse Claude Code session logs from ~/.claude/projects/."
+  "Read and parse session logs from ~/.claude/projects/ and ~/.factory/sessions/."
   (:require [babashka.fs :as fs]
             [cheshire.core :as json]
             [clojure.string :as str])
@@ -11,6 +11,12 @@
   []
   (fs/path (System/getProperty "user.home") ".claude" "projects"))
 
+(defn droid-sessions-dir
+  "Return the path to Factory Droid's sessions directory.
+   This is ~/.factory/sessions/ where session logs are stored."
+  []
+  (fs/path (System/getProperty "user.home") ".factory" "sessions"))
+
 (defn encode-project-path
   "Encode a project path for use in Claude's directory naming.
    Replaces / with - to match Claude's encoding scheme.
@@ -21,7 +27,7 @@
       (str/replace "/" "-")))
 
 (defn session-log-path
-  "Get the path to a Claude session log file.
+  "Get the path to a session log file. Checks both Claude and Droid locations.
 
    Arguments:
    - session-id: UUID string of the session
@@ -31,8 +37,13 @@
    (session-log-path session-id (System/getProperty "user.dir")))
   ([session-id project-path]
    (let [encoded-path (encode-project-path project-path)
-         projects-dir (claude-projects-dir)]
-     (fs/path projects-dir encoded-path (str session-id ".jsonl")))))
+         claude-path (fs/path (claude-projects-dir) encoded-path (str session-id ".jsonl"))
+         droid-path (fs/path (droid-sessions-dir) encoded-path (str session-id ".jsonl"))]
+     (cond
+       (fs/exists? droid-path) droid-path
+       (fs/exists? claude-path) claude-path
+       ;; Default to claude path if neither exists
+       :else claude-path))))
 
 (defn read-session-jsonl
   "Read a Claude session JSONL file and return parsed entries.
@@ -316,7 +327,7 @@
     (extract-user-title entries)))
 
 (defn list-sessions
-  "Scan ~/.claude/projects/ for session JSONL files.
+  "Scan ~/.claude/projects/ and ~/.factory/sessions/ for session JSONL files.
    Returns a vec of session maps sorted by :updated desc.
    Uses only filesystem metadata for speed (no file content reading).
 
@@ -327,33 +338,37 @@
    - :title - nil (use session-details for title derivation)
    - :created - epoch ms from file creation time
    - :updated - epoch ms from file last-modified time
-   - :size-bytes - file size in bytes"
+   - :size-bytes - file size in bytes
+   - :source - :claude-cli or :droid"
   []
-  (let [projects-dir (claude-projects-dir)]
-    (when (fs/exists? projects-dir)
-      (->> (fs/list-dir projects-dir)
-           (filter fs/directory?)
-           (mapcat (fn [project-dir]
-                     (let [dir-name (str (fs/file-name project-dir))]
-                       (->> (fs/glob project-dir "*.jsonl")
-                            ;; Skip files inside subagents/ subdirectories
-                            (remove (fn [f]
-                                      (let [rel (str (fs/relativize project-dir f))]
-                                        (str/starts-with? rel "subagents/"))))
-                            (map (fn [f]
-                                   (let [fname (str (fs/file-name f))
-                                         session-id (str/replace fname #"\.jsonl$" "")
-                                         ctime-ms (.toMillis (fs/creation-time f))
-                                         mtime-ms (.toMillis (fs/last-modified-time f))]
-                                     {:id session-id
-                                      :directory dir-name
-                                      :project-path (decode-project-path dir-name)
-                                      :title nil
-                                      :created ctime-ms
-                                      :updated mtime-ms
-                                      :size-bytes (fs/size f)})))))))
-           (sort-by :updated >)
-           vec))))
+  (let [scan-dir (fn [base-dir source]
+                   (when (fs/exists? base-dir)
+                     (->> (fs/list-dir base-dir)
+                          (filter fs/directory?)
+                          (mapcat (fn [project-dir]
+                                    (let [dir-name (str (fs/file-name project-dir))]
+                                      (->> (fs/glob project-dir "*.jsonl")
+                                           (remove (fn [f]
+                                                     (let [rel (str (fs/relativize project-dir f))]
+                                                       (str/starts-with? rel "subagents/"))))
+                                           (map (fn [f]
+                                                  (let [fname (str (fs/file-name f))
+                                                        session-id (str/replace fname #"\.jsonl$" "")
+                                                        ctime-ms (.toMillis (fs/creation-time f))
+                                                        mtime-ms (.toMillis (fs/last-modified-time f))]
+                                                    {:id session-id
+                                                     :directory dir-name
+                                                     :project-path (decode-project-path dir-name)
+                                                     :title nil
+                                                     :created ctime-ms
+                                                     :updated mtime-ms
+                                                     :size-bytes (fs/size f)
+                                                     :source source}))))))))))
+        claude-sessions (scan-dir (claude-projects-dir) :claude-cli)
+        droid-sessions (scan-dir (droid-sessions-dir) :droid)]
+    (->> (concat claude-sessions droid-sessions)
+         (sort-by :updated >)
+         vec)))
 
 (comment
   ;; Test path encoding
