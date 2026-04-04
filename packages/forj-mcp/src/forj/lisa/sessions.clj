@@ -86,18 +86,20 @@
    - :limit    - max results (default 20)"
   ([] (list-recent-sessions {}))
   ([{:keys [since project client limit] :or {limit 20}}]
-   (let [claude-sessions  (when-not (#{:opencode :droid} client)
-                            (try
-                              (->> (claude/list-sessions)
-                                   (filter #(= :claude-cli (:source %)))
-                                   (mapv normalize-claude-session))
-                              (catch Exception _ [])))
-         droid-sessions   (when-not (#{:opencode :claude-cli} client)
-                            (try
-                              (->> (claude/list-sessions)
-                                   (filter #(= :droid (:source %)))
-                                   (mapv normalize-droid-session))
-                              (catch Exception _ [])))
+   (let [;; claude/list-sessions scans both ~/.claude/projects/ and ~/.factory/sessions/,
+         ;; returning sessions with :source :claude-cli or :droid. Call once and partition.
+         need-claude? (not (#{:opencode :droid} client))
+         need-droid?  (not (#{:opencode :claude-cli} client))
+         all-jsonl    (when (or need-claude? need-droid?)
+                        (try (claude/list-sessions) (catch Exception _ [])))
+         claude-sessions  (when need-claude?
+                            (->> all-jsonl
+                                 (filter #(= :claude-cli (:source %)))
+                                 (mapv normalize-claude-session)))
+         droid-sessions   (when need-droid?
+                            (->> all-jsonl
+                                 (filter #(= :droid (:source %)))
+                                 (mapv normalize-droid-session)))
          opencode-sessions (when-not (#{:claude-cli :droid} client)
                              (try
                                (->> (opencode/list-sessions)
