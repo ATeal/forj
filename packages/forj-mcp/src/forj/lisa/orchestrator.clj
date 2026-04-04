@@ -733,9 +733,14 @@
                           "Review checkpoints MUST call lisa_add_checkpoint before marking complete"))
           ;; Normal completion (or review that did extend)
           (do
-            (println (str "[Lisa] ✓ Checkpoint " cp-display " complete"))
             ;; Mark done in plan (orchestrator manages plan state)
             (plan-edn/mark-checkpoint-done! project-path checkpoint-id)
+            ;; Log completion with duration if available
+            (let [done-plan (plan-edn/read-plan project-path)
+                  done-cp (plan-edn/checkpoint-by-id done-plan checkpoint-id)
+                  dur-ms (:duration-ms done-cp)
+                  dur-str (when dur-ms (str " (" (plan-edn/format-duration dur-ms) ")"))]
+              (println (str "[Lisa] ✓ Checkpoint " cp-display " complete" dur-str)))
             ;; Auto-commit as rollback point
             (auto-commit-checkpoint! project-path cp-display (:description checkpoint))))
 
@@ -1123,7 +1128,12 @@
                                      (+ total-output-tokens iter-output)))
                         ;; Normal completion (or review that did extend)
                             (do
-                              (println (str "[Lisa] Checkpoint " cp-display " complete"))
+                              ;; Log completion with duration if available
+                              (let [done-plan (plan-edn/read-plan project-path)
+                                    done-cp (plan-edn/checkpoint-by-id done-plan cp-id)
+                                    dur-ms (:duration-ms done-cp)
+                                    dur-str (when dur-ms (str " (" (plan-edn/format-duration dur-ms) ")"))]
+                                (println (str "[Lisa] Checkpoint " cp-display " complete" dur-str)))
                           ;; Update meta file with success
                               (update-iteration-metadata! log-file true nil)
                           ;; Auto-commit as rollback point

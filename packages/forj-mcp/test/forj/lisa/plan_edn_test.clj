@@ -93,6 +93,140 @@
     (is (false? (plan-edn/review-checkpoint? nil)))))
 
 ;; =============================================================================
+;; duration-ms tests
+;; =============================================================================
+
+(deftest duration-ms-test
+  (testing "Returns correct ms between two timestamps"
+    (is (= 5000 (plan-edn/duration-ms "2026-01-01T00:00:00Z" "2026-01-01T00:00:05Z"))))
+
+  (testing "Returns correct ms for minutes"
+    (is (= 120000 (plan-edn/duration-ms "2026-01-01T00:00:00Z" "2026-01-01T00:02:00Z"))))
+
+  (testing "Returns correct ms for hours"
+    (is (= 3600000 (plan-edn/duration-ms "2026-01-01T00:00:00Z" "2026-01-01T01:00:00Z"))))
+
+  (testing "Returns 0 for identical timestamps"
+    (is (= 0 (plan-edn/duration-ms "2026-01-01T00:00:00Z" "2026-01-01T00:00:00Z"))))
+
+  (testing "Handles sub-second precision"
+    (is (= 500 (plan-edn/duration-ms "2026-01-01T00:00:00Z" "2026-01-01T00:00:00.500Z"))))
+
+  (testing "Handles nil gracefully - throws on nil start"
+    (is (thrown? Exception (plan-edn/duration-ms nil "2026-01-01T00:00:00Z"))))
+
+  (testing "Handles nil gracefully - throws on nil end"
+    (is (thrown? Exception (plan-edn/duration-ms "2026-01-01T00:00:00Z" nil))))
+
+  (testing "Handles nil gracefully - throws on both nil"
+    (is (thrown? Exception (plan-edn/duration-ms nil nil)))))
+
+;; =============================================================================
+;; format-duration tests
+;; =============================================================================
+
+(deftest format-duration-test
+  (testing "Produces 'Xs' for short durations (seconds only)"
+    (is (= "0s" (plan-edn/format-duration 0)))
+    (is (= "1s" (plan-edn/format-duration 1000)))
+    (is (= "45s" (plan-edn/format-duration 45000)))
+    (is (= "59s" (plan-edn/format-duration 59000))))
+
+  (testing "Produces 'Xm Ys' for minute durations"
+    (is (= "1m 0s" (plan-edn/format-duration 60000)))
+    (is (= "2m 34s" (plan-edn/format-duration 154000)))
+    (is (= "59m 59s" (plan-edn/format-duration 3599000))))
+
+  (testing "Produces 'Xh Ym' for hour durations"
+    (is (= "1h 0m" (plan-edn/format-duration 3600000)))
+    (is (= "1h 5m" (plan-edn/format-duration 3900000)))
+    (is (= "2h 30m" (plan-edn/format-duration 9000000))))
+
+  (testing "Sub-second values truncate to 0s"
+    (is (= "0s" (plan-edn/format-duration 999)))))
+
+;; =============================================================================
+;; mark-checkpoint-done! duration tracking tests
+;; =============================================================================
+
+(deftest mark-checkpoint-done!-duration-test
+  (testing "Stores :duration-ms when :started is set"
+    (let [tmp (str (fs/create-temp-dir))]
+      (plan-edn/create-plan! tmp {:title "Duration test"
+                                  :checkpoints [{:id :task-a
+                                                 :description "Task A"}]})
+      ;; The first checkpoint gets :started automatically from create-plan!
+      (let [plan-before (plan-edn/read-plan tmp)
+            cp-before (plan-edn/checkpoint-by-id plan-before :task-a)]
+        (is (some? (:started cp-before)) "Should have :started from create-plan!"))
+
+      ;; Small delay to ensure non-zero duration
+      (Thread/sleep 10)
+      (plan-edn/mark-checkpoint-done! tmp :task-a)
+
+      (let [plan-after (plan-edn/read-plan tmp)
+            cp-after (plan-edn/checkpoint-by-id plan-after :task-a)]
+        (is (some? (:duration-ms cp-after)) "Should have :duration-ms")
+        (is (pos? (:duration-ms cp-after)) "Duration should be positive")
+        (is (some? (:completed cp-after)) "Should have :completed"))
+      (fs/delete-tree tmp)))
+
+  (testing "Does not store :duration-ms when :started is not set"
+    (let [tmp (str (fs/create-temp-dir))]
+      ;; Manually write a plan where checkpoint has no :started
+      (plan-edn/write-plan! tmp {:title "No started test"
+                                 :status :in-progress
+                                 :checkpoints [{:id :task-no-start
+                                                :status :in-progress
+                                                :description "Task without started"}]
+                                 :signs []})
+      (plan-edn/mark-checkpoint-done! tmp :task-no-start)
+
+      (let [plan-after (plan-edn/read-plan tmp)
+            cp-after (plan-edn/checkpoint-by-id plan-after :task-no-start)]
+        (is (nil? (:duration-ms cp-after)) "Should NOT have :duration-ms without :started")
+        (is (some? (:completed cp-after)) "Should have :completed"))
+      (fs/delete-tree tmp))))
+
+;; =============================================================================
+;; mark-checkpoint-failed! duration tracking tests
+;; =============================================================================
+
+(deftest mark-checkpoint-failed!-duration-test
+  (testing "Stores :duration-ms when :started is set"
+    (let [tmp (str (fs/create-temp-dir))]
+      (plan-edn/create-plan! tmp {:title "Failed duration test"
+                                  :checkpoints [{:id :task-fail
+                                                 :description "Task that fails"}]})
+      ;; The first checkpoint gets :started automatically
+      (Thread/sleep 10)
+      (plan-edn/mark-checkpoint-failed! tmp :task-fail "Something went wrong")
+
+      (let [plan-after (plan-edn/read-plan tmp)
+            cp-after (plan-edn/checkpoint-by-id plan-after :task-fail)]
+        (is (some? (:duration-ms cp-after)) "Should have :duration-ms")
+        (is (pos? (:duration-ms cp-after)) "Duration should be positive")
+        (is (some? (:failed-at cp-after)) "Should have :failed-at")
+        (is (= "Something went wrong" (:failure-reason cp-after))))
+      (fs/delete-tree tmp)))
+
+  (testing "Does not store :duration-ms when :started is not set"
+    (let [tmp (str (fs/create-temp-dir))]
+      (plan-edn/write-plan! tmp {:title "No started fail test"
+                                 :status :in-progress
+                                 :checkpoints [{:id :task-no-start-fail
+                                                :status :in-progress
+                                                :description "Task without started that fails"}]
+                                 :signs []})
+      (plan-edn/mark-checkpoint-failed! tmp :task-no-start-fail "No started")
+
+      (let [plan-after (plan-edn/read-plan tmp)
+            cp-after (plan-edn/checkpoint-by-id plan-after :task-no-start-fail)]
+        (is (nil? (:duration-ms cp-after)) "Should NOT have :duration-ms without :started")
+        (is (some? (:failed-at cp-after)) "Should have :failed-at"))
+      (fs/delete-tree tmp))))
+
+;; =============================================================================
 ;; Review checkpoint persistence tests
 ;; =============================================================================
 
