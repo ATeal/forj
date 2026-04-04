@@ -2087,9 +2087,13 @@
                                   :file (:file current)
                                   :started (:started current)})
            :checkpoints (mapv (fn [cp]
-                                {:id (:id cp)
-                                 :status (:status cp)
-                                 :description (:description cp)})
+                                (cond-> {:id (:id cp)
+                                         :status (:status cp)
+                                         :description (:description cp)}
+                                  (:started cp)     (assoc :started (:started cp))
+                                  (:completed cp)   (assoc :completed (:completed cp))
+                                  (:failed-at cp)   (assoc :failed-at (:failed-at cp))
+                                  (:duration-ms cp) (assoc :duration-ms (:duration-ms cp))))
                               checkpoints)
            :iterations iteration-count
            :last-cost (when latest-result (:total_cost_usd latest-result))
